@@ -1,0 +1,116 @@
+import { UserRole } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { NextResponse } from "next/server";
+
+import { authOptions } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { workSchema } from "@/lib/validations/work";
+
+export async function GET() {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userRole = session.user.role as UserRole;
+    const userId = session.user.id;
+
+    // 역할별 필터링
+    let whereClause = {};
+    if (userRole === UserRole.ADMIN) {
+      // ADMIN: 모든 작품 조회
+      whereClause = {};
+    } else if (userRole === UserRole.EDITOR) {
+      // EDITOR: 할당된 작품만 조회
+      whereClause = { editorId: userId };
+    } else {
+      // AUTHOR: 본인 작품만 조회
+      whereClause = { authorId: userId };
+    }
+
+    const works = await db.work.findMany({
+      where: whereClause,
+      orderBy: { updatedAt: "desc" },
+      include: {
+        creators: true,
+        author: {
+          select: { id: true, name: true, email: true },
+        },
+        editor: {
+          select: { id: true, name: true, email: true },
+        },
+        _count: {
+          select: { chapters: true },
+        },
+      },
+    });
+
+    return NextResponse.json(works);
+  } catch (error) {
+    console.error("Failed to fetch works:", error);
+    return NextResponse.json(
+      { error: "작품 목록을 불러오는데 실패했습니다." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userRole = session.user.role as UserRole;
+
+    // EDITOR는 작품 생성 불가
+    if (userRole === UserRole.EDITOR) {
+      return NextResponse.json(
+        { error: "윤문가는 작품을 등록할 수 없습니다." },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json();
+    const validatedData = workSchema.parse(body);
+
+    const work = await db.work.create({
+      data: {
+        titleKo: validatedData.titleKo,
+        titleOriginal: validatedData.titleOriginal,
+        publisher: validatedData.publisher,
+        ageRating: validatedData.ageRating,
+        status: validatedData.status,
+        synopsis: validatedData.synopsis,
+        genres: validatedData.genres,
+        platformName: validatedData.platformName || null,
+        platformUrl: validatedData.platformUrl || null,
+        authorId: session.user.id,
+        creators: {
+          create: validatedData.creators.map((creator) => ({
+            name: creator.name,
+            role: creator.role,
+          })),
+        },
+      },
+      include: {
+        creators: true,
+      },
+    });
+
+    return NextResponse.json(work, { status: 201 });
+  } catch (error) {
+    console.error("Failed to create work:", error);
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    return NextResponse.json(
+      { error: "작품 등록에 실패했습니다." },
+      { status: 500 }
+    );
+  }
+}
