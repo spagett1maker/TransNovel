@@ -1,10 +1,12 @@
 "use client";
 
 import { ChapterStatus, UserRole } from "@prisma/client";
+import { Loader2, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +50,12 @@ export default function ChapterReaderPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("side-by-side");
   const [editedContent, setEditedContent] = useState("");
+
+  // 재번역 관련 상태
+  const [showRetranslateModal, setShowRetranslateModal] = useState(false);
+  const [retranslateFeedback, setRetranslateFeedback] = useState("");
+  const [selectedTextForRetranslate, setSelectedTextForRetranslate] = useState("");
+  const [isRetranslating, setIsRetranslating] = useState(false);
 
   const userRole = (session?.user?.role as UserRole) || UserRole.AUTHOR;
 
@@ -137,6 +145,61 @@ export default function ChapterReaderPage() {
     }
   }
 
+  // 재번역 처리
+  async function handleRetranslate() {
+    if (!chapter || !retranslateFeedback.trim()) {
+      toast.error("피드백을 입력해주세요.");
+      return;
+    }
+
+    setIsRetranslating(true);
+    try {
+      const response = await fetch(
+        `/api/works/${workId}/chapters/${chapterNum}/retranslate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            feedback: retranslateFeedback,
+            selectedText: selectedTextForRetranslate || undefined,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "재번역에 실패했습니다.");
+      }
+
+      setChapter(data.chapter);
+      setEditedContent(data.chapter.translatedContent || "");
+      setShowRetranslateModal(false);
+      setRetranslateFeedback("");
+      setSelectedTextForRetranslate("");
+      toast.success("재번역이 완료되었습니다!");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "재번역에 실패했습니다."
+      );
+    } finally {
+      setIsRetranslating(false);
+    }
+  }
+
+  // 텍스트 선택 시 재번역 모달 열기
+  function handleTextSelection() {
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      setSelectedTextForRetranslate(selection.toString().trim());
+    }
+  }
+
+  // 재번역 모달 열기
+  function openRetranslateModal() {
+    setShowRetranslateModal(true);
+  }
+
   const availableStatuses = chapter
     ? getAvailableNextStatuses(userRole, chapter.status)
     : [];
@@ -220,6 +283,19 @@ export default function ChapterReaderPage() {
               </Button>
             </div>
 
+            {/* Retranslate Button */}
+            {hasTranslation && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openRetranslateModal}
+                className="ml-2"
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                재번역
+              </Button>
+            )}
+
             {/* Status Change */}
             {availableStatuses.length > 0 && (
               <div className="flex gap-1 ml-2">
@@ -282,11 +358,11 @@ export default function ChapterReaderPage() {
         {viewMode === "side-by-side" && (
           <div className="grid grid-cols-2 gap-6 h-full">
             {/* Original */}
-            <div className="flex flex-col h-full">
+            <div className="flex flex-col h-full min-h-0">
               <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 shrink-0">
                 원문
               </h2>
-              <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-6">
+              <div className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-muted/50 p-6">
                 <div className="prose prose-sm max-w-none">
                   <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0">
                     {chapter.originalContent}
@@ -296,14 +372,24 @@ export default function ChapterReaderPage() {
             </div>
 
             {/* Translated */}
-            <div className="flex flex-col h-full">
-              <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 shrink-0">
-                번역문
-              </h2>
-              <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-6">
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <h2 className="text-xs uppercase tracking-widest text-muted-foreground">
+                  번역문
+                </h2>
+                {translatedText && (
+                  <span className="text-xs text-muted-foreground">
+                    텍스트를 선택하고 재번역 버튼을 누르세요
+                  </span>
+                )}
+              </div>
+              <div
+                className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-muted/50 p-6"
+                onMouseUp={handleTextSelection}
+              >
                 {translatedText ? (
                   <div className="prose prose-sm max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0">
+                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0 selection:bg-yellow-200 selection:text-foreground">
                       {translatedText}
                     </pre>
                   </div>
@@ -382,6 +468,131 @@ export default function ChapterReaderPage() {
           </div>
         )}
       </div>
+
+      {/* 재번역 모달 */}
+      {showRetranslateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => !isRetranslating && setShowRetranslateModal(false)}
+          />
+
+          {/* Modal */}
+          <div className="relative z-10 w-full max-w-lg bg-background rounded-2xl shadow-2xl p-6 mx-4">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold">재번역</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  피드백을 입력하면 AI가 번역을 수정합니다
+                </p>
+              </div>
+              <button
+                onClick={() => !isRetranslating && setShowRetranslateModal(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                disabled={isRetranslating}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* 선택된 텍스트 표시 */}
+            {selectedTextForRetranslate && (
+              <div className="mb-4">
+                <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
+                  선택된 부분
+                </label>
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm max-h-24 overflow-y-auto">
+                  <p className="text-yellow-800 line-clamp-3">
+                    {selectedTextForRetranslate}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedTextForRetranslate("")}
+                  className="text-xs text-muted-foreground hover:text-foreground mt-1"
+                >
+                  선택 해제
+                </button>
+              </div>
+            )}
+
+            {/* 피드백 입력 */}
+            <div className="mb-6">
+              <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
+                수정 피드백
+              </label>
+              <Textarea
+                value={retranslateFeedback}
+                onChange={(e) => setRetranslateFeedback(e.target.value)}
+                placeholder="예: 말투를 더 부드럽게 해주세요, 이 단어는 '○○'로 번역해주세요, 문장이 너무 길어요..."
+                className="min-h-[120px] resize-none"
+                disabled={isRetranslating}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                구체적일수록 더 정확한 재번역이 가능합니다
+              </p>
+            </div>
+
+            {/* 예시 피드백 */}
+            <div className="mb-6">
+              <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
+                예시
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  "말투를 더 부드럽게",
+                  "문장을 더 짧게",
+                  "격식체로 변경",
+                  "감정 표현 강조",
+                  "액션 장면 더 생동감 있게",
+                ].map((example) => (
+                  <button
+                    key={example}
+                    onClick={() =>
+                      setRetranslateFeedback((prev) =>
+                        prev ? `${prev}, ${example}` : example
+                      )
+                    }
+                    className="px-3 py-1.5 text-xs bg-muted hover:bg-muted/80 rounded-full transition-colors"
+                    disabled={isRetranslating}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 버튼 */}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowRetranslateModal(false)}
+                disabled={isRetranslating}
+                className="flex-1"
+              >
+                취소
+              </Button>
+              <Button
+                onClick={handleRetranslate}
+                disabled={isRetranslating || !retranslateFeedback.trim()}
+                className="flex-1"
+              >
+                {isRetranslating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    재번역 중...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    재번역 시작
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

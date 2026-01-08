@@ -12,6 +12,11 @@ export type ChapterProgressStatus =
   | "COMPLETED"
   | "FAILED";
 
+export interface ChunkError {
+  index: number;
+  error: string;
+}
+
 export interface ChapterProgress {
   number: number;
   chapterId: string;
@@ -19,6 +24,7 @@ export interface ChapterProgress {
   currentChunk: number;
   totalChunks: number;
   error?: string;
+  failedChunks?: ChunkError[];
 }
 
 export interface TranslationJob {
@@ -38,7 +44,9 @@ export interface ProgressEvent {
     | "job_started"
     | "chapter_started"
     | "chunk_progress"
+    | "chunk_error"
     | "chapter_completed"
+    | "chapter_partial"
     | "chapter_failed"
     | "job_completed"
     | "job_failed";
@@ -47,6 +55,8 @@ export interface ProgressEvent {
     currentChunk?: number;
     totalChunks?: number;
     error?: string;
+    chunkIndex?: number;
+    failedChunks?: number[];
   };
 }
 
@@ -65,6 +75,7 @@ class TranslationManager {
     chapters: Array<{ number: number; id: string }>
   ): string {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log("[TranslationManager] 작업 생성:", { jobId, workId, chapters: chapters.length });
 
     const job: TranslationJob = {
       id: jobId,
@@ -86,6 +97,7 @@ class TranslationManager {
 
     // 10분 후 자동 정리
     setTimeout(() => {
+      console.log("[TranslationManager] 작업 자동 정리:", jobId);
       this.jobs.delete(jobId);
     }, 10 * 60 * 1000);
 
@@ -94,15 +106,22 @@ class TranslationManager {
 
   // 작업 조회
   getJob(jobId: string): TranslationJob | null {
-    return this.jobs.get(jobId) || null;
+    const job = this.jobs.get(jobId) || null;
+    console.log("[TranslationManager] getJob:", { jobId, found: !!job, totalJobs: this.jobs.size });
+    return job;
   }
 
   // 작업 시작
   startJob(jobId: string): void {
+    console.log("[TranslationManager] 작업 시작:", jobId);
     const job = this.jobs.get(jobId);
-    if (!job) return;
+    if (!job) {
+      console.error("[TranslationManager] 작업을 찾을 수 없음:", jobId);
+      return;
+    }
 
     job.status = "IN_PROGRESS";
+    console.log("[TranslationManager] 작업 상태 변경: IN_PROGRESS");
     this.emit({
       jobId,
       type: "job_started",
@@ -115,11 +134,18 @@ class TranslationManager {
 
   // 챕터 번역 시작
   startChapter(jobId: string, chapterNumber: number, totalChunks: number): void {
+    console.log("[TranslationManager] 챕터 시작:", { jobId, chapterNumber, totalChunks });
     const job = this.jobs.get(jobId);
-    if (!job) return;
+    if (!job) {
+      console.error("[TranslationManager] 작업을 찾을 수 없음:", jobId);
+      return;
+    }
 
     const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
+    if (!chapter) {
+      console.error("[TranslationManager] 챕터를 찾을 수 없음:", chapterNumber);
+      return;
+    }
 
     chapter.status = "TRANSLATING";
     chapter.totalChunks = totalChunks;
@@ -162,6 +188,35 @@ class TranslationManager {
     });
   }
 
+  // 청크 에러 보고
+  reportChunkError(
+    jobId: string,
+    chapterNumber: number,
+    chunkIndex: number,
+    error: string
+  ): void {
+    const job = this.jobs.get(jobId);
+    if (!job) return;
+
+    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
+    if (!chapter) return;
+
+    if (!chapter.failedChunks) {
+      chapter.failedChunks = [];
+    }
+    chapter.failedChunks.push({ index: chunkIndex, error });
+
+    this.emit({
+      jobId,
+      type: "chunk_error",
+      data: {
+        chapterNumber,
+        chunkIndex,
+        error,
+      },
+    });
+  }
+
   // 챕터 완료
   completeChapter(jobId: string, chapterNumber: number): void {
     const job = this.jobs.get(jobId);
@@ -181,6 +236,34 @@ class TranslationManager {
         chapterNumber,
         completedChapters: job.completedChapters,
         totalChapters: job.totalChapters,
+      },
+    });
+  }
+
+  // 챕터 부분 완료 (일부 청크 실패)
+  completeChapterPartial(
+    jobId: string,
+    chapterNumber: number,
+    failedChunkIndices: number[]
+  ): void {
+    const job = this.jobs.get(jobId);
+    if (!job) return;
+
+    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
+    if (!chapter) return;
+
+    chapter.status = "COMPLETED";
+    chapter.currentChunk = chapter.totalChunks;
+    job.completedChapters++;
+
+    this.emit({
+      jobId,
+      type: "chapter_partial",
+      data: {
+        chapterNumber,
+        completedChapters: job.completedChapters,
+        totalChapters: job.totalChapters,
+        failedChunks: failedChunkIndices,
       },
     });
   }
@@ -244,6 +327,7 @@ class TranslationManager {
 
   // 이벤트 발생
   private emit(event: ProgressEvent): void {
+    console.log("[TranslationManager] 이벤트 발생:", { type: event.type, jobId: event.jobId, data: event.data });
     this.emitter.emit(`job:${event.jobId}`, event);
   }
 
@@ -261,5 +345,16 @@ class TranslationManager {
   }
 }
 
-// 싱글톤 인스턴스
-export const translationManager = new TranslationManager();
+// globalThis를 사용하여 개발 모드에서 HMR 시에도 싱글톤 유지
+const globalForTranslation = globalThis as unknown as {
+  translationManager: TranslationManager | undefined;
+};
+
+export const translationManager =
+  globalForTranslation.translationManager ?? new TranslationManager();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForTranslation.translationManager = translationManager;
+}
+
+console.log("[TranslationManager] 싱글톤 초기화됨, 기존 작업 수:", translationManager["jobs"].size);
