@@ -17,15 +17,6 @@ import {
 } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 
-const CHAPTER_STATUS_LABELS = {
-  PENDING: { label: "대기", color: "bg-gray-100 text-gray-700" },
-  TRANSLATING: { label: "번역중", color: "bg-yellow-100 text-yellow-700" },
-  TRANSLATED: { label: "번역완료", color: "bg-blue-100 text-blue-700" },
-  REVIEWING: { label: "검토중", color: "bg-purple-100 text-purple-700" },
-  EDITED: { label: "윤문완료", color: "bg-green-100 text-green-700" },
-  APPROVED: { label: "승인", color: "bg-green-200 text-green-800" },
-};
-
 interface ParsedChapter {
   number: number;
   title?: string;

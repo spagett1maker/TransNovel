@@ -27,19 +27,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getSession } from "@/lib/auth";
+import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { db } from "@/lib/db";
 import { canAccessWork } from "@/lib/permissions";
 import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES, WORK_STATUS } from "@/lib/validations/work";
 import { EditorAssignment } from "./editor-assignment";
-
-const CHAPTER_STATUS_LABELS = {
-  PENDING: { label: "대기", color: "bg-gray-100 text-gray-700" },
-  TRANSLATING: { label: "번역중", color: "bg-yellow-100 text-yellow-700" },
-  TRANSLATED: { label: "번역완료", color: "bg-blue-100 text-blue-700" },
-  REVIEWING: { label: "검토중", color: "bg-purple-100 text-purple-700" },
-  EDITED: { label: "윤문완료", color: "bg-green-100 text-green-700" },
-  APPROVED: { label: "승인", color: "bg-green-200 text-green-800" },
-};
 
 export default async function WorkDetailPage({
   params,
@@ -350,32 +342,29 @@ export default async function WorkDetailPage({
               ) : (
                 <div className="space-y-2">
                   {work.chapters.map((chapter) => {
-                    const statusInfo =
-                      CHAPTER_STATUS_LABELS[
-                        chapter.status as keyof typeof CHAPTER_STATUS_LABELS
-                      ];
+                    const statusConfig = getChapterStatusConfig(chapter.status);
                     return (
                       <Link
                         key={chapter.id}
                         href={`/works/${id}/chapters/${chapter.number}`}
-                        className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-gray-50"
+                        className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
                       >
                         <div className="flex items-center gap-3">
                           <span className="font-medium">
                             {chapter.number}화
                           </span>
                           {chapter.title && (
-                            <span className="text-gray-500">
+                            <span className="text-muted-foreground">
                               {chapter.title}
                             </span>
                           )}
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="text-sm text-gray-500">
+                          <span className="text-sm text-muted-foreground">
                             {chapter.wordCount.toLocaleString()}자
                           </span>
-                          <Badge className={statusInfo.color} variant="outline">
-                            {statusInfo.label}
+                          <Badge variant={statusConfig.variant}>
+                            {statusConfig.label}
                           </Badge>
                         </div>
                       </Link>

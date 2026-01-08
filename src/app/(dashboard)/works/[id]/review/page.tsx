@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { getChapterStatusVariant } from "@/lib/chapter-status";
 import { getStatusDisplayName, getAvailableNextStatuses } from "@/lib/permissions";
 
 interface Chapter {
@@ -175,18 +176,6 @@ export default function ReviewPage() {
     ? getAvailableNextStatuses(userRole, selectedChapter.status)
     : [];
 
-  const getStatusColor = (status: ChapterStatus) => {
-    const colors: Record<ChapterStatus, string> = {
-      PENDING: "bg-gray-100 text-gray-700",
-      TRANSLATING: "bg-blue-100 text-blue-700",
-      TRANSLATED: "bg-orange-100 text-orange-700",
-      REVIEWING: "bg-purple-100 text-purple-700",
-      EDITED: "bg-green-100 text-green-700",
-      APPROVED: "bg-emerald-100 text-emerald-700",
-    };
-    return colors[status];
-  };
-
   if (isLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
@@ -262,7 +251,7 @@ export default function ReviewPage() {
                         {chapter.wordCount.toLocaleString()}자
                       </p>
                     </div>
-                    <Badge className={getStatusColor(chapter.status)}>
+                    <Badge variant={getChapterStatusVariant(chapter.status)}>
                       {getStatusDisplayName(chapter.status)}
                     </Badge>
                   </button>
@@ -283,7 +272,7 @@ export default function ReviewPage() {
                 </CardTitle>
                 <CardDescription>
                   현재 상태:{" "}
-                  <Badge className={getStatusColor(selectedChapter.status)}>
+                  <Badge variant={getChapterStatusVariant(selectedChapter.status)}>
                     {getStatusDisplayName(selectedChapter.status)}
                   </Badge>
                 </CardDescription>

@@ -228,15 +228,14 @@ export function TranslationProgress({
             {chapters.map((chapter) => (
               <Badge
                 key={chapter.number}
-                variant="outline"
-                className={
+                variant={
                   chapter.status === "COMPLETED"
-                    ? "border-green-300 bg-green-100 text-green-700"
+                    ? "success"
                     : chapter.status === "TRANSLATING"
-                      ? "border-blue-300 bg-blue-100 text-blue-700"
+                      ? "progress"
                       : chapter.status === "FAILED"
-                        ? "border-red-300 bg-red-100 text-red-700"
-                        : "border-gray-200 bg-gray-50 text-gray-500"
+                        ? "destructive"
+                        : "pending"
                 }
               >
                 {chapter.status === "COMPLETED" && (
