@@ -265,7 +265,7 @@ export async function translateText(
   });
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-preview-05-20",
+    model: "gemini-2.5-flash",
   });
 
   console.log("[Gemini] 모델 초기화 완료: gemini-2.5-flash-preview-05-20");
@@ -380,7 +380,7 @@ export async function translateChunks(
   for (let i = 0; i < chunks.length; i++) {
     // Rate limit 방지: 첫 번째 청크가 아니면 딜레이 추가
     if (i > 0) {
-      const delayMs = 6000; // 6초 딜레이 (Gemini free tier: 10 RPM)
+      const delayMs = 1000; // 1초 딜레이
       console.log(`[Gemini] Rate limit 방지 딜레이: ${delayMs}ms`);
       await delay(delayMs);
     }
@@ -534,7 +534,7 @@ export async function retranslateText(
   });
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-preview-05-20",
+    model: "gemini-2.5-flash",
   });
 
   const prompt = buildRetranslatePrompt(
