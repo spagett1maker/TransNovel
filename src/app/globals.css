@@ -47,115 +47,125 @@
 }
 
 /*
- * TransNovel Design System - Material Design 3 Inspired
- * Android.com 레퍼런스 기반 디자인 시스템
+ * TransNovel Design System - Black & White Minimal
+ * 심플하고 클린한 모노크롬 디자인
  *
  * Color Philosophy:
- * - Primary: Android Green (#3DDC84)
- * - Surface: Clean whites and soft grays
- * - On-Surface: Rich black with high contrast
+ * - Primary: Pure Black
+ * - Surface: Pure White
+ * - Minimal grayscale palette
  */
 
 :root {
-  /* Material Design 3 - Large radius system */
   --radius: 1rem;
 
-  /* Surface colors - Clean and minimal */
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Surface - Pure white */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.09 0 0);
 
-  /* Card - Pure white with elevation */
+  /* Card - White */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.09 0 0);
 
   /* Popover */
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.09 0 0);
 
-  /* Primary - Android Green */
-  --primary: oklch(0.75 0.18 145);
-  --primary-foreground: oklch(0.145 0.02 145);
+  /* Primary - Pure Black */
+  --primary: oklch(0.09 0 0);
+  --primary-foreground: oklch(1 0 0);
 
-  /* Secondary - Soft gray */
-  --secondary: oklch(0.96 0 0);
-  --secondary-foreground: oklch(0.25 0 0);
+  /* Secondary - Light gray */
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.09 0 0);
 
-  /* Muted - Light gray */
-  --muted: oklch(0.96 0 0);
+  /* Muted - Subtle gray */
+  --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.45 0 0);
 
-  /* Accent - Light green tint */
-  --accent: oklch(0.94 0.04 145);
-  --accent-foreground: oklch(0.25 0.05 145);
+  /* Accent - Very light gray */
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.09 0 0);
 
-  /* Destructive - Material red */
-  --destructive: oklch(0.55 0.22 25);
+  /* Destructive - Dark gray (not red) */
+  --destructive: oklch(0.45 0 0);
 
-  /* Border - Subtle gray */
-  --border: oklch(0.92 0 0);
-  --input: oklch(0.92 0 0);
-  --ring: oklch(0.75 0.18 145);
+  /* Border - Light gray */
+  --border: oklch(0.91 0 0);
+  --input: oklch(0.91 0 0);
+  --ring: oklch(0.09 0 0);
 
-  /* Chart colors - Material palette */
-  --chart-1: oklch(0.75 0.18 145);  /* Green */
-  --chart-2: oklch(0.65 0.20 250);  /* Blue */
-  --chart-3: oklch(0.70 0.18 45);   /* Orange */
-  --chart-4: oklch(0.60 0.22 320);  /* Purple */
-  --chart-5: oklch(0.65 0.18 200);  /* Cyan */
+  /* Chart colors - Grayscale */
+  --chart-1: oklch(0.09 0 0);
+  --chart-2: oklch(0.30 0 0);
+  --chart-3: oklch(0.50 0 0);
+  --chart-4: oklch(0.70 0 0);
+  --chart-5: oklch(0.85 0 0);
 
-  /* Sidebar - Clean white */
-  --sidebar: oklch(0.99 0 0);
-  --sidebar-foreground: oklch(0.25 0 0);
-  --sidebar-primary: oklch(0.75 0.18 145);
-  --sidebar-primary-foreground: oklch(0.145 0.02 145);
-  --sidebar-accent: oklch(0.96 0.02 145);
-  --sidebar-accent-foreground: oklch(0.25 0.05 145);
-  --sidebar-border: oklch(0.94 0 0);
-  --sidebar-ring: oklch(0.75 0.18 145);
+  /* Sidebar - White */
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.09 0 0);
+  --sidebar-primary: oklch(0.09 0 0);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.95 0 0);
+  --sidebar-accent-foreground: oklch(0.09 0 0);
+  --sidebar-border: oklch(0.93 0 0);
+  --sidebar-ring: oklch(0.09 0 0);
 }
 
 .dark {
-  --background: oklch(0.12 0 0);
-  --foreground: oklch(0.93 0 0);
+  /* Surface - Pure black */
+  --background: oklch(0.09 0 0);
+  --foreground: oklch(0.97 0 0);
 
-  --card: oklch(0.17 0 0);
-  --card-foreground: oklch(0.93 0 0);
+  /* Card - Dark */
+  --card: oklch(0.12 0 0);
+  --card-foreground: oklch(0.97 0 0);
 
-  --popover: oklch(0.17 0 0);
-  --popover-foreground: oklch(0.93 0 0);
+  /* Popover */
+  --popover: oklch(0.12 0 0);
+  --popover-foreground: oklch(0.97 0 0);
 
-  --primary: oklch(0.80 0.18 145);
-  --primary-foreground: oklch(0.12 0.02 145);
+  /* Primary - Pure White */
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0.09 0 0);
 
-  --secondary: oklch(0.22 0 0);
-  --secondary-foreground: oklch(0.93 0 0);
+  /* Secondary */
+  --secondary: oklch(0.18 0 0);
+  --secondary-foreground: oklch(0.97 0 0);
 
-  --muted: oklch(0.22 0 0);
-  --muted-foreground: oklch(0.65 0 0);
+  /* Muted */
+  --muted: oklch(0.18 0 0);
+  --muted-foreground: oklch(0.60 0 0);
 
-  --accent: oklch(0.28 0.06 145);
-  --accent-foreground: oklch(0.93 0 0);
+  /* Accent */
+  --accent: oklch(0.18 0 0);
+  --accent-foreground: oklch(0.97 0 0);
 
-  --destructive: oklch(0.60 0.22 25);
+  /* Destructive */
+  --destructive: oklch(0.65 0 0);
 
-  --border: oklch(0.25 0 0);
-  --input: oklch(0.25 0 0);
-  --ring: oklch(0.80 0.18 145);
+  /* Border */
+  --border: oklch(0.22 0 0);
+  --input: oklch(0.22 0 0);
+  --ring: oklch(1 0 0);
 
-  --chart-1: oklch(0.80 0.18 145);
-  --chart-2: oklch(0.70 0.20 250);
-  --chart-3: oklch(0.75 0.18 45);
-  --chart-4: oklch(0.65 0.22 320);
-  --chart-5: oklch(0.70 0.18 200);
+  /* Chart colors */
+  --chart-1: oklch(1 0 0);
+  --chart-2: oklch(0.80 0 0);
+  --chart-3: oklch(0.60 0 0);
+  --chart-4: oklch(0.40 0 0);
+  --chart-5: oklch(0.25 0 0);
 
-  --sidebar: oklch(0.14 0 0);
-  --sidebar-foreground: oklch(0.93 0 0);
-  --sidebar-primary: oklch(0.80 0.18 145);
-  --sidebar-primary-foreground: oklch(0.12 0.02 145);
-  --sidebar-accent: oklch(0.22 0.03 145);
-  --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(0.25 0 0);
-  --sidebar-ring: oklch(0.80 0.18 145);
+  /* Sidebar */
+  --sidebar: oklch(0.09 0 0);
+  --sidebar-foreground: oklch(0.97 0 0);
+  --sidebar-primary: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(0.09 0 0);
+  --sidebar-accent: oklch(0.18 0 0);
+  --sidebar-accent-foreground: oklch(0.97 0 0);
+  --sidebar-border: oklch(0.22 0 0);
+  --sidebar-ring: oklch(1 0 0);
 }
 
 @layer base {
@@ -170,41 +180,20 @@
   }
 }
 
-/* Material Design 3 utilities */
+/* Minimal utilities */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
 
-  /* M3 Elevation shadows */
+  /* Subtle shadows for depth */
   .elevation-1 {
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.1);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
   }
   .elevation-2 {
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05), 0 3px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   }
   .elevation-3 {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.05), 0 6px 12px rgba(0,0,0,0.1);
-  }
-
-  /* M3 State layers */
-  .state-layer {
-    position: relative;
-  }
-  .state-layer::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: currentColor;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    pointer-events: none;
-  }
-  .state-layer:hover::before {
-    opacity: 0.08;
-  }
-  .state-layer:active::before {
-    opacity: 0.12;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
   }
 }
