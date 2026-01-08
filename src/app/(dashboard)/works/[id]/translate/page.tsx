@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowLeft, CheckCircle, Languages, Loader2, XCircle } from "lucide-react";
+import { ArrowLeft, Languages, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { TranslationProgress } from "@/components/translation/progress-monitor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,12 +26,6 @@ interface Chapter {
   wordCount: number;
 }
 
-interface TranslationResult {
-  number: number;
-  success: boolean;
-  error?: string;
-}
-
 export default function TranslatePage() {
   const params = useParams();
   const workId = params.id as string;
@@ -38,26 +33,26 @@ export default function TranslatePage() {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isTranslating, setIsTranslating] = useState(false);
-  const [results, setResults] = useState<TranslationResult[]>([]);
+  const [isStarting, setIsStarting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
+  const fetchChapters = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/works/${workId}/chapters`);
+      if (response.ok) {
+        const data = await response.json();
+        setChapters(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch chapters:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [workId]);
 
   useEffect(() => {
-    async function fetchChapters() {
-      try {
-        const response = await fetch(`/api/works/${workId}/chapters`);
-        if (response.ok) {
-          const data = await response.json();
-          setChapters(data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch chapters:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
     fetchChapters();
-  }, [workId]);
+  }, [fetchChapters]);
 
   const pendingChapters = chapters.filter((c) => c.status === "PENDING");
 
@@ -83,8 +78,7 @@ export default function TranslatePage() {
       return;
     }
 
-    setIsTranslating(true);
-    setResults([]);
+    setIsStarting(true);
 
     try {
       const response = await fetch("/api/translation", {
@@ -99,26 +93,27 @@ export default function TranslatePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "번역에 실패했습니다.");
+        throw new Error(data.error || "번역 시작에 실패했습니다.");
       }
 
-      setResults(data.results);
-      toast.success(`${data.success}개 회차 번역 완료!`);
-
-      // Refresh chapters
-      const chaptersResponse = await fetch(`/api/works/${workId}/chapters`);
-      if (chaptersResponse.ok) {
-        setChapters(await chaptersResponse.json());
-      }
-      setSelectedChapters([]);
+      // 작업 ID 설정 (SSE 연결 시작)
+      setActiveJobId(data.jobId);
+      toast.success("번역이 시작되었습니다!");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "번역에 실패했습니다."
+        error instanceof Error ? error.message : "번역 시작에 실패했습니다."
       );
     } finally {
-      setIsTranslating(false);
+      setIsStarting(false);
     }
   };
+
+  const handleTranslationComplete = useCallback(() => {
+    setActiveJobId(null);
+    setSelectedChapters([]);
+    fetchChapters();
+    toast.success("모든 번역이 완료되었습니다!");
+  }, [fetchChapters]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -130,8 +125,12 @@ export default function TranslatePage() {
         );
       case "TRANSLATED":
         return <Badge className="bg-blue-100 text-blue-700">번역완료</Badge>;
+      case "REVIEWING":
+        return <Badge className="bg-purple-100 text-purple-700">검토중</Badge>;
       case "EDITED":
         return <Badge className="bg-green-100 text-green-700">윤문완료</Badge>;
+      case "APPROVED":
+        return <Badge className="bg-emerald-100 text-emerald-700">승인</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -152,21 +151,31 @@ export default function TranslatePage() {
         </div>
       </div>
 
+      {/* 번역 진행 모니터 */}
+      {activeJobId && (
+        <TranslationProgress
+          jobId={activeJobId}
+          onComplete={handleTranslationComplete}
+        />
+      )}
+
       {/* Warning */}
-      <Card className="border-yellow-200 bg-yellow-50">
-        <CardContent className="py-4">
-          <p className="text-sm text-yellow-800">
-            <strong>참고:</strong> 번역 전에 용어집을 먼저 등록하면 더 정확한
-            번역이 가능합니다.{" "}
-            <Link
-              href={`/works/${workId}/glossary`}
-              className="underline hover:no-underline"
-            >
-              용어집 관리하기
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
+      {!activeJobId && (
+        <Card className="border-yellow-200 bg-yellow-50">
+          <CardContent className="py-4">
+            <p className="text-sm text-yellow-800">
+              <strong>참고:</strong> 번역 전에 용어집을 먼저 등록하면 더 정확한
+              번역이 가능합니다.{" "}
+              <Link
+                href={`/works/${workId}/glossary`}
+                className="underline hover:no-underline"
+              >
+                용어집 관리하기
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading ? (
         <Card>
@@ -175,7 +184,7 @@ export default function TranslatePage() {
             <p className="mt-2 text-gray-500">회차 목록 불러오는 중...</p>
           </CardContent>
         </Card>
-      ) : pendingChapters.length === 0 ? (
+      ) : pendingChapters.length === 0 && !activeJobId ? (
         <Card>
           <CardContent className="py-16 text-center">
             <Languages className="mx-auto h-12 w-12 text-gray-300" />
@@ -193,96 +202,89 @@ export default function TranslatePage() {
           </CardContent>
         </Card>
       ) : (
-        <>
-          {/* Chapter Selection */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>회차 선택</CardTitle>
-                <CardDescription>
-                  번역할 회차를 선택하세요 (대기 상태만 선택 가능)
-                </CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={selectAll}>
-                {selectedChapters.length === pendingChapters.length
-                  ? "전체 해제"
-                  : "전체 선택"}
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {chapters.map((chapter) => {
-                  const isPending = chapter.status === "PENDING";
-                  const isSelected = selectedChapters.includes(chapter.number);
-                  const result = results.find(
-                    (r) => r.number === chapter.number
-                  );
+        !activeJobId && (
+          <>
+            {/* Chapter Selection */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>회차 선택</CardTitle>
+                  <CardDescription>
+                    번역할 회차를 선택하세요 (대기 상태만 선택 가능)
+                  </CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={selectAll}>
+                  {selectedChapters.length === pendingChapters.length
+                    ? "전체 해제"
+                    : "전체 선택"}
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <div className="max-h-[400px] space-y-2 overflow-y-auto">
+                  {chapters.map((chapter) => {
+                    const isPending = chapter.status === "PENDING";
+                    const isSelected = selectedChapters.includes(chapter.number);
 
-                  return (
-                    <div
-                      key={chapter.id}
-                      className={`flex items-center gap-4 rounded-lg border p-3 ${
-                        isPending ? "cursor-pointer hover:bg-gray-50" : "opacity-50"
-                      }`}
-                      onClick={() => isPending && toggleChapter(chapter.number)}
-                    >
-                      <Checkbox
-                        checked={isSelected}
-                        disabled={!isPending}
-                        onCheckedChange={() =>
-                          isPending && toggleChapter(chapter.number)
-                        }
-                      />
-                      <div className="flex-1">
-                        <span className="font-medium">{chapter.number}화</span>
-                        {chapter.title && (
-                          <span className="ml-2 text-gray-500">
-                            {chapter.title}
-                          </span>
-                        )}
+                    return (
+                      <div
+                        key={chapter.id}
+                        className={`flex items-center gap-4 rounded-lg border p-3 ${
+                          isPending
+                            ? "cursor-pointer hover:bg-gray-50"
+                            : "opacity-50"
+                        }`}
+                        onClick={() => isPending && toggleChapter(chapter.number)}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          disabled={!isPending}
+                          onCheckedChange={() =>
+                            isPending && toggleChapter(chapter.number)
+                          }
+                        />
+                        <div className="flex-1">
+                          <span className="font-medium">{chapter.number}화</span>
+                          {chapter.title && (
+                            <span className="ml-2 text-gray-500">
+                              {chapter.title}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-sm text-gray-500">
+                          {chapter.wordCount.toLocaleString()}자
+                        </span>
+                        {getStatusBadge(chapter.status)}
                       </div>
-                      <span className="text-sm text-gray-500">
-                        {chapter.wordCount.toLocaleString()}자
-                      </span>
-                      {result ? (
-                        result.success ? (
-                          <CheckCircle className="h-5 w-5 text-green-500" />
-                        ) : (
-                          <XCircle className="h-5 w-5 text-red-500" />
-                        )
-                      ) : (
-                        getStatusBadge(chapter.status)
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
 
-          {/* Actions */}
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">
-              {selectedChapters.length}개 회차 선택됨
-            </p>
-            <Button
-              onClick={handleTranslate}
-              disabled={isTranslating || selectedChapters.length === 0}
-            >
-              {isTranslating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  번역 중...
-                </>
-              ) : (
-                <>
-                  <Languages className="mr-2 h-4 w-4" />
-                  {selectedChapters.length}개 회차 번역 시작
-                </>
-              )}
-            </Button>
-          </div>
-        </>
+            {/* Actions */}
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-500">
+                {selectedChapters.length}개 회차 선택됨
+              </p>
+              <Button
+                onClick={handleTranslate}
+                disabled={isStarting || selectedChapters.length === 0}
+              >
+                {isStarting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    시작 중...
+                  </>
+                ) : (
+                  <>
+                    <Languages className="mr-2 h-4 w-4" />
+                    {selectedChapters.length}개 회차 번역 시작
+                  </>
+                )}
+              </Button>
+            </div>
+          </>
+        )
       )}
     </div>
   );

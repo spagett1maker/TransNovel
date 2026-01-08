@@ -32,8 +32,23 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
+  const verified = searchParams.get("verified");
+  const reset = searchParams.get("reset");
+  const urlError = searchParams.get("error");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // URL 파라미터 에러 메시지
+  const getUrlErrorMessage = () => {
+    switch (urlError) {
+      case "invalid-token":
+        return "유효하지 않은 인증 링크입니다.";
+      case "expired-token":
+        return "만료된 인증 링크입니다. 인증 이메일을 다시 요청해주세요.";
+      default:
+        return null;
+    }
+  };
 
   const form = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -69,18 +84,33 @@ function LoginForm() {
   }
 
   return (
-    <Card>
-      <CardHeader className="text-center">
-        <CardTitle className="text-2xl">TransNovel</CardTitle>
-        <CardDescription>
-          AI 기반 웹소설 번역 플랫폼에 로그인하세요
+    <Card className="border-border/60 shadow-lg">
+      <CardHeader className="text-center pb-2">
+        <CardTitle className="text-2xl font-semibold tracking-tight">TransNovel</CardTitle>
+        <CardDescription className="text-muted-foreground">
+          문학 번역 플랫폼에 로그인하세요
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {verified && (
+              <div className="rounded-md bg-accent/30 border border-accent/50 p-3 text-sm text-accent-foreground">
+                이메일이 인증되었습니다. 로그인해주세요.
+              </div>
+            )}
+            {reset && (
+              <div className="rounded-md bg-accent/30 border border-accent/50 p-3 text-sm text-accent-foreground">
+                비밀번호가 변경되었습니다. 새 비밀번호로 로그인해주세요.
+              </div>
+            )}
+            {getUrlErrorMessage() && (
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+                {getUrlErrorMessage()}
+              </div>
+            )}
             {error && (
-              <div className="p-3 text-sm text-red-500 bg-red-50 rounded-md">
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
                 {error}
               </div>
             )}
@@ -106,7 +136,15 @@ function LoginForm() {
               name="password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>비밀번호</FormLabel>
+                  <div className="flex items-center justify-between">
+                    <FormLabel>비밀번호</FormLabel>
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs text-primary hover:text-primary/80 hover:underline"
+                    >
+                      비밀번호를 잊으셨나요?
+                    </Link>
+                  </div>
                   <FormControl>
                     <Input type="password" placeholder="••••••••" {...field} />
                   </FormControl>
@@ -123,10 +161,10 @@ function LoginForm() {
 
         <div className="relative my-4">
           <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
+            <span className="w-full border-t border-border" />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-white px-2 text-gray-500">또는</span>
+            <span className="bg-card px-2 text-muted-foreground">또는</span>
           </div>
         </div>
 
@@ -158,9 +196,9 @@ function LoginForm() {
         </Button>
       </CardContent>
       <CardFooter className="justify-center">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           계정이 없으신가요?{" "}
-          <Link href="/register" className="text-blue-600 hover:underline">
+          <Link href="/register" className="text-primary hover:text-primary/80 hover:underline">
             회원가입
           </Link>
         </p>

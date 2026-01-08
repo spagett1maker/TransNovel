@@ -30,10 +30,28 @@ export const AGE_RATINGS = {
   NINETEEN: "19세",
 } as const;
 
+// 프로젝트 진행 상태
 export const WORK_STATUS = {
-  PREPARING: "준비중",
+  PREPARING: "등록중",      // @deprecated
+  ONGOING: "번역중",        // @deprecated
+  REGISTERED: "등록완료",
+  TRANSLATING: "번역중",
+  PROOFREADING: "윤문중",
+  COMPLETED: "완료",
+} as const;
+
+// 원작 상태
+export const ORIGINAL_STATUS = {
   ONGOING: "연재중",
   COMPLETED: "완결",
+} as const;
+
+// 원작 언어
+export const SOURCE_LANGUAGES = {
+  ZH: "중국어",
+  JA: "일본어",
+  EN: "영어",
+  OTHER: "기타",
 } as const;
 
 export const workSchema = z.object({
@@ -50,7 +68,6 @@ export const workSchema = z.object({
     .min(1, "제작사/출판사를 입력해주세요.")
     .max(100, "제작사명은 100자 이하여야 합니다."),
   ageRating: z.enum(["ALL", "FIFTEEN", "NINETEEN"]),
-  status: z.enum(["PREPARING", "ONGOING", "COMPLETED"]),
   synopsis: z
     .string()
     .min(10, "줄거리는 10자 이상 입력해주세요.")
@@ -59,6 +76,11 @@ export const workSchema = z.object({
     .array(z.string())
     .min(1, "장르를 1개 이상 선택해주세요.")
     .max(5, "장르는 최대 5개까지 선택 가능합니다."),
+  // 원작 정보
+  originalStatus: z.enum(["ONGOING", "COMPLETED"]),
+  sourceLanguage: z.enum(["ZH", "JA", "EN", "OTHER"]),
+  expectedChapters: z.number().int().positive().optional(),
+  // 원작 플랫폼
   platformName: z.string().optional(),
   platformUrl: z.string().url("올바른 URL을 입력해주세요.").optional().or(z.literal("")),
   creators: z

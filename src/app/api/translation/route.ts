@@ -4,6 +4,86 @@ import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { splitIntoChunks, translateChunks } from "@/lib/gemini";
+import { translationManager } from "@/lib/translation-manager";
+
+interface TranslationContext {
+  titleKo: string;
+  genres: string[];
+  ageRating: string;
+  synopsis: string;
+  glossary: Array<{ original: string; translated: string }>;
+}
+
+// 백그라운드 번역 처리 함수
+async function processTranslation(
+  jobId: string,
+  chapters: Array<{ id: string; number: number; originalContent: string }>,
+  context: TranslationContext
+) {
+  translationManager.startJob(jobId);
+
+  for (const chapter of chapters) {
+    try {
+      // 상태 업데이트: 번역 중
+      await db.chapter.update({
+        where: { id: chapter.id },
+        data: { status: "TRANSLATING" },
+      });
+
+      // 청크 분할
+      const chunks = splitIntoChunks(chapter.originalContent);
+
+      // 챕터 시작 알림
+      translationManager.startChapter(jobId, chapter.number, chunks.length);
+
+      // 청크 번역 (진행 콜백 포함)
+      const translatedChunks = await translateChunks(
+        chunks,
+        context,
+        (current, total) => {
+          translationManager.updateChunkProgress(
+            jobId,
+            chapter.number,
+            current,
+            total
+          );
+        }
+      );
+
+      const translatedContent = translatedChunks.join("\n\n");
+
+      // 번역 결과 저장
+      await db.chapter.update({
+        where: { id: chapter.id },
+        data: {
+          translatedContent,
+          status: "TRANSLATED",
+        },
+      });
+
+      // 챕터 완료 알림
+      translationManager.completeChapter(jobId, chapter.number);
+    } catch (error) {
+      console.error(`Failed to translate chapter ${chapter.number}:`, error);
+
+      // 상태 되돌리기
+      await db.chapter.update({
+        where: { id: chapter.id },
+        data: { status: "PENDING" },
+      });
+
+      // 챕터 실패 알림
+      translationManager.failChapter(
+        jobId,
+        chapter.number,
+        error instanceof Error ? error.message : "번역 실패"
+      );
+    }
+  }
+
+  // 작업 완료
+  translationManager.completeJob(jobId);
+}
 
 export async function POST(req: Request) {
   try {
@@ -26,7 +106,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Get work with glossary
+    // 작품과 용어집 조회
     const work = await db.work.findUnique({
       where: { id: workId },
       include: {
@@ -38,7 +118,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
-    // Get chapters to translate
+    // 번역할 챕터 조회
     const chapters = await db.chapter.findMany({
       where: {
         workId,
@@ -55,7 +135,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const context = {
+    // 번역 컨텍스트 생성
+    const context: TranslationContext = {
       titleKo: work.titleKo,
       genres: work.genres,
       ageRating: work.ageRating,
@@ -66,57 +147,35 @@ export async function POST(req: Request) {
       })),
     };
 
-    const results: Array<{ number: number; success: boolean; error?: string }> = [];
+    // 작업 생성
+    const jobId = translationManager.createJob(
+      workId,
+      chapters.map((ch) => ({ number: ch.number, id: ch.id }))
+    );
 
-    for (const chapter of chapters) {
-      try {
-        // Update status to translating
-        await db.chapter.update({
-          where: { id: chapter.id },
-          data: { status: "TRANSLATING" },
-        });
+    // 백그라운드에서 번역 실행 (await 하지 않음)
+    processTranslation(
+      jobId,
+      chapters.map((ch) => ({
+        id: ch.id,
+        number: ch.number,
+        originalContent: ch.originalContent,
+      })),
+      context
+    ).catch((error) => {
+      console.error("Translation job failed:", error);
+      translationManager.failJob(
+        jobId,
+        error instanceof Error ? error.message : "번역 실패"
+      );
+    });
 
-        // Split content into chunks if too long
-        const chunks = splitIntoChunks(chapter.originalContent);
-
-        // Translate all chunks
-        const translatedChunks = await translateChunks(chunks, context);
-        const translatedContent = translatedChunks.join("\n\n");
-
-        // Save translation
-        await db.chapter.update({
-          where: { id: chapter.id },
-          data: {
-            translatedContent,
-            status: "TRANSLATED",
-          },
-        });
-
-        results.push({ number: chapter.number, success: true });
-      } catch (error) {
-        console.error(`Failed to translate chapter ${chapter.number}:`, error);
-
-        // Revert status on error
-        await db.chapter.update({
-          where: { id: chapter.id },
-          data: { status: "PENDING" },
-        });
-
-        results.push({
-          number: chapter.number,
-          success: false,
-          error: error instanceof Error ? error.message : "번역 실패",
-        });
-      }
-    }
-
-    const successCount = results.filter((r) => r.success).length;
-
+    // 즉시 jobId 반환
     return NextResponse.json({
-      total: chapters.length,
-      success: successCount,
-      failed: chapters.length - successCount,
-      results,
+      jobId,
+      status: "STARTED",
+      totalChapters: chapters.length,
+      message: "번역이 시작되었습니다.",
     });
   } catch (error) {
     console.error("Translation error:", error);

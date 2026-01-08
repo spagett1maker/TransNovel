@@ -84,9 +84,14 @@ export async function POST(req: Request) {
         titleOriginal: validatedData.titleOriginal,
         publisher: validatedData.publisher,
         ageRating: validatedData.ageRating,
-        status: validatedData.status,
+        status: "REGISTERED", // 새 프로젝트는 "등록완료" 상태로 시작
         synopsis: validatedData.synopsis,
         genres: validatedData.genres,
+        // 원작 정보
+        originalStatus: validatedData.originalStatus,
+        sourceLanguage: validatedData.sourceLanguage,
+        expectedChapters: validatedData.expectedChapters || null,
+        // 원작 플랫폼
         platformName: validatedData.platformName || null,
         platformUrl: validatedData.platformUrl || null,
         authorId: session.user.id,

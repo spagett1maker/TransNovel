@@ -36,7 +36,8 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AGE_RATINGS,
   GENRES,
-  WORK_STATUS,
+  ORIGINAL_STATUS,
+  SOURCE_LANGUAGES,
   workSchema,
   type WorkInput,
 } from "@/lib/validations/work";
@@ -52,9 +53,11 @@ export default function NewWorkPage() {
       titleOriginal: "",
       publisher: "",
       ageRating: "ALL",
-      status: "ONGOING",
       synopsis: "",
       genres: [],
+      originalStatus: "COMPLETED",
+      sourceLanguage: "ZH",
+      expectedChapters: undefined,
       platformName: "",
       platformUrl: "",
       creators: [{ name: "", role: "WRITER" }],
@@ -108,8 +111,8 @@ export default function NewWorkPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">새 작품 등록</h1>
-        <p className="text-gray-500">작품의 서지정보를 입력해주세요</p>
+        <h1 className="text-3xl font-bold">새 번역 프로젝트</h1>
+        <p className="text-gray-500">번역할 원작의 정보를 입력해주세요</p>
       </div>
 
       <Form {...form}>
@@ -164,62 +167,33 @@ export default function NewWorkPage() {
                 )}
               />
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <FormField
-                  control={form.control}
-                  name="ageRating"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>연령등급 *</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="연령등급 선택" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(AGE_RATINGS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>연재상태 *</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="연재상태 선택" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(WORK_STATUS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <FormField
+                control={form.control}
+                name="ageRating"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>연령등급 *</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="연령등급 선택" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(AGE_RATINGS).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}
@@ -350,11 +324,99 @@ export default function NewWorkPage() {
             </CardContent>
           </Card>
 
-          {/* 연재 정보 */}
+          {/* 원작 정보 */}
           <Card>
             <CardHeader>
-              <CardTitle>연재 정보 (선택)</CardTitle>
-              <CardDescription>연재처 정보를 입력합니다</CardDescription>
+              <CardTitle>원작 정보</CardTitle>
+              <CardDescription>원작의 언어와 상태를 입력합니다</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <FormField
+                  control={form.control}
+                  name="sourceLanguage"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>원작 언어 *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="원작 언어 선택" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(SOURCE_LANGUAGES).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="originalStatus"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>원작 상태 *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="원작 상태 선택" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(ORIGINAL_STATUS).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="expectedChapters"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>총 회차</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="완결 작품의 총 회차"
+                          {...field}
+                          onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
+                          value={field.value ?? ""}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        완결 작품인 경우 입력
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 원작 플랫폼 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>원작 플랫폼 (선택)</CardTitle>
+              <CardDescription>원작이 연재된 플랫폼 정보를 입력합니다</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
@@ -363,9 +425,9 @@ export default function NewWorkPage() {
                   name="platformName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>연재처</FormLabel>
+                      <FormLabel>플랫폼명</FormLabel>
                       <FormControl>
-                        <Input placeholder="카카오페이지, 네이버 등" {...field} />
+                        <Input placeholder="起点中文网, 晋江文学城 등" {...field} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -375,7 +437,7 @@ export default function NewWorkPage() {
                   name="platformUrl"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>연재처 URL</FormLabel>
+                      <FormLabel>플랫폼 URL</FormLabel>
                       <FormControl>
                         <Input
                           type="url"

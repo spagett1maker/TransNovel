@@ -20,9 +20,26 @@ enum AgeRating {
 }
 
 enum WorkStatus {
-  PREPARING
-  ONGOING
-  COMPLETED
+  // 기존 값 (호환성 유지)
+  PREPARING       // @deprecated - REGISTERED로 대체
+  ONGOING         // @deprecated - TRANSLATING으로 대체
+  // 새 값
+  REGISTERED      // 등록됨 (원문 등록 대기)
+  TRANSLATING     // 번역 진행중
+  PROOFREADING    // 윤문 진행중
+  COMPLETED       // 완료
+}
+
+enum OriginalStatus {
+  ONGOING         // 원작 연재중
+  COMPLETED       // 원작 완결
+}
+
+enum SourceLanguage {
+  ZH              // 중국어
+  JA              // 일본어
+  EN              // 영어
+  OTHER           // 기타
 }
 
 enum ChapterStatus {
@@ -85,33 +102,50 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([email, token])
+}
+
 model Work {
-  id              String       @id @default(cuid())
+  id              String         @id @default(cuid())
   titleKo         String
   titleOriginal   String
   publisher       String
-  ageRating       AgeRating    @default(ALL)
-  status          WorkStatus   @default(ONGOING)
+  ageRating       AgeRating      @default(ALL)
+  status          WorkStatus     @default(REGISTERED)
   coverImage      String?
-  synopsis        String       @db.Text
+  synopsis        String         @db.Text
   genres          String[]
+
+  // 원작 정보
+  originalStatus  OriginalStatus @default(COMPLETED)
+  sourceLanguage  SourceLanguage @default(ZH)
+  expectedChapters Int?          // 예상 총 회차 (완결 작품은 확정)
+
+  // 원작 플랫폼
   platformName    String?
   platformUrl     String?
   publishedAt     DateTime?
-  totalChapters   Int          @default(0)
+  totalChapters   Int            @default(0)
 
   authorId        String
-  author          User         @relation("AuthorWorks", fields: [authorId], references: [id])
+  author          User           @relation("AuthorWorks", fields: [authorId], references: [id])
 
   editorId        String?
-  editor          User?        @relation("EditorWorks", fields: [editorId], references: [id])
+  editor          User?          @relation("EditorWorks", fields: [editorId], references: [id])
 
   chapters        Chapter[]
   glossary        GlossaryItem[]
   creators        Creator[]
 
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 }
 
 model Creator {

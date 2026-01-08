@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import {
   ArrowLeft,
   BookOpen,
@@ -6,11 +7,15 @@ import {
   Languages,
   List,
   Plus,
+  Upload,
+  UserCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 
+import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
+import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +29,9 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { AGE_RATINGS, WORK_STATUS } from "@/lib/validations/work";
+import { canAccessWork } from "@/lib/permissions";
+import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES, WORK_STATUS } from "@/lib/validations/work";
+import { EditorAssignment } from "./editor-assignment";
 
 const CHAPTER_STATUS_LABELS = {
   PENDING: { label: "대기", color: "bg-gray-100 text-gray-700" },
@@ -58,6 +65,9 @@ export default async function WorkDetailPage({
       glossary: {
         take: 10,
       },
+      editor: {
+        select: { id: true, name: true, email: true },
+      },
       _count: {
         select: { chapters: true, glossary: true },
       },
@@ -68,9 +78,19 @@ export default async function WorkDetailPage({
     notFound();
   }
 
-  if (work.authorId !== session.user.id) {
+  const userRole = session.user.role as UserRole;
+
+  // 역할 기반 접근 제어
+  if (!canAccessWork(session.user.id, userRole, work)) {
     redirect("/works");
   }
+
+  // EDITOR는 리뷰 페이지로 리다이렉트
+  if (userRole === UserRole.EDITOR) {
+    redirect(`/works/${id}/review`);
+  }
+
+  const isAuthor = work.authorId === session.user.id || userRole === UserRole.ADMIN;
 
   const translatedCount = await db.chapter.count({
     where: {
@@ -160,11 +180,12 @@ export default async function WorkDetailPage({
       </div>
 
       {/* Quick Actions */}
-      <div className="flex gap-4">
-        <Button asChild>
+      <div className="flex flex-wrap gap-4">
+        <BulkUploadDialog workId={id} />
+        <Button variant="outline" asChild>
           <Link href={`/works/${id}/chapters`}>
             <Plus className="mr-2 h-4 w-4" />
-            회차 업로드
+            회차 관리
           </Link>
         </Button>
         <Button variant="outline" asChild>
@@ -179,6 +200,15 @@ export default async function WorkDetailPage({
             용어집 관리
           </Link>
         </Button>
+        <DownloadDialog
+          workId={work.id}
+          workTitle={work.titleKo}
+          chapters={work.chapters.map((ch) => ({
+            number: ch.number,
+            title: ch.title,
+            status: ch.status,
+          }))}
+        />
       </div>
 
       <Separator />
@@ -228,16 +258,30 @@ export default async function WorkDetailPage({
 
           <Card>
             <CardHeader>
-              <CardTitle>출판 정보</CardTitle>
+              <CardTitle>원작 정보</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <div className="flex justify-between">
+                <span className="text-gray-500">원작 언어</span>
+                <span>{SOURCE_LANGUAGES[work.sourceLanguage as keyof typeof SOURCE_LANGUAGES]}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">원작 상태</span>
+                <span>{ORIGINAL_STATUS[work.originalStatus as keyof typeof ORIGINAL_STATUS]}</span>
+              </div>
+              {work.expectedChapters && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">총 회차</span>
+                  <span>{work.expectedChapters}화</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">제작사/출판사</span>
                 <span>{work.publisher}</span>
               </div>
               {work.platformName && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">연재처</span>
+                  <span className="text-gray-500">원작 플랫폼</span>
                   <span>
                     {work.platformUrl ? (
                       <a
@@ -256,6 +300,27 @@ export default async function WorkDetailPage({
               )}
             </CardContent>
           </Card>
+
+          {/* 윤문가 할당 */}
+          {isAuthor && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserCheck className="h-5 w-5" />
+                  담당 윤문가
+                </CardTitle>
+                <CardDescription>
+                  번역된 원고를 검토할 윤문가를 지정합니다
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <EditorAssignment
+                  workId={work.id}
+                  currentEditor={work.editor}
+                />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="chapters" className="mt-4">

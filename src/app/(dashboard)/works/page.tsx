@@ -33,27 +33,29 @@ export default async function WorksPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">내 작품</h1>
-          <p className="text-gray-500">등록한 작품 목록입니다</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">번역 프로젝트</h1>
+          <p className="mt-1 text-muted-foreground">진행중인 번역 프로젝트 목록입니다</p>
         </div>
         <Button asChild>
           <Link href="/works/new">
-            <Plus className="mr-2 h-4 w-4" />새 작품 등록
+            <Plus className="mr-2 h-4 w-4" />새 프로젝트
           </Link>
         </Button>
       </div>
 
       {works.length === 0 ? (
-        <Card>
+        <Card className="border-border/60">
           <CardContent className="py-16 text-center">
-            <BookOpen className="mx-auto h-12 w-12 text-gray-300" />
-            <h3 className="mt-4 text-lg font-medium">등록된 작품이 없습니다</h3>
-            <p className="mt-2 text-gray-500">
-              첫 작품을 등록하고 AI 번역을 시작해보세요
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+              <BookOpen className="h-8 w-8 text-muted-foreground/50" />
+            </div>
+            <h3 className="mt-4 text-lg font-medium text-foreground">등록된 프로젝트가 없습니다</h3>
+            <p className="mt-2 text-muted-foreground">
+              첫 번역 프로젝트를 등록하고 AI 번역을 시작해보세요
             </p>
             <Button asChild className="mt-4">
               <Link href="/works/new">
-                <Plus className="mr-2 h-4 w-4" />새 작품 등록
+                <Plus className="mr-2 h-4 w-4" />새 프로젝트
               </Link>
             </Button>
           </CardContent>
@@ -62,41 +64,41 @@ export default async function WorksPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {works.map((work) => (
             <Link key={work.id} href={`/works/${work.id}`}>
-              <Card className="h-full transition-shadow hover:shadow-md">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <CardTitle className="line-clamp-1">
+              <Card className="h-full border-border/60 shadow-sm transition-all hover:border-primary/30 hover:shadow-md">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 min-w-0">
+                      <CardTitle className="line-clamp-1 text-base">
                         {work.titleKo}
                       </CardTitle>
-                      <CardDescription className="line-clamp-1">
+                      <CardDescription className="line-clamp-1 text-sm">
                         {work.titleOriginal}
                       </CardDescription>
                     </div>
-                    <Badge variant="outline">
+                    <Badge variant="outline" className="shrink-0 text-xs">
                       {WORK_STATUS[work.status as keyof typeof WORK_STATUS]}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    <p className="line-clamp-2 text-sm text-gray-600">
+                    <p className="line-clamp-2 text-sm text-muted-foreground">
                       {work.synopsis}
                     </p>
                     <div className="flex flex-wrap gap-1">
                       {work.genres.slice(0, 3).map((genre) => (
-                        <Badge key={genre} variant="secondary" className="text-xs">
+                        <Badge key={genre} variant="secondary" className="text-xs bg-muted/80">
                           {genre}
                         </Badge>
                       ))}
                       {work.genres.length > 3 && (
-                        <Badge variant="secondary" className="text-xs">
+                        <Badge variant="secondary" className="text-xs bg-muted/80">
                           +{work.genres.length - 3}
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center justify-between text-sm text-gray-500">
-                      <span>{work._count.chapters}화</span>
+                    <div className="flex items-center justify-between text-sm text-muted-foreground pt-1">
+                      <span className="font-medium">{work._count.chapters}화</span>
                       <span>
                         {AGE_RATINGS[work.ageRating as keyof typeof AGE_RATINGS]}
                       </span>

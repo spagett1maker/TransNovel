@@ -129,9 +129,13 @@ export async function PATCH(
         titleOriginal: validatedData.titleOriginal,
         publisher: validatedData.publisher,
         ageRating: validatedData.ageRating,
-        status: validatedData.status,
         synopsis: validatedData.synopsis,
         genres: validatedData.genres,
+        // 원작 정보
+        originalStatus: validatedData.originalStatus,
+        sourceLanguage: validatedData.sourceLanguage,
+        expectedChapters: validatedData.expectedChapters || null,
+        // 원작 플랫폼
         platformName: validatedData.platformName || null,
         platformUrl: validatedData.platformUrl || null,
         creators: {

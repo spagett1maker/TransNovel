@@ -1,0 +1,202 @@
+"use client";
+
+import { FileText, Loader2, Upload } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+
+interface BulkUploadDialogProps {
+  workId: string;
+  onSuccess?: () => void;
+}
+
+export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [rawText, setRawText] = useState("");
+  const [separator, setSeparator] = useState("");
+  const [preview, setPreview] = useState<{ number: number; title?: string; wordCount: number }[]>([]);
+
+  // 미리보기 생성
+  const handlePreview = async () => {
+    if (!rawText.trim()) {
+      toast.error("원문을 입력해주세요.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // 서버에 미리보기 요청
+      const response = await fetch(`/api/works/${workId}/chapters/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawText,
+          separator: separator || undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "미리보기 생성에 실패했습니다.");
+      }
+
+      setPreview(data.chapters);
+      toast.success(`${data.created}개의 회차가 등록되었습니다.`);
+      setOpen(false);
+      router.refresh();
+      onSuccess?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "오류가 발생했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 파일 업로드 처리
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.txt')) {
+      toast.error("TXT 파일만 업로드 가능합니다.");
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      setRawText(text);
+      toast.success("파일이 로드되었습니다.");
+    } catch {
+      toast.error("파일 읽기에 실패했습니다.");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <Upload className="mr-2 h-4 w-4" />
+          일괄 업로드
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>원문 일괄 업로드</DialogTitle>
+          <DialogDescription>
+            원작의 전체 내용을 한 번에 업로드합니다. 챕터 구분은 자동으로 감지됩니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <Tabs defaultValue="paste">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="paste">텍스트 붙여넣기</TabsTrigger>
+            <TabsTrigger value="file">파일 업로드</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="paste" className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="rawText">원문 전체</Label>
+              <Textarea
+                id="rawText"
+                placeholder="원작 전체 내용을 붙여넣으세요. 챕터 구분(第X章, Chapter X, 제X화 등)이 자동으로 감지됩니다."
+                className="min-h-[300px] font-mono text-sm"
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
+              />
+              <p className="text-xs text-gray-500">
+                {rawText.length.toLocaleString()}자 입력됨
+              </p>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="file" className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="file">TXT 파일</Label>
+              <div className="flex items-center gap-4">
+                <Input
+                  id="file"
+                  type="file"
+                  accept=".txt"
+                  onChange={handleFileUpload}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                UTF-8 인코딩된 TXT 파일을 업로드하세요
+              </p>
+            </div>
+            {rawText && (
+              <div className="rounded-md bg-gray-50 p-4">
+                <p className="text-sm text-gray-600">
+                  <FileText className="inline-block mr-2 h-4 w-4" />
+                  {rawText.length.toLocaleString()}자 로드됨
+                </p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+
+        <div className="space-y-2">
+          <Label htmlFor="separator">챕터 구분자 (선택)</Label>
+          <Input
+            id="separator"
+            placeholder="자동 감지 또는 커스텀 구분자 입력 (예: ----, ====)"
+            value={separator}
+            onChange={(e) => setSeparator(e.target.value)}
+          />
+          <p className="text-xs text-gray-500">
+            비워두면 자동으로 챕터를 감지합니다 (第X章, Chapter X, 제X화 등)
+          </p>
+        </div>
+
+        {preview.length > 0 && (
+          <div className="space-y-2">
+            <Label>감지된 챕터</Label>
+            <div className="max-h-[150px] overflow-y-auto rounded-md border p-2">
+              {preview.map((ch) => (
+                <div key={ch.number} className="flex justify-between py-1 text-sm">
+                  <span>
+                    {ch.number}화{ch.title && ` - ${ch.title}`}
+                  </span>
+                  <span className="text-gray-500">{ch.wordCount.toLocaleString()}자</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            취소
+          </Button>
+          <Button onClick={handlePreview} disabled={isLoading || !rawText.trim()}>
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            업로드
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

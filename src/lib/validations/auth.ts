@@ -21,7 +21,7 @@ export const registerSchema = z
       ),
     confirmPassword: z.string(),
     role: z.enum(["AUTHOR", "EDITOR"], {
-      required_error: "역할을 선택해주세요.",
+      message: "역할을 선택해주세요.",
     }),
   })
   .refine((data) => data.password === data.confirmPassword, {
