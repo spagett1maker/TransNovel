@@ -2,8 +2,10 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { compare } from "bcryptjs";
 import type { Adapter } from "next-auth/adapters";
 import type { NextAuthOptions } from "next-auth";
+import { getServerSession } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
+import { cache } from "react";
 
 import { db } from "@/lib/db";
 
@@ -76,3 +78,8 @@ export const authOptions: NextAuthOptions = {
     },
   },
 };
+
+// 동일 요청 내에서 세션 조회 캐싱 (중복 호출 방지)
+export const getSession = cache(async () => {
+  return await getServerSession(authOptions);
+});

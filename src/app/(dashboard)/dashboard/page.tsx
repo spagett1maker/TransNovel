@@ -1,7 +1,6 @@
 import { UserRole } from "@prisma/client";
 import { BookOpen, CheckCircle, ClipboardCheck, FileText, Languages, Plus } from "lucide-react";
 import Link from "next/link";
-import { getServerSession } from "next-auth";
 
 import { StatsCharts } from "@/components/dashboard/stats-charts";
 import { Badge } from "@/components/ui/badge";
@@ -13,12 +12,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getRoleDisplayName, getStatusDisplayName } from "@/lib/permissions";
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   const userRole = session?.user.role as UserRole;
   const isEditor = userRole === UserRole.EDITOR;
 

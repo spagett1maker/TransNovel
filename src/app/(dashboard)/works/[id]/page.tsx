@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getServerSession } from "next-auth";
 
 import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
 import { DownloadDialog } from "@/components/download/download-dialog";
@@ -27,7 +26,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { canAccessWork } from "@/lib/permissions";
 import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES, WORK_STATUS } from "@/lib/validations/work";
@@ -47,7 +46,7 @@ export default async function WorkDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   const { id } = await params;
 
   if (!session) {

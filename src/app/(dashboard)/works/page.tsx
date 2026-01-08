@@ -1,6 +1,5 @@
 import { BookOpen, Plus } from "lucide-react";
 import Link from "next/link";
-import { getServerSession } from "next-auth";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,12 +10,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { AGE_RATINGS, WORK_STATUS } from "@/lib/validations/work";
 
 export default async function WorksPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
 
   const works = await db.work.findMany({
     where: { authorId: session?.user.id },

@@ -1,12 +1,11 @@
 import { ArrowRight, BookOpen, Languages, Sparkles, Zap } from "lucide-react";
 import Link from "next/link";
-import { getServerSession } from "next-auth";
 
 import { Button } from "@/components/ui/button";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 
 export default async function HomePage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">

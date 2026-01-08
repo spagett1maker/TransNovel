@@ -10,4 +10,5 @@ export const db =
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+// 프로덕션에서도 글로벌 캐싱 적용 (서버리스 환경 최적화)
+globalForPrisma.prisma = db;
