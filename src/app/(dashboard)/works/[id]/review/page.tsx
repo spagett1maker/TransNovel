@@ -1,30 +1,15 @@
 "use client";
 
 import { ChapterStatus, UserRole } from "@prisma/client";
-import { ArrowLeft, Check, ChevronDown, Eye, Loader2, Save } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { getChapterStatusVariant } from "@/lib/chapter-status";
+import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { getStatusDisplayName, getAvailableNextStatuses } from "@/lib/permissions";
 
 interface Chapter {
@@ -48,9 +33,10 @@ interface Work {
   chapters: Chapter[];
 }
 
+type ViewMode = "compare" | "edit";
+
 export default function ReviewPage() {
   const params = useParams();
-  const router = useRouter();
   const { data: session } = useSession();
   const workId = params.id as string;
 
@@ -59,7 +45,7 @@ export default function ReviewPage() {
   const [editedContent, setEditedContent] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("compare");
 
   const userRole = (session?.user?.role as UserRole) || UserRole.AUTHOR;
 
@@ -74,7 +60,6 @@ export default function ReviewPage() {
       const data = await response.json();
       setWork(data);
 
-      // 검토 대기 중인 첫 번째 회차 선택
       const pendingChapter = data.chapters.find(
         (c: Chapter) => c.status === "TRANSLATED" || c.status === "REVIEWING"
       );
@@ -99,15 +84,12 @@ export default function ReviewPage() {
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            editedContent,
-          }),
+          body: JSON.stringify({ editedContent }),
         }
       );
 
       if (!response.ok) throw new Error("Failed to save");
 
-      // 업데이트된 데이터 반영
       const updatedChapter = await response.json();
       setWork((prev) => {
         if (!prev) return prev;
@@ -129,7 +111,7 @@ export default function ReviewPage() {
   async function handleStatusChange(newStatus: ChapterStatus) {
     if (!selectedChapter) return;
 
-    setIsChangingStatus(true);
+    setIsSaving(true);
     try {
       const response = await fetch(
         `/api/works/${workId}/chapters/${selectedChapter.number}`,
@@ -163,7 +145,7 @@ export default function ReviewPage() {
     } catch (error) {
       console.error("Error changing status:", error);
     } finally {
-      setIsChangingStatus(false);
+      setIsSaving(false);
     }
   }
 
@@ -178,17 +160,20 @@ export default function ReviewPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-96 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      <div className="flex h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="h-8 w-8 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-sm text-muted-foreground">로딩 중...</p>
+        </div>
       </div>
     );
   }
 
   if (!work) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500">작품을 찾을 수 없습니다.</p>
-        <Button asChild className="mt-4" variant="outline">
+      <div className="text-center py-20">
+        <p className="text-xl font-medium mb-2">작품을 찾을 수 없습니다</p>
+        <Button variant="outline" asChild className="mt-4">
           <Link href="/works">작품 목록으로</Link>
         </Button>
       </div>
@@ -204,173 +189,214 @@ export default function ReviewPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="h-[calc(100vh-6rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/works">
-            <ArrowLeft className="h-5 w-5" />
+      <header className="shrink-0 pb-6 border-b border-border mb-6">
+        <nav className="mb-3">
+          <Link
+            href="/works"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            ← 프로젝트 목록
           </Link>
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">{work.titleKo}</h1>
-          <p className="text-gray-500">
-            {work.titleOriginal} · 작가: {work.author?.name}
-          </p>
+        </nav>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{work.titleKo}</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {work.titleOriginal} · {work.author?.name}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">검토 대기</p>
+            <p className="text-2xl font-semibold tabular-nums">
+              {reviewableChapters.filter((c) => c.status === "TRANSLATED").length}
+            </p>
+          </div>
         </div>
-      </div>
+      </header>
 
-      <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+      {/* Main Content */}
+      <div className="flex-1 min-h-0 grid gap-6 lg:grid-cols-[280px_1fr]">
         {/* Chapter List */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">회차 목록</CardTitle>
-            <CardDescription>검토 가능한 회차</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="max-h-[600px] overflow-y-auto">
-              {reviewableChapters.length === 0 ? (
-                <p className="p-4 text-center text-gray-500">
-                  검토 가능한 회차가 없습니다
-                </p>
-              ) : (
-                reviewableChapters.map((chapter) => (
+        <aside className="flex flex-col min-h-0">
+          <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-4 shrink-0">
+            검토 가능한 회차
+          </h2>
+          <div className="flex-1 overflow-y-auto space-y-1">
+            {reviewableChapters.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">
+                검토 가능한 회차가 없습니다
+              </p>
+            ) : (
+              reviewableChapters.map((chapter) => {
+                const statusConfig = getChapterStatusConfig(chapter.status);
+                const isSelected = selectedChapter?.id === chapter.id;
+
+                return (
                   <button
                     key={chapter.id}
                     onClick={() => selectChapter(chapter)}
-                    className={`w-full flex items-center justify-between p-4 text-left border-b hover:bg-gray-50 transition-colors ${
-                      selectedChapter?.id === chapter.id ? "bg-blue-50" : ""
+                    className={`w-full flex items-center justify-between p-3 rounded-lg text-left transition-colors ${
+                      isSelected
+                        ? "bg-foreground text-background"
+                        : "hover:bg-muted"
                     }`}
                   >
-                    <div>
-                      <p className="font-medium">
+                    <div className="min-w-0 flex-1">
+                      <p className={`font-medium truncate ${isSelected ? "" : ""}`}>
                         {chapter.number}화
-                        {chapter.title && ` - ${chapter.title}`}
+                        {chapter.title && (
+                          <span className={`font-normal ml-1 ${isSelected ? "opacity-70" : "text-muted-foreground"}`}>
+                            {chapter.title}
+                          </span>
+                        )}
                       </p>
-                      <p className="text-xs text-gray-500">
+                      <p className={`text-xs mt-0.5 ${isSelected ? "opacity-70" : "text-muted-foreground"}`}>
                         {chapter.wordCount.toLocaleString()}자
                       </p>
                     </div>
-                    <Badge variant={getChapterStatusVariant(chapter.status)}>
-                      {getStatusDisplayName(chapter.status)}
+                    <Badge
+                      variant={isSelected ? "secondary" : statusConfig.variant}
+                      className="text-xs shrink-0 ml-2"
+                    >
+                      {statusConfig.label}
                     </Badge>
                   </button>
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                );
+              })
+            )}
+          </div>
+        </aside>
 
         {/* Content Editor */}
         {selectedChapter ? (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>
+          <div className="flex flex-col min-h-0">
+            {/* Chapter Header */}
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <h2 className="font-semibold">
                   {selectedChapter.number}화
-                  {selectedChapter.title && ` - ${selectedChapter.title}`}
-                </CardTitle>
-                <CardDescription>
-                  현재 상태:{" "}
-                  <Badge variant={getChapterStatusVariant(selectedChapter.status)}>
-                    {getStatusDisplayName(selectedChapter.status)}
-                  </Badge>
-                </CardDescription>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="mr-2 h-4 w-4" />
+                  {selectedChapter.title && (
+                    <span className="text-muted-foreground font-normal ml-2">{selectedChapter.title}</span>
                   )}
-                  저장
-                </Button>
-                {availableStatuses.length > 0 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button disabled={isChangingStatus}>
-                        {isChangingStatus ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Check className="mr-2 h-4 w-4" />
-                        )}
-                        상태 변경
-                        <ChevronDown className="ml-2 h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {availableStatuses.map((status) => (
-                        <DropdownMenuItem
-                          key={status}
-                          onClick={() => handleStatusChange(status)}
-                        >
-                          {getStatusDisplayName(status)}으로 변경
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                </h2>
+                <Badge variant={getChapterStatusConfig(selectedChapter.status).variant}>
+                  {getStatusDisplayName(selectedChapter.status)}
+                </Badge>
               </div>
-            </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="compare">
-                <TabsList className="mb-4">
-                  <TabsTrigger value="compare">
-                    <Eye className="mr-2 h-4 w-4" />
-                    비교 보기
-                  </TabsTrigger>
-                  <TabsTrigger value="edit">수정하기</TabsTrigger>
-                </TabsList>
+              <div className="flex items-center gap-2">
+                {/* View Mode Toggle */}
+                <div className="flex gap-1 mr-2">
+                  <button
+                    onClick={() => setViewMode("compare")}
+                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                      viewMode === "compare"
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    비교
+                  </button>
+                  <button
+                    onClick={() => setViewMode("edit")}
+                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                      viewMode === "edit"
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    편집
+                  </button>
+                </div>
 
-                <TabsContent value="compare">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <h4 className="mb-2 font-medium text-gray-700">원문</h4>
-                      <div className="h-[500px] overflow-y-auto rounded-lg border bg-gray-50 p-4 text-sm whitespace-pre-wrap">
+                {viewMode === "edit" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? "저장 중..." : "저장"}
+                  </Button>
+                )}
+
+                {availableStatuses.map((status) => (
+                  <Button
+                    key={status}
+                    size="sm"
+                    onClick={() => handleStatusChange(status)}
+                    disabled={isSaving}
+                  >
+                    {getStatusDisplayName(status)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Content Area */}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {viewMode === "compare" ? (
+                <div className="grid grid-cols-2 gap-4 h-full">
+                  <div className="flex flex-col h-full">
+                    <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-2 shrink-0">
+                      원문
+                    </h3>
+                    <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-5">
+                      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                         {selectedChapter.originalContent}
-                      </div>
+                      </pre>
                     </div>
-                    <div>
-                      <h4 className="mb-2 font-medium text-gray-700">번역문</h4>
-                      <div className="h-[500px] overflow-y-auto rounded-lg border bg-gray-50 p-4 text-sm whitespace-pre-wrap">
+                  </div>
+                  <div className="flex flex-col h-full">
+                    <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-2 shrink-0">
+                      번역문
+                    </h3>
+                    <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-5">
+                      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                         {selectedChapter.editedContent ||
                           selectedChapter.translatedContent ||
                           "번역된 내용이 없습니다."}
-                      </div>
+                      </pre>
                     </div>
                   </div>
-                </TabsContent>
-
-                <TabsContent value="edit">
-                  <div>
-                    <h4 className="mb-2 font-medium text-gray-700">
-                      윤문 편집
-                    </h4>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4 h-full">
+                  <div className="flex flex-col h-full">
+                    <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-2 shrink-0">
+                      원문 (참조)
+                    </h3>
+                    <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-5">
+                      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                        {selectedChapter.originalContent}
+                      </pre>
+                    </div>
+                  </div>
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                      <h3 className="text-xs uppercase tracking-widest text-muted-foreground">
+                        편집
+                      </h3>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {editedContent.length.toLocaleString()}자
+                      </span>
+                    </div>
                     <Textarea
                       value={editedContent}
                       onChange={(e) => setEditedContent(e.target.value)}
-                      className="h-[500px] font-mono text-sm"
+                      className="flex-1 resize-none rounded-xl bg-background text-sm leading-relaxed p-5 font-sans"
                       placeholder="번역문을 수정하세요..."
                     />
-                    <p className="mt-2 text-xs text-gray-500">
-                      {editedContent.length.toLocaleString()}자
-                    </p>
                   </div>
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
-          <Card>
-            <CardContent className="flex h-96 items-center justify-center">
-              <p className="text-gray-500">회차를 선택하세요</p>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-center">
+            <p className="text-muted-foreground">회차를 선택하세요</p>
+          </div>
         )}
       </div>
     </div>

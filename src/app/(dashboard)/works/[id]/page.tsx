@@ -1,15 +1,4 @@
 import { UserRole } from "@prisma/client";
-import {
-  ArrowLeft,
-  BookOpen,
-  Edit,
-  FileText,
-  Languages,
-  List,
-  Plus,
-  Upload,
-  UserCheck,
-} from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -17,15 +6,6 @@ import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
 import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getSession } from "@/lib/auth";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { db } from "@/lib/db";
@@ -52,7 +32,6 @@ export default async function WorkDetailPage({
       creators: true,
       chapters: {
         orderBy: { number: "asc" },
-        take: 20,
       },
       glossary: {
         take: 10,
@@ -72,12 +51,10 @@ export default async function WorkDetailPage({
 
   const userRole = session.user.role as UserRole;
 
-  // 역할 기반 접근 제어
   if (!canAccessWork(session.user.id, userRole, work)) {
     redirect("/works");
   }
 
-  // EDITOR는 리뷰 페이지로 리다이렉트
   if (userRole === UserRole.EDITOR) {
     redirect(`/works/${id}/review`);
   }
@@ -91,301 +68,277 @@ export default async function WorkDetailPage({
     },
   });
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/works">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{work.titleKo}</h1>
-            <Badge variant={getWorkStatusConfig(work.status).variant}>
-              {getWorkStatusConfig(work.status).label}
-            </Badge>
-            <Badge variant="secondary">
-              {AGE_RATINGS[work.ageRating as keyof typeof AGE_RATINGS]}
-            </Badge>
-          </div>
-          <p className="text-gray-500">{work.titleOriginal}</p>
-        </div>
-        <Button variant="outline" asChild>
-          <Link href={`/works/${id}/edit`}>
-            <Edit className="mr-2 h-4 w-4" />
-            수정
-          </Link>
-        </Button>
-      </div>
+  const progressPercent = work._count.chapters > 0
+    ? Math.round((translatedCount / work._count.chapters) * 100)
+    : 0;
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">총 회차</CardTitle>
-            <FileText className="h-4 w-4 text-gray-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{work._count.chapters}화</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">번역 완료</CardTitle>
-            <Languages className="h-4 w-4 text-gray-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{translatedCount}화</div>
-            <p className="text-xs text-gray-500">
-              {work._count.chapters > 0
-                ? `${Math.round((translatedCount / work._count.chapters) * 100)}%`
-                : "0%"}
+  const statusConfig = getWorkStatusConfig(work.status);
+
+  return (
+    <div className="max-w-6xl">
+      {/* Breadcrumb */}
+      <nav className="mb-8">
+        <Link
+          href="/works"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← 프로젝트 목록
+        </Link>
+      </nav>
+
+      {/* Page Header */}
+      <header className="pb-10 border-b border-border mb-10">
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 mb-2">
+              <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
+              <span className="text-xs text-muted-foreground">
+                {AGE_RATINGS[work.ageRating as keyof typeof AGE_RATINGS]}
+              </span>
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight mb-2 truncate">
+              {work.titleKo}
+            </h1>
+            <p className="text-lg text-muted-foreground truncate">
+              {work.titleOriginal}
             </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">용어집</CardTitle>
-            <BookOpen className="h-4 w-4 text-gray-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{work._count.glossary}개</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">장르</CardTitle>
-            <List className="h-4 w-4 text-gray-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-1">
+            {work.creators.length > 0 && (
+              <p className="text-sm text-muted-foreground mt-3">
+                {work.creators.map((c) => c.name).join(", ")}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <BulkUploadDialog workId={id} />
+            <Button variant="outline" asChild>
+              <Link href={`/works/${id}/translate`}>번역 시작</Link>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Stats Row */}
+      <section className="mb-12">
+        <div className="grid gap-4 sm:grid-cols-4">
+          <div className="stat-card">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">회차</p>
+            <p className="text-2xl font-semibold tabular-nums mt-1">{work._count.chapters}</p>
+          </div>
+          <div className="stat-card">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">번역 완료</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <p className="text-2xl font-semibold tabular-nums">{translatedCount}</p>
+              <p className="text-sm text-muted-foreground">/ {work._count.chapters}</p>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="flex-1 h-1 bg-border rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-foreground rounded-full"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              <span className="text-xs tabular-nums text-muted-foreground">{progressPercent}%</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">용어집</p>
+            <p className="text-2xl font-semibold tabular-nums mt-1">{work._count.glossary}</p>
+          </div>
+          <div className="stat-card">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">장르</p>
+            <div className="flex flex-wrap gap-1 mt-2">
               {work.genres.slice(0, 3).map((genre: string) => (
-                <Badge key={genre} variant="secondary" className="text-xs">
+                <span key={genre} className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded">
                   {genre}
-                </Badge>
+                </span>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </div>
+      </section>
 
-      {/* Quick Actions */}
-      <div className="flex flex-wrap gap-4">
-        <BulkUploadDialog workId={id} />
-        <Button variant="outline" asChild>
-          <Link href={`/works/${id}/chapters`}>
-            <Plus className="mr-2 h-4 w-4" />
-            회차 관리
-          </Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href={`/works/${id}/translate`}>
-            <Languages className="mr-2 h-4 w-4" />
-            번역 시작
-          </Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href={`/works/${id}/glossary`}>
-            <BookOpen className="mr-2 h-4 w-4" />
-            용어집 관리
-          </Link>
-        </Button>
-        <DownloadDialog
-          workId={work.id}
-          workTitle={work.titleKo}
-          chapters={work.chapters.map((ch) => ({
-            number: ch.number,
-            title: ch.title,
-            status: ch.status,
-          }))}
-        />
-      </div>
-
-      <Separator />
-
-      {/* Tabs */}
-      <Tabs defaultValue="info">
-        <TabsList>
-          <TabsTrigger value="info">작품 정보</TabsTrigger>
-          <TabsTrigger value="chapters">
-            회차 목록 ({work._count.chapters})
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="info" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>줄거리</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="whitespace-pre-wrap text-gray-700">
-                {work.synopsis}
+      {/* Main Content Grid */}
+      <div className="grid gap-10 lg:grid-cols-[1fr_320px]">
+        {/* Chapter List - Primary Focus */}
+        <section>
+          <div className="section-header">
+            <div>
+              <h2 className="text-xl font-semibold">회차 목록</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                회차를 클릭하여 원문과 번역본을 확인하세요
               </p>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/works/${id}/chapters`}>회차 관리</Link>
+              </Button>
+              <DownloadDialog
+                workId={work.id}
+                workTitle={work.titleKo}
+                chapters={work.chapters.map((ch) => ({
+                  number: ch.number,
+                  title: ch.title,
+                  status: ch.status,
+                }))}
+              />
+            </div>
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>작가 정보</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {work.creators.map((creator) => (
-                  <div key={creator.id} className="flex items-center gap-2">
-                    <Badge variant="outline">
-                      {creator.role === "WRITER"
-                        ? "글"
-                        : creator.role === "ARTIST"
-                          ? "그림"
-                          : "각색"}
-                    </Badge>
-                    <span>{creator.name}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          {work.chapters.length === 0 ? (
+            <div className="section-surface text-center py-16">
+              <p className="text-xl font-medium mb-2">등록된 회차가 없습니다</p>
+              <p className="text-muted-foreground mb-8">
+                원문을 업로드하여 번역을 시작하세요
+              </p>
+              <BulkUploadDialog workId={id} />
+            </div>
+          ) : (
+            <div className="space-y-0">
+              {work.chapters.map((chapter, index) => {
+                const chapterStatus = getChapterStatusConfig(chapter.status);
+                const hasTranslation = ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status);
 
-          <Card>
-            <CardHeader>
-              <CardTitle>원작 정보</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
+                return (
+                  <Link
+                    key={chapter.id}
+                    href={`/works/${id}/chapters/${chapter.number}`}
+                    className="list-item group"
+                  >
+                    <div className="flex items-center gap-4 min-w-0 flex-1">
+                      <span className="text-xs text-muted-foreground tabular-nums w-8">
+                        {String(chapter.number).padStart(3, '0')}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium group-hover:text-muted-foreground transition-colors">
+                            {chapter.number}화
+                          </span>
+                          {chapter.title && (
+                            <span className="text-muted-foreground truncate">
+                              {chapter.title}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {chapter.wordCount.toLocaleString()}자
+                          {hasTranslation && " · 번역 완료"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <Badge variant={chapterStatus.variant} className="text-xs">
+                        {chapterStatus.label}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                        보기 →
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Sidebar - Work Info */}
+        <aside className="space-y-8">
+          {/* Synopsis */}
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+              줄거리
+            </h3>
+            <p className="text-sm text-muted-foreground leading-relaxed line-clamp-6">
+              {work.synopsis || "줄거리가 등록되지 않았습니다."}
+            </p>
+          </div>
+
+          {/* Original Work Info */}
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+              원작 정보
+            </h3>
+            <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-500">원작 언어</span>
-                <span>{SOURCE_LANGUAGES[work.sourceLanguage as keyof typeof SOURCE_LANGUAGES]}</span>
+                <dt className="text-muted-foreground">원작 언어</dt>
+                <dd>{SOURCE_LANGUAGES[work.sourceLanguage as keyof typeof SOURCE_LANGUAGES]}</dd>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">원작 상태</span>
-                <span>{ORIGINAL_STATUS[work.originalStatus as keyof typeof ORIGINAL_STATUS]}</span>
+                <dt className="text-muted-foreground">연재 상태</dt>
+                <dd>{ORIGINAL_STATUS[work.originalStatus as keyof typeof ORIGINAL_STATUS]}</dd>
               </div>
               {work.expectedChapters && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">총 회차</span>
-                  <span>{work.expectedChapters}화</span>
+                  <dt className="text-muted-foreground">예상 회차</dt>
+                  <dd>{work.expectedChapters}화</dd>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-gray-500">제작사/출판사</span>
-                <span>{work.publisher}</span>
+                <dt className="text-muted-foreground">출판사</dt>
+                <dd className="truncate ml-4">{work.publisher}</dd>
               </div>
               {work.platformName && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">원작 플랫폼</span>
-                  <span>
+                  <dt className="text-muted-foreground">플랫폼</dt>
+                  <dd>
                     {work.platformUrl ? (
                       <a
                         href={work.platformUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline"
+                        className="text-foreground hover:underline"
                       >
-                        {work.platformName}
+                        {work.platformName} ↗
                       </a>
                     ) : (
                       work.platformName
                     )}
-                  </span>
+                  </dd>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </dl>
+          </div>
 
-          {/* 윤문가 할당 */}
+          {/* Quick Links */}
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+              빠른 링크
+            </h3>
+            <div className="space-y-2">
+              <Link
+                href={`/works/${id}/glossary`}
+                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                용어집 관리 ({work._count.glossary}개)
+              </Link>
+              <Link
+                href={`/works/${id}/translate`}
+                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                AI 번역 시작
+              </Link>
+              <Link
+                href={`/works/${id}/chapters`}
+                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                회차 일괄 업로드
+              </Link>
+            </div>
+          </div>
+
+          {/* Editor Assignment */}
           {isAuthor && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <UserCheck className="h-5 w-5" />
-                  담당 윤문가
-                </CardTitle>
-                <CardDescription>
-                  번역된 원고를 검토할 윤문가를 지정합니다
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <EditorAssignment
-                  workId={work.id}
-                  currentEditor={work.editor}
-                />
-              </CardContent>
-            </Card>
+            <div>
+              <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+                담당 윤문가
+              </h3>
+              <EditorAssignment
+                workId={work.id}
+                currentEditor={work.editor}
+              />
+            </div>
           )}
-        </TabsContent>
-
-        <TabsContent value="chapters" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>회차 목록</CardTitle>
-                <CardDescription>
-                  등록된 회차를 관리합니다
-                </CardDescription>
-              </div>
-              <Button asChild>
-                <Link href={`/works/${id}/chapters`}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  회차 추가
-                </Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {work.chapters.length === 0 ? (
-                <div className="py-8 text-center text-gray-500">
-                  <FileText className="mx-auto h-12 w-12 text-gray-300" />
-                  <p className="mt-2">등록된 회차가 없습니다</p>
-                  <Button asChild className="mt-4" variant="outline">
-                    <Link href={`/works/${id}/chapters`}>첫 회차 업로드</Link>
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {work.chapters.map((chapter) => {
-                    const statusConfig = getChapterStatusConfig(chapter.status);
-                    return (
-                      <Link
-                        key={chapter.id}
-                        href={`/works/${id}/chapters/${chapter.number}`}
-                        className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="font-medium">
-                            {chapter.number}화
-                          </span>
-                          {chapter.title && (
-                            <span className="text-muted-foreground">
-                              {chapter.title}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm text-muted-foreground">
-                            {chapter.wordCount.toLocaleString()}자
-                          </span>
-                          <Badge variant={statusConfig.variant}>
-                            {statusConfig.label}
-                          </Badge>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                  {work._count.chapters > 20 && (
-                    <div className="pt-4 text-center">
-                      <Button variant="outline" asChild>
-                        <Link href={`/works/${id}/chapters`}>
-                          전체 회차 보기 ({work._count.chapters}화)
-                        </Link>
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        </aside>
+      </div>
     </div>
   );
 }
