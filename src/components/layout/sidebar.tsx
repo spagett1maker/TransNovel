@@ -47,13 +47,13 @@ export function Sidebar() {
   const navigation = userRole === UserRole.EDITOR ? editorNavigation : authorNavigation;
 
   return (
-    <div className="flex h-full w-72 flex-col bg-sidebar">
+    <div className="flex h-full w-72 flex-col bg-sidebar border-r border-sidebar-border">
       {/* Logo */}
       <div className="flex h-20 items-center px-6">
         <Link href="/dashboard" className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary shadow-md">
+          {/* <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary shadow-md">
             <Sparkles className="h-5 w-5 text-primary-foreground" />
-          </div>
+          </div> */}
           <span className="text-xl font-bold tracking-tight text-sidebar-foreground">
             TransNovel
           </span>
@@ -103,7 +103,7 @@ export function Sidebar() {
                     {session?.user?.name}
                   </span>
                   <Badge
-                    variant="success"
+                    variant="info"
                     className="text-[10px] px-2 py-0.5"
                   >
                     {getRoleDisplayName(userRole)}

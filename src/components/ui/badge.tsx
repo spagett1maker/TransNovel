@@ -14,11 +14,20 @@ const badgeVariants = cva(
         secondary:
           "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/80",
         destructive:
-          "border-transparent bg-destructive/10 text-destructive [a&]:hover:bg-destructive/20",
+          "border-transparent bg-status-error/15 text-status-error [a&]:hover:bg-status-error/25",
         outline:
           "border-current/20 text-foreground bg-transparent [a&]:hover:bg-accent",
+        // Status variants with colors
         success:
-          "border-transparent bg-foreground/10 text-foreground [a&]:hover:bg-foreground/15",
+          "border-transparent bg-status-success/15 text-status-success [a&]:hover:bg-status-success/25",
+        warning:
+          "border-transparent bg-status-warning/15 text-status-warning [a&]:hover:bg-status-warning/25",
+        info:
+          "border-transparent bg-status-info/15 text-status-info [a&]:hover:bg-status-info/25",
+        pending:
+          "border-transparent bg-status-pending/15 text-status-pending [a&]:hover:bg-status-pending/25",
+        progress:
+          "border-transparent bg-status-progress/15 text-status-progress [a&]:hover:bg-status-progress/25",
       },
     },
     defaultVariants: {
