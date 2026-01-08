@@ -298,29 +298,32 @@ export default async function WorkDetailPage({
             </dl>
           </div>
 
-          {/* Quick Links */}
+          {/* Quick Actions */}
           <div>
             <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
-              빠른 링크
+              빠른 작업
             </h3>
             <div className="space-y-2">
               <Link
-                href={`/works/${id}/glossary`}
-                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+                href={`/works/${id}/translate`}
+                className="flex items-center justify-between w-full px-4 py-3 bg-foreground text-background rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
               >
-                용어집 관리 ({work._count.glossary}개)
+                <span>AI 번역 시작</span>
+                <span>→</span>
               </Link>
               <Link
-                href={`/works/${id}/translate`}
-                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+                href={`/works/${id}/glossary`}
+                className="flex items-center justify-between w-full px-4 py-3 bg-muted rounded-lg text-sm hover:bg-muted/80 transition-colors"
               >
-                AI 번역 시작
+                <span>용어집 관리</span>
+                <span className="text-muted-foreground">{work._count.glossary}개</span>
               </Link>
               <Link
                 href={`/works/${id}/chapters`}
-                className="block text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+                className="flex items-center justify-between w-full px-4 py-3 bg-muted rounded-lg text-sm hover:bg-muted/80 transition-colors"
               >
-                회차 일괄 업로드
+                <span>회차 일괄 업로드</span>
+                <span className="text-muted-foreground">→</span>
               </Link>
             </div>
           </div>
