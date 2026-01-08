@@ -207,3 +207,103 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/*
+ * Section & Layout Utilities
+ * Editorial minimal approach with clear visual hierarchy
+ */
+
+/* Section container with subtle background */
+.section-surface {
+  background: var(--muted);
+  border-radius: 1.25rem;
+  padding: 2rem;
+}
+
+.dark .section-surface {
+  background: var(--muted);
+}
+
+/* Stat card with emphasis */
+.stat-card {
+  background: var(--muted);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dark .stat-card {
+  background: var(--muted);
+}
+
+/* List item with hover */
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+  transition: background-color 0.15s ease;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item:hover {
+  background-color: var(--muted);
+  margin-left: -1rem;
+  margin-right: -1rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  border-radius: 0.75rem;
+}
+
+/* Project card */
+.project-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  padding: 1.75rem;
+  transition: all 0.2s ease;
+}
+
+.project-card:hover {
+  border-color: var(--foreground);
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.08);
+}
+
+.dark .project-card:hover {
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.4);
+}
+
+/* Section header */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+/* Active nav indicator */
+.nav-active {
+  position: relative;
+}
+
+.nav-active::before {
+  content: '';
+  position: absolute;
+  left: -1.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 1.25rem;
+  background: var(--foreground);
+  border-radius: 2px;
+}
