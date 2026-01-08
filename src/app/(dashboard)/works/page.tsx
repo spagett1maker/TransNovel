@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/card";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { AGE_RATINGS, WORK_STATUS } from "@/lib/validations/work";
+import { AGE_RATINGS } from "@/lib/validations/work";
+import { getWorkStatusConfig } from "@/lib/work-status";
 
 export default async function WorksPage() {
   const session = await getSession();
@@ -74,8 +75,8 @@ export default async function WorksPage() {
                         {work.titleOriginal}
                       </CardDescription>
                     </div>
-                    <Badge variant="outline" className="shrink-0 text-xs">
-                      {WORK_STATUS[work.status as keyof typeof WORK_STATUS]}
+                    <Badge variant={getWorkStatusConfig(work.status).variant} className="shrink-0 text-xs">
+                      {getWorkStatusConfig(work.status).label}
                     </Badge>
                   </div>
                 </CardHeader>

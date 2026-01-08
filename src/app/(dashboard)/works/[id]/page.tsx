@@ -30,7 +30,8 @@ import { getSession } from "@/lib/auth";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { db } from "@/lib/db";
 import { canAccessWork } from "@/lib/permissions";
-import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES, WORK_STATUS } from "@/lib/validations/work";
+import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES } from "@/lib/validations/work";
+import { getWorkStatusConfig } from "@/lib/work-status";
 import { EditorAssignment } from "./editor-assignment";
 
 export default async function WorkDetailPage({
@@ -102,8 +103,8 @@ export default async function WorkDetailPage({
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{work.titleKo}</h1>
-            <Badge variant="outline">
-              {WORK_STATUS[work.status as keyof typeof WORK_STATUS]}
+            <Badge variant={getWorkStatusConfig(work.status).variant}>
+              {getWorkStatusConfig(work.status).label}
             </Badge>
             <Badge variant="secondary">
               {AGE_RATINGS[work.ageRating as keyof typeof AGE_RATINGS]}
