@@ -2,6 +2,158 @@ import { GoogleGenerativeAI, GoogleGenerativeAIError } from "@google/generative-
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
 
+// 조건부 로깅 - 프로덕션에서는 비활성화
+const isDev = process.env.NODE_ENV === "development";
+const log = (...args: unknown[]) => {
+  if (isDev) console.log("[Gemini]", ...args);
+};
+const logError = (...args: unknown[]) => {
+  console.error("[Gemini]", ...args);
+};
+
+// ============================================
+// API 타임아웃 및 Rate Limiter 설정
+// ============================================
+
+const API_TIMEOUT_MS = 60000; // 60초 타임아웃
+const RATE_LIMIT_RPM = 15; // 분당 최대 요청 수 (Gemini Free tier: 15 RPM)
+const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
+
+// 글로벌 Rate Limiter (싱글톤) - Promise 기반 큐로 경쟁 조건 방지
+class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly maxTokens: number;
+  private readonly refillRate: number; // 밀리초당 토큰 리필 속도
+  private pendingQueue: Array<{
+    resolve: () => void;
+    reject: (err: Error) => void;
+  }> = [];
+  private isProcessing: boolean = false;
+
+  constructor(requestsPerMinute: number) {
+    this.maxTokens = requestsPerMinute;
+    this.tokens = requestsPerMinute;
+    this.lastRefill = Date.now();
+    this.refillRate = requestsPerMinute / RATE_LIMIT_WINDOW_MS;
+  }
+
+  private refillTokens(): void {
+    const now = Date.now();
+    const elapsed = now - this.lastRefill;
+    const tokensToAdd = elapsed * this.refillRate;
+    this.tokens = Math.min(this.maxTokens, this.tokens + tokensToAdd);
+    this.lastRefill = now;
+  }
+
+  private getWaitTimeMs(): number {
+    if (this.tokens >= 1) return 0;
+    return Math.ceil((1 - this.tokens) / this.refillRate);
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    while (this.pendingQueue.length > 0) {
+      this.refillTokens();
+
+      if (this.tokens >= 1) {
+        // 토큰 사용 가능 - 즉시 처리
+        this.tokens -= 1;
+        const next = this.pendingQueue.shift();
+        next?.resolve();
+      } else {
+        // 토큰 부족 - 대기 후 재시도
+        const waitTime = this.getWaitTimeMs();
+        log(`Rate limiter: ${waitTime}ms 대기 중 (큐 대기: ${this.pendingQueue.length})`);
+        await new Promise((r) => setTimeout(r, waitTime));
+      }
+    }
+
+    this.isProcessing = false;
+  }
+
+  async acquire(): Promise<void> {
+    // 먼저 리필 시도
+    this.refillTokens();
+
+    // 큐가 비어있고 토큰이 있으면 즉시 반환 (빠른 경로)
+    if (this.pendingQueue.length === 0 && this.tokens >= 1) {
+      this.tokens -= 1;
+      return;
+    }
+
+    // 그 외에는 큐에 추가하고 대기
+    return new Promise<void>((resolve, reject) => {
+      this.pendingQueue.push({ resolve, reject });
+      this.processQueue();
+    });
+  }
+
+  // Rate limit 에러 시 토큰을 0으로 리셋하고 추가 대기
+  onRateLimitError(): void {
+    this.tokens = 0;
+    this.lastRefill = Date.now();
+    log("Rate limiter: API rate limit 에러로 토큰 리셋");
+  }
+
+  // 현재 상태 조회 (디버깅용)
+  getStatus(): { tokens: number; queueLength: number } {
+    this.refillTokens();
+    return {
+      tokens: Math.floor(this.tokens * 100) / 100,
+      queueLength: this.pendingQueue.length,
+    };
+  }
+}
+
+// 글로벌 rate limiter 인스턴스 (HMR에서도 유지)
+const globalForRateLimiter = globalThis as unknown as {
+  geminiRateLimiter: RateLimiter | undefined;
+};
+
+const rateLimiter =
+  globalForRateLimiter.geminiRateLimiter ?? new RateLimiter(RATE_LIMIT_RPM);
+
+if (process.env.NODE_ENV !== "production") {
+  globalForRateLimiter.geminiRateLimiter = rateLimiter;
+}
+
+// 타임아웃 래퍼 함수
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operation: string
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new TranslationError(
+        `${operation} 시간 초과 (${timeoutMs / 1000}초)`,
+        "TIMEOUT",
+        true // 타임아웃은 재시도 가능
+      ));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId!);
+    throw error;
+  }
+}
+
+// Jitter 추가 함수 (thundering herd 방지)
+function addJitter(baseMs: number, jitterFraction: number = 0.2): number {
+  const jitter = baseMs * jitterFraction * (Math.random() - 0.5) * 2;
+  return Math.max(0, baseMs + jitter);
+}
+
 // 에러 타입 정의
 export class TranslationError extends Error {
   constructor(
@@ -258,35 +410,35 @@ export async function translateText(
   context: TranslationContext,
   maxRetries: number = 5
 ): Promise<string> {
-  console.log("[Gemini] translateText 시작", {
-    contentLength: content.length,
-    title: context.titleKo,
-    maxRetries,
-  });
+  log("translateText 시작", { contentLength: content.length, title: context.titleKo });
 
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
   });
 
-  console.log("[Gemini] 모델 초기화 완료: gemini-2.5-flash-preview-05-20");
-
   const systemPrompt = buildSystemPrompt(context);
-  console.log("[Gemini] 시스템 프롬프트 생성 완료, 길이:", systemPrompt.length);
+  log("시스템 프롬프트 생성 완료, 길이:", systemPrompt.length);
 
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    console.log(`[Gemini] 번역 시도 ${attempt + 1}/${maxRetries}`);
+    log(`번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
-      console.log("[Gemini] API 요청 시작...");
-      const result = await model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: systemPrompt },
-              {
-                text: `
+      // 1. Rate Limiter 토큰 획득 (초당 요청 수 제한)
+      await rateLimiter.acquire();
+
+      const startTime = Date.now();
+
+      // 2. API 호출에 타임아웃 적용
+      const result = await withTimeout(
+        model.generateContent({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: systemPrompt },
+                {
+                  text: `
 ═══════════════════════════════════════════════════════════════
 [원문 시작]
 ═══════════════════════════════════════════════════════════════
@@ -296,25 +448,29 @@ ${content}
 ═══════════════════════════════════════════════════════════════
 [원문 끝]
 ═══════════════════════════════════════════════════════════════`,
-              },
-            ],
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.4,
+            topP: 0.85,
+            topK: 40,
+            maxOutputTokens: 16384,
           },
-        ],
-        generationConfig: {
-          temperature: 0.4,
-          topP: 0.85,
-          topK: 40,
-          maxOutputTokens: 16384,
-        },
-      });
+        }),
+        API_TIMEOUT_MS,
+        "번역 API 호출"
+      );
 
-      console.log("[Gemini] API 응답 수신");
+      const elapsed = Date.now() - startTime;
+      log(`API 응답 수신 (${elapsed}ms 소요)`);
+
       const response = result.response;
       const text = response.text();
-      console.log("[Gemini] 응답 텍스트 길이:", text?.length || 0);
 
       if (!text || text.trim().length === 0) {
-        console.error("[Gemini] 빈 응답 수신됨");
+        logError("빈 응답 수신됨");
         throw new TranslationError(
           "AI가 빈 응답을 반환했습니다.",
           "EMPTY_RESPONSE",
@@ -322,34 +478,45 @@ ${content}
         );
       }
 
-      console.log("[Gemini] 번역 성공, 결과 길이:", text.length);
+      log("번역 성공, 결과 길이:", text.length);
       return text;
     } catch (error) {
-      lastError = analyzeError(error);
+      lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      console.error(`Translation attempt ${attempt + 1} failed:`, {
+      logError(`번역 시도 ${attempt + 1} 실패:`, {
         code: lastError.code,
         message: lastError.message,
         retryable: lastError.retryable,
       });
+
+      // Rate limit 에러 시 rate limiter에 알림
+      if (lastError.code === "RATE_LIMIT") {
+        rateLimiter.onRateLimitError();
+      }
 
       // 재시도 불가능한 오류는 즉시 실패
       if (!lastError.retryable) {
         throw lastError;
       }
 
-      // 마지막 시도가 아니면 지수 백오프로 대기
+      // 마지막 시도가 아니면 지수 백오프로 대기 (jitter 포함)
       if (attempt < maxRetries - 1) {
-        // Rate limit 에러는 더 긴 대기 시간 (최소 15초, 최대 60초)
-        const baseDelay = lastError.code === "RATE_LIMIT" ? 15000 : 2000;
-        const backoffMs = Math.min(baseDelay * Math.pow(2, attempt), 60000);
-        console.log(`[Gemini] ${backoffMs}ms 후 재시도...`);
-        await delay(backoffMs);
+        // Rate limit/타임아웃 에러는 더 긴 대기 시간
+        const baseDelay =
+          lastError.code === "RATE_LIMIT" ? 30000 :  // 30초
+          lastError.code === "TIMEOUT" ? 10000 :      // 10초
+          3000;                                        // 3초
+
+        const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
+        const waitMs = addJitter(backoffMs);
+        log(`${Math.round(waitMs)}ms 후 재시도... (attempt ${attempt + 1})`);
+        await delay(waitMs);
       }
     }
   }
 
   // 모든 재시도 실패
+  logError("모든 재시도 실패");
   throw lastError || new TranslationError(
     "번역에 실패했습니다. 다시 시도해주세요.",
     "MAX_RETRIES",
@@ -364,72 +531,109 @@ export interface ChunkTranslationResult {
   error?: string;
 }
 
+// 중간 저장 콜백 타입 (async 지원)
+export type ChunkProgressCallback = (
+  current: number,
+  total: number,
+  result: ChunkTranslationResult,
+  accumulatedResults: string[]  // 현재까지의 번역 결과
+) => void | Promise<void>;
+
 export async function translateChunks(
   chunks: string[],
   context: TranslationContext,
-  onProgress?: (current: number, total: number, result: ChunkTranslationResult) => void
+  onProgress?: ChunkProgressCallback,
+  startFromChunk: number = 0  // 이어서 번역할 시작 청크 인덱스
 ): Promise<{ results: string[]; failedChunks: number[] }> {
-  console.log("[Gemini] translateChunks 시작", {
+  log("translateChunks 시작", {
     totalChunks: chunks.length,
-    title: context.titleKo,
+    startFromChunk,
+    title: context.titleKo
   });
 
   const results: string[] = [];
   const failedChunks: number[] = [];
+  let consecutiveFailures = 0; // 연속 실패 카운터
 
-  for (let i = 0; i < chunks.length; i++) {
-    // Rate limit 방지: 첫 번째 청크가 아니면 딜레이 추가
-    if (i > 0) {
-      const delayMs = 1000; // 1초 딜레이
-      console.log(`[Gemini] Rate limit 방지 딜레이: ${delayMs}ms`);
-      await delay(delayMs);
+  for (let i = startFromChunk; i < chunks.length; i++) {
+    // Rate limiter가 이미 속도를 제어하지만, 추가 안전 딜레이
+    // 500회 × 2청크 = 1000개 요청을 안정적으로 처리하기 위해 2초 딜레이
+    if (i > startFromChunk) {
+      const chunkDelay = addJitter(2000); // 2초 + jitter
+      await delay(chunkDelay);
     }
 
-    console.log(`[Gemini] 청크 ${i + 1}/${chunks.length} 번역 시작, 길이: ${chunks[i].length}`);
+    log(`청크 ${i + 1}/${chunks.length} 번역 시작`);
     try {
       const translated = await translateText(chunks[i], context);
-      console.log(`[Gemini] 청크 ${i + 1} 번역 완료`);
       results.push(translated);
+      consecutiveFailures = 0; // 성공하면 연속 실패 리셋
 
-      onProgress?.(i + 1, chunks.length, {
-        index: i,
-        success: true,
-        content: translated,
-      });
+      // 콜백에 현재까지의 결과 전달 (중간 저장용)
+      if (onProgress) {
+        await onProgress(i + 1, chunks.length, {
+          index: i,
+          success: true,
+          content: translated,
+        }, results);
+      }
     } catch (error) {
       const translationError = error instanceof TranslationError
         ? error
         : analyzeError(error);
 
-      console.error(`[Gemini] 청크 ${i + 1} 번역 실패:`, {
+      logError(`청크 ${i + 1} 번역 실패:`, {
         code: translationError.code,
         message: translationError.message,
-        retryable: translationError.retryable,
       });
 
       // 실패한 청크는 원문으로 대체하고 표시
       results.push(`[번역 실패: ${translationError.message}]\n\n${chunks[i]}`);
       failedChunks.push(i);
+      consecutiveFailures++;
 
-      onProgress?.(i + 1, chunks.length, {
-        index: i,
-        success: false,
-        error: translationError.message,
-      });
+      if (onProgress) {
+        await onProgress(i + 1, chunks.length, {
+          index: i,
+          success: false,
+          error: translationError.message,
+        }, results);
+      }
 
-      // 재시도 불가능한 오류가 연속으로 발생하면 중단
-      if (!translationError.retryable && failedChunks.length >= 3) {
-        console.error("[Gemini] 연속 오류로 번역 중단");
+      // 연속 실패 시 추가 대기 (rate limit 회복 시간)
+      if (consecutiveFailures >= 2) {
+        const recoveryDelay = addJitter(10000 * consecutiveFailures); // 연속 실패마다 10초씩 증가
+        log(`연속 ${consecutiveFailures}회 실패, ${Math.round(recoveryDelay)}ms 추가 대기`);
+        await delay(recoveryDelay);
+      }
+
+      // 재시도 불가능한 오류가 연속 3회 또는 전체 5회 이상이면 중단
+      if (!translationError.retryable && consecutiveFailures >= 3) {
+        logError("연속 비재시도 오류로 번역 중단", { failedChunks });
         throw new TranslationError(
           `연속 오류로 번역 중단: ${translationError.message}`,
           "CONSECUTIVE_FAILURES",
           false
         );
       }
+
+      // 전체 실패율이 20% 초과하면 중단 (500청크 중 100개 실패 시)
+      const processedCount = i - startFromChunk + 1;
+      if (failedChunks.length > processedCount * 0.2 && failedChunks.length >= 5) {
+        logError("실패율 20% 초과로 번역 중단", {
+          failedCount: failedChunks.length,
+          processedChunks: processedCount
+        });
+        throw new TranslationError(
+          `실패율이 너무 높습니다 (${failedChunks.length}/${processedCount} 실패)`,
+          "HIGH_FAILURE_RATE",
+          false
+        );
+      }
     }
   }
 
-  console.log("[Gemini] translateChunks 완료", {
+  log("translateChunks 완료", {
     totalResults: results.length,
     failedCount: failedChunks.length,
   });
@@ -437,23 +641,128 @@ export async function translateChunks(
   return { results, failedChunks };
 }
 
+// 토큰 추정 (CJK 문자는 대략 1-2 토큰, 영문은 4자당 1토큰)
+function estimateTokens(text: string): number {
+  const cjkPattern = /[\u4e00-\u9fff\u3400-\u4dbf\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]/g;
+  const cjkMatches = text.match(cjkPattern);
+  const cjkCount = cjkMatches?.length ?? 0;
+  const nonCjkCount = text.length - cjkCount;
+
+  // CJK는 대략 1.5토큰/글자, 영문/숫자는 0.25토큰/글자
+  return Math.ceil(cjkCount * 1.5 + nonCjkCount * 0.25);
+}
+
+// 긴 문단을 문장 단위로 분할
+function splitLongParagraph(paragraph: string, maxLength: number): string[] {
+  if (paragraph.length <= maxLength) {
+    return [paragraph];
+  }
+
+  const results: string[] = [];
+  // 중국어/한국어/일본어 문장 구분자
+  const sentenceDelimiters = /([。！？.!?]+["」』"']*)\s*/g;
+  const sentences: string[] = [];
+  let lastIndex = 0;
+
+  let match;
+  while ((match = sentenceDelimiters.exec(paragraph)) !== null) {
+    const sentence = paragraph.slice(lastIndex, match.index + match[0].length);
+    sentences.push(sentence.trim());
+    lastIndex = match.index + match[0].length;
+  }
+
+  // 마지막 남은 부분
+  if (lastIndex < paragraph.length) {
+    const remaining = paragraph.slice(lastIndex).trim();
+    if (remaining) {
+      sentences.push(remaining);
+    }
+  }
+
+  // 문장이 분리되지 않으면 강제로 자르기
+  if (sentences.length === 0) {
+    sentences.push(paragraph);
+  }
+
+  // 문장들을 청크로 합치기
+  let currentChunk = "";
+  for (const sentence of sentences) {
+    // 단일 문장이 maxLength를 초과하면 강제로 분할
+    if (sentence.length > maxLength) {
+      if (currentChunk) {
+        results.push(currentChunk.trim());
+        currentChunk = "";
+      }
+      // 강제 분할 (maxLength 단위로)
+      for (let i = 0; i < sentence.length; i += maxLength) {
+        results.push(sentence.slice(i, i + maxLength));
+      }
+      continue;
+    }
+
+    if (currentChunk.length + sentence.length > maxLength && currentChunk) {
+      results.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += (currentChunk ? " " : "") + sentence;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    results.push(currentChunk.trim());
+  }
+
+  return results;
+}
+
+// Gemini 입력 토큰 한도 (안전 마진 포함)
+const MAX_INPUT_TOKENS = 30000; // Gemini 2.5 Flash는 1M 토큰 지원, 안전하게 30K로 제한
+const WARN_TOKEN_THRESHOLD = 20000;
+
 export function splitIntoChunks(text: string, maxLength: number = 3000): string[] {
   const paragraphs = text.split(/\n\n+/);
   const chunks: string[] = [];
   let currentChunk = "";
 
   for (const paragraph of paragraphs) {
-    if (currentChunk.length + paragraph.length > maxLength && currentChunk) {
-      chunks.push(currentChunk.trim());
-      currentChunk = paragraph;
-    } else {
-      currentChunk += (currentChunk ? "\n\n" : "") + paragraph;
+    // 긴 문단은 먼저 분할
+    const splitParagraphs = splitLongParagraph(paragraph, maxLength);
+
+    for (const subParagraph of splitParagraphs) {
+      if (currentChunk.length + subParagraph.length > maxLength && currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = subParagraph;
+      } else {
+        currentChunk += (currentChunk ? "\n\n" : "") + subParagraph;
+      }
     }
   }
 
   if (currentChunk.trim()) {
     chunks.push(currentChunk.trim());
   }
+
+  // 토큰 검증 및 로깅
+  for (let i = 0; i < chunks.length; i++) {
+    const tokens = estimateTokens(chunks[i]);
+    if (tokens > MAX_INPUT_TOKENS) {
+      logError(`청크 ${i + 1} 토큰 한도 초과! (${tokens} > ${MAX_INPUT_TOKENS})`, {
+        chunkLength: chunks[i].length,
+        estimatedTokens: tokens,
+      });
+    } else if (tokens > WARN_TOKEN_THRESHOLD) {
+      log(`청크 ${i + 1} 토큰 경고: ${tokens}개 (높은 편)`, {
+        chunkLength: chunks[i].length,
+      });
+    }
+  }
+
+  log("청크 분할 완료", {
+    totalChunks: chunks.length,
+    avgChunkLength: Math.round(chunks.reduce((acc, c) => acc + c.length, 0) / chunks.length),
+    maxChunkLength: Math.max(...chunks.map(c => c.length)),
+    totalEstimatedTokens: chunks.reduce((acc, c) => acc + estimateTokens(c), 0),
+  });
 
   return chunks;
 }
@@ -526,10 +835,9 @@ export async function retranslateText(
   context: TranslationContext,
   maxRetries: number = 3
 ): Promise<string> {
-  console.log("[Gemini] retranslateText 시작", {
+  log("retranslateText 시작", {
     originalLength: originalContent.length,
     translationLength: currentTranslation.length,
-    feedbackLength: feedback.length,
     hasSelectedText: !!selectedText,
   });
 
@@ -545,29 +853,34 @@ export async function retranslateText(
     context
   );
 
-  console.log("[Gemini] 재번역 프롬프트 생성 완료, 길이:", prompt.length);
-
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    console.log(`[Gemini] 재번역 시도 ${attempt + 1}/${maxRetries}`);
+    log(`재번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
-      const result = await model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.3, // 재번역은 좀 더 일관성 있게
-          topP: 0.85,
-          topK: 40,
-          maxOutputTokens: 16384,
-        },
-      });
+      // Rate Limiter 토큰 획득
+      await rateLimiter.acquire();
 
-      console.log("[Gemini] 재번역 API 응답 수신");
+      // 타임아웃 적용
+      const result = await withTimeout(
+        model.generateContent({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.3, // 재번역은 좀 더 일관성 있게
+            topP: 0.85,
+            topK: 40,
+            maxOutputTokens: 16384,
+          },
+        }),
+        API_TIMEOUT_MS,
+        "재번역 API 호출"
+      );
+
       const response = result.response;
       const text = response.text();
 
@@ -579,26 +892,34 @@ export async function retranslateText(
         );
       }
 
-      console.log("[Gemini] 재번역 성공, 결과 길이:", text.length);
+      log("재번역 성공, 결과 길이:", text.length);
       return text;
     } catch (error) {
-      lastError = analyzeError(error);
+      lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      console.error(`[Gemini] 재번역 시도 ${attempt + 1} 실패:`, {
+      logError(`재번역 시도 ${attempt + 1} 실패:`, {
         code: lastError.code,
         message: lastError.message,
-        retryable: lastError.retryable,
       });
+
+      // Rate limit 에러 시 rate limiter에 알림
+      if (lastError.code === "RATE_LIMIT") {
+        rateLimiter.onRateLimitError();
+      }
 
       if (!lastError.retryable) {
         throw lastError;
       }
 
       if (attempt < maxRetries - 1) {
-        const baseDelay = lastError.code === "RATE_LIMIT" ? 5000 : 1000;
-        const backoffMs = Math.min(baseDelay * Math.pow(2, attempt), 30000);
-        console.log(`[Gemini] ${backoffMs}ms 후 재시도...`);
-        await delay(backoffMs);
+        const baseDelay =
+          lastError.code === "RATE_LIMIT" ? 30000 :
+          lastError.code === "TIMEOUT" ? 10000 :
+          3000;
+        const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 60000);
+        const waitMs = addJitter(backoffMs);
+        log(`${Math.round(waitMs)}ms 후 재시도...`);
+        await delay(waitMs);
       }
     }
   }

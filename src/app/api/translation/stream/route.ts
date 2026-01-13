@@ -38,8 +38,26 @@ export async function GET(req: Request) {
 
   const stream = new ReadableStream({
     start(controller) {
-      console.log("[SSE Stream] 스트림 시작");
-      // 현재 상태 전송
+      const timestamp = () => new Date().toISOString();
+      console.log(`[${timestamp()}] [SSE Stream] 스트림 시작`);
+
+      let isStreamClosed = false;
+      let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+
+      // Keepalive 핑 전송 (15초마다)
+      keepaliveInterval = setInterval(() => {
+        if (!isStreamClosed) {
+          try {
+            console.log(`[${timestamp()}] [SSE Stream] Keepalive 핑 전송`);
+            controller.enqueue(encoder.encode(`: keepalive\n\n`));
+          } catch (error) {
+            console.error(`[${timestamp()}] [SSE Stream] Keepalive 전송 실패:`, error);
+          }
+        }
+      }, 15000);
+
+      // 현재 상태 전송 (경량 요약 정보만 전송 - 1000개 챕터 지원)
+      const jobSummary = translationManager.getJobSummary(jobId);
       const currentState: ProgressEvent = {
         jobId,
         type:
@@ -50,30 +68,53 @@ export async function GET(req: Request) {
               : "job_started",
         data: {
           status: job.status,
+          workTitle: job.workTitle,
           completedChapters: job.completedChapters,
           totalChapters: job.totalChapters,
-          chapters: job.chapters,
+          failedChapters: job.failedChapters,
+          currentChapter: jobSummary?.currentChapter,
+          // chapters 배열은 전송하지 않음 (성능 최적화)
         },
       };
-      console.log("[SSE Stream] 초기 상태 전송:", currentState.type);
+      console.log(`[${timestamp()}] [SSE Stream] 초기 상태 전송:`, currentState.type);
       controller.enqueue(
         encoder.encode(`data: ${JSON.stringify(currentState)}\n\n`)
       );
 
       // 이미 완료된 작업이면 스트림 종료
       if (job.status === "COMPLETED" || job.status === "FAILED") {
-        console.log("[SSE Stream] 작업 이미 완료됨, 스트림 종료");
+        console.log(`[${timestamp()}] [SSE Stream] 작업 이미 완료됨, 스트림 종료`);
+        if (keepaliveInterval) clearInterval(keepaliveInterval);
         controller.close();
         return;
       }
 
+      // 정리 함수
+      const cleanup = () => {
+        if (!isStreamClosed) {
+          isStreamClosed = true;
+          if (keepaliveInterval) {
+            clearInterval(keepaliveInterval);
+            keepaliveInterval = null;
+          }
+          unsubscribe();
+          try {
+            controller.close();
+          } catch {
+            // 이미 닫힌 경우 무시
+          }
+        }
+      };
+
       // 진행 이벤트 구독
-      console.log("[SSE Stream] 이벤트 구독 시작");
+      console.log(`[${timestamp()}] [SSE Stream] 이벤트 구독 시작`);
       const unsubscribe = translationManager.subscribe(
         jobId,
         (event: ProgressEvent) => {
+          if (isStreamClosed) return;
+
           try {
-            console.log("[SSE Stream] 이벤트 수신:", event.type);
+            console.log(`[${timestamp()}] [SSE Stream] 이벤트 수신:`, event.type, JSON.stringify(event.data));
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
             );
@@ -83,29 +124,21 @@ export async function GET(req: Request) {
               event.type === "job_completed" ||
               event.type === "job_failed"
             ) {
-              console.log("[SSE Stream] 작업 종료 이벤트, 스트림 닫기");
-              setTimeout(() => {
-                unsubscribe();
-                controller.close();
-              }, 100);
+              console.log(`[${timestamp()}] [SSE Stream] 작업 종료 이벤트, 스트림 닫기`);
+              setTimeout(cleanup, 100);
             }
           } catch (error) {
             // 스트림이 이미 닫힌 경우
-            console.error("[SSE Stream] 이벤트 전송 오류:", error);
-            unsubscribe();
+            console.error(`[${timestamp()}] [SSE Stream] 이벤트 전송 오류:`, error);
+            cleanup();
           }
         }
       );
 
       // 클라이언트 연결 종료 시 정리
       req.signal.addEventListener("abort", () => {
-        console.log("[SSE Stream] 클라이언트 연결 종료");
-        unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          // 이미 닫힌 경우 무시
-        }
+        console.log(`[${timestamp()}] [SSE Stream] 클라이언트 연결 종료`);
+        cleanup();
       });
     },
   });

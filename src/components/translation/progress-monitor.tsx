@@ -1,17 +1,22 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, Loader2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Loader2,
+  RefreshCw,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import { useEffect, useState, useRef, useCallback } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { ButtonSpinner, Spinner } from "@/components/ui/spinner";
 
 interface ChunkError {
   index: number;
@@ -55,38 +60,104 @@ interface ProgressEvent {
 
 interface TranslationProgressProps {
   jobId: string;
+  workId: string;
   onComplete: () => void;
+  onRetry?: (chapterNumbers: number[]) => Promise<void>;
 }
+
+// 상태별 스타일 설정
+const STATUS_STYLES = {
+  IN_PROGRESS: {
+    container: "border-primary/30 bg-primary/5",
+    icon: <Zap className="h-5 w-5 text-primary" />,
+    iconBg: "bg-primary/10",
+    title: "번역 진행 중",
+    description: "AI가 열심히 번역하고 있습니다...",
+  },
+  COMPLETED: {
+    container: "border-green-200 bg-green-50/50",
+    icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
+    iconBg: "bg-green-100",
+    title: "번역 완료!",
+    description: "모든 회차의 번역이 완료되었습니다.",
+  },
+  FAILED: {
+    container: "border-red-200 bg-red-50/50",
+    icon: <XCircle className="h-5 w-5 text-red-600" />,
+    iconBg: "bg-red-100",
+    title: "번역 중 오류 발생",
+    description: "일부 회차에서 오류가 발생했습니다.",
+  },
+  PENDING: {
+    container: "border-gray-200 bg-gray-50/50",
+    icon: <Clock className="h-5 w-5 text-gray-500" />,
+    iconBg: "bg-gray-100",
+    title: "번역 준비 중",
+    description: "잠시 후 번역이 시작됩니다...",
+  },
+};
 
 export function TranslationProgress({
   jobId,
   onComplete,
+  onRetry,
 }: TranslationProgressProps) {
   const [chapters, setChapters] = useState<ChapterProgress[]>([]);
   const [completedChapters, setCompletedChapters] = useState(0);
   const [totalChapters, setTotalChapters] = useState(0);
   const [status, setStatus] = useState<string>("PENDING");
   const [error, setError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  // 실패한 챕터 재시도 핸들러
+  const handleRetryFailed = useCallback(async () => {
+    const failedChapterNumbers = chapters
+      .filter((ch) => ch.status === "FAILED" || ch.status === "PARTIAL")
+      .map((ch) => ch.number);
+
+    if (failedChapterNumbers.length === 0 || !onRetry) return;
+
+    setIsRetrying(true);
+    try {
+      await onRetry(failedChapterNumbers);
+    } catch (err) {
+      console.error("재시도 실패:", err);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [chapters, onRetry]);
+
+  const isDev = process.env.NODE_ENV === "development";
+  const log = useCallback(
+    (...args: unknown[]) => {
+      if (isDev) console.log(...args);
+    },
+    [isDev]
+  );
 
   useEffect(() => {
-    console.log("[ProgressMonitor] SSE 연결 시작:", jobId);
+    const timestamp = () => new Date().toISOString();
+    log(`[${timestamp()}] [ProgressMonitor] SSE 연결 시작 - jobId: ${jobId}`);
+
     const eventSource = new EventSource(
       `/api/translation/stream?jobId=${jobId}`
     );
 
     eventSource.onopen = () => {
-      console.log("[ProgressMonitor] SSE 연결 성공");
+      log(`[${timestamp()}] [ProgressMonitor] SSE 연결 성공`);
     };
 
     eventSource.onmessage = (event) => {
-      console.log("[ProgressMonitor] 이벤트 수신:", event.data.substring(0, 100));
       try {
         const data: ProgressEvent = JSON.parse(event.data);
-        console.log("[ProgressMonitor] 파싱된 이벤트:", data.type);
+        log(`[${timestamp()}] [ProgressMonitor] 이벤트:`, data.type);
 
         switch (data.type) {
           case "job_started":
-            console.log("[ProgressMonitor] 작업 시작됨", data.data);
             setStatus("IN_PROGRESS");
             if (data.data.totalChapters) {
               setTotalChapters(data.data.totalChapters);
@@ -97,7 +168,6 @@ export function TranslationProgress({
             break;
 
           case "chapter_started":
-            console.log("[ProgressMonitor] 챕터 시작:", data.data.chapterNumber);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -113,7 +183,6 @@ export function TranslationProgress({
             break;
 
           case "chunk_progress":
-            console.log("[ProgressMonitor] 청크 진행:", data.data.chapterNumber, data.data.currentChunk, "/", data.data.totalChunks);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -128,7 +197,6 @@ export function TranslationProgress({
             break;
 
           case "chunk_error":
-            console.log("[ProgressMonitor] 청크 에러:", data.data.chapterNumber, data.data.chunkIndex);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -145,7 +213,6 @@ export function TranslationProgress({
             break;
 
           case "chapter_completed":
-            console.log("[ProgressMonitor] 챕터 완료:", data.data.chapterNumber);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -157,7 +224,6 @@ export function TranslationProgress({
             break;
 
           case "chapter_partial":
-            console.log("[ProgressMonitor] 챕터 부분완료:", data.data.chapterNumber);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -176,7 +242,6 @@ export function TranslationProgress({
             break;
 
           case "chapter_failed":
-            console.log("[ProgressMonitor] 챕터 실패:", data.data.chapterNumber, data.data.error);
             setChapters((prev) =>
               prev.map((ch) =>
                 ch.number === data.data.chapterNumber
@@ -187,17 +252,15 @@ export function TranslationProgress({
             break;
 
           case "job_completed":
-            console.log("[ProgressMonitor] 작업 완료");
             setStatus("COMPLETED");
             setCompletedChapters(data.data.completedChapters || 0);
             setTimeout(() => {
               eventSource.close();
-              onComplete();
+              onCompleteRef.current();
             }, 1000);
             break;
 
           case "job_failed":
-            console.log("[ProgressMonitor] 작업 실패:", data.data.error);
             setStatus("FAILED");
             setError(data.data.error || "알 수 없는 오류가 발생했습니다.");
             eventSource.close();
@@ -208,20 +271,17 @@ export function TranslationProgress({
       }
     };
 
-    eventSource.onerror = (err) => {
-      console.error("[ProgressMonitor] SSE 에러:", err);
-      console.log("[ProgressMonitor] readyState:", eventSource.readyState);
-      // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSED
+    eventSource.onerror = () => {
       if (eventSource.readyState === EventSource.CLOSED) {
-        console.log("[ProgressMonitor] SSE 연결 종료됨");
+        log(`[${timestamp()}] [ProgressMonitor] SSE 연결 종료됨`);
       }
     };
 
     return () => {
-      console.log("[ProgressMonitor] SSE 연결 정리");
+      log(`[${timestamp()}] [ProgressMonitor] SSE 연결 정리`);
       eventSource.close();
     };
-  }, [jobId, onComplete]);
+  }, [jobId, log]);
 
   const overallProgress =
     totalChapters > 0 ? (completedChapters / totalChapters) * 100 : 0;
@@ -232,136 +292,204 @@ export function TranslationProgress({
       ? (currentChapter.currentChunk / currentChapter.totalChunks) * 100
       : 0;
 
+  const failedCount = chapters.filter(
+    (ch) => ch.status === "FAILED" || ch.status === "PARTIAL"
+  ).length;
+
+  const statusKey = status as keyof typeof STATUS_STYLES;
+  const styles = STATUS_STYLES[statusKey] || STATUS_STYLES.PENDING;
+
   return (
-    <Card className="border-blue-200 bg-blue-50/50">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {status === "COMPLETED" ? (
-            <CheckCircle className="h-5 w-5 text-green-500" />
-          ) : status === "FAILED" ? (
-            <XCircle className="h-5 w-5 text-red-500" />
-          ) : (
-            <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
-          )}
-          번역 진행 상황
-        </CardTitle>
-        <CardDescription>
-          {status === "COMPLETED"
-            ? "번역이 완료되었습니다!"
-            : status === "FAILED"
-              ? "번역 중 오류가 발생했습니다."
-              : "번역이 진행 중입니다..."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* 전체 진행률 */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">전체 진행률</span>
-            <span>
-              {completedChapters} / {totalChapters} 회차
-            </span>
+    <div className={`section-surface ${styles.container} overflow-hidden`}>
+      {/* 헤더 */}
+      <div className="p-5">
+        <div className="flex items-start gap-4">
+          <div className={`flex h-10 w-10 items-center justify-center rounded-full ${styles.iconBg} shrink-0`}>
+            {status === "IN_PROGRESS" ? (
+              <Loader2 className="h-5 w-5 text-primary animate-spin" />
+            ) : (
+              styles.icon
+            )}
           </div>
-          <Progress value={overallProgress} className="h-3" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold">{styles.title}</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {styles.description}
+            </p>
+          </div>
+          {totalChapters > 0 && (
+            <div className="text-right shrink-0">
+              <div className="text-2xl font-bold tabular-nums">
+                {Math.round(overallProgress)}%
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {completedChapters}/{totalChapters}화
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 전체 진행률 바 */}
+        <div className="mt-4">
+          <Progress value={overallProgress} className="h-2" />
         </div>
 
         {/* 현재 챕터 진행률 */}
         {currentChapter && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">
-                {currentChapter.number}화 번역 중...
-              </span>
-              <span className="text-gray-500">
-                청크 {currentChapter.currentChunk} / {currentChapter.totalChunks}
+          <div className="mt-4 p-3 rounded-lg bg-background/50 border">
+            <div className="flex items-center justify-between text-sm mb-2">
+              <div className="flex items-center gap-2">
+                <Spinner size="sm" className="text-primary" />
+                <span className="font-medium">{currentChapter.number}화 번역 중</span>
+              </div>
+              <span className="text-muted-foreground tabular-nums">
+                {currentChapter.currentChunk}/{currentChapter.totalChunks} 청크
               </span>
             </div>
-            <Progress value={chunkProgress} className="h-2" />
+            <Progress value={chunkProgress} className="h-1.5" />
           </div>
         )}
+      </div>
 
-        {/* 에러 메시지 */}
-        {error && (
-          <div className="rounded-md bg-red-100 p-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {/* 챕터별 상태 */}
-        <div className="space-y-2">
-          <span className="text-sm font-medium">회차별 상태</span>
-          <div className="flex flex-wrap gap-2">
-            {chapters.map((chapter) => (
-              <Badge
-                key={chapter.number}
-                variant={
-                  chapter.status === "COMPLETED"
-                    ? "success"
-                    : chapter.status === "PARTIAL"
-                      ? "warning"
-                      : chapter.status === "TRANSLATING"
-                        ? "progress"
-                        : chapter.status === "FAILED"
-                          ? "destructive"
-                          : "pending"
-                }
-                title={
-                  chapter.status === "FAILED" && chapter.error
-                    ? chapter.error
-                    : chapter.status === "PARTIAL" && chapter.failedChunks
-                      ? `${chapter.failedChunks.length}개 청크 번역 실패`
-                      : undefined
-                }
-              >
-                {chapter.status === "COMPLETED" && (
-                  <CheckCircle className="mr-1 h-3 w-3" />
-                )}
-                {chapter.status === "PARTIAL" && (
-                  <AlertTriangle className="mr-1 h-3 w-3" />
-                )}
-                {chapter.status === "TRANSLATING" && (
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                )}
-                {chapter.status === "FAILED" && (
-                  <XCircle className="mr-1 h-3 w-3" />
-                )}
-                {chapter.number}화
-              </Badge>
-            ))}
+      {/* 에러 메시지 */}
+      {error && (
+        <div className="px-5 pb-4">
+          <div className="rounded-lg bg-red-100 border border-red-200 p-3 text-sm text-red-800">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <p>{error}</p>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* 실패한 청크가 있는 챕터 상세 정보 */}
-        {chapters.some((ch) => ch.status === "PARTIAL" || ch.status === "FAILED") && (
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-red-700">오류 상세</span>
-            <div className="space-y-2">
-              {chapters
-                .filter((ch) => ch.status === "PARTIAL" || ch.status === "FAILED")
-                .map((chapter) => (
-                  <div
-                    key={chapter.number}
-                    className="rounded-md bg-red-50 p-3 text-sm"
-                  >
-                    <div className="font-medium text-red-800">
-                      {chapter.number}화
-                      {chapter.status === "PARTIAL" && " (부분 번역)"}
-                      {chapter.status === "FAILED" && " (실패)"}
-                    </div>
-                    {chapter.error && (
-                      <p className="mt-1 text-red-700">{chapter.error}</p>
-                    )}
-                    {chapter.failedChunks && chapter.failedChunks.length > 0 && (
-                      <p className="mt-1 text-red-600 text-xs">
-                        실패한 청크: {chapter.failedChunks.map((f) => `#${f.index + 1}`).join(", ")}
-                      </p>
-                    )}
-                  </div>
-                ))}
+      {/* 회차별 상태 (접을 수 있음) */}
+      {chapters.length > 0 && (
+        <div className="border-t border-border/50">
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="w-full px-5 py-3 flex items-center justify-between text-sm hover:bg-background/30 transition-colors"
+          >
+            <span className="font-medium">회차별 상태</span>
+            <div className="flex items-center gap-2">
+              {failedCount > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  {failedCount}개 오류
+                </Badge>
+              )}
+              {showDetails ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
             </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          </button>
+
+          {showDetails && (
+            <div className="px-5 pb-5 space-y-4">
+              {/* 챕터 배지 그리드 */}
+              <div className="flex flex-wrap gap-1.5">
+                {chapters.map((chapter) => {
+                  const isActive = chapter.status === "TRANSLATING";
+                  const isCompleted = chapter.status === "COMPLETED";
+                  const isFailed = chapter.status === "FAILED";
+                  const isPartial = chapter.status === "PARTIAL";
+
+                  return (
+                    <Badge
+                      key={chapter.number}
+                      variant={
+                        isCompleted
+                          ? "success"
+                          : isPartial
+                            ? "warning"
+                            : isActive
+                              ? "progress"
+                              : isFailed
+                                ? "destructive"
+                                : "pending"
+                      }
+                      className="gap-1 px-2 py-1"
+                      title={
+                        isFailed && chapter.error
+                          ? chapter.error
+                          : isPartial && chapter.failedChunks
+                            ? `${chapter.failedChunks.length}개 청크 실패`
+                            : undefined
+                      }
+                    >
+                      {isCompleted && <CheckCircle2 className="h-3 w-3" />}
+                      {isPartial && <AlertTriangle className="h-3 w-3" />}
+                      {isActive && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {isFailed && <XCircle className="h-3 w-3" />}
+                      {chapter.number}
+                    </Badge>
+                  );
+                })}
+              </div>
+
+              {/* 실패한 챕터 상세 정보 */}
+              {failedCount > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-red-700 uppercase tracking-wide">
+                    오류 상세
+                  </p>
+                  <div className="space-y-2">
+                    {chapters
+                      .filter((ch) => ch.status === "PARTIAL" || ch.status === "FAILED")
+                      .map((chapter) => (
+                        <div
+                          key={chapter.number}
+                          className="rounded-lg bg-red-50 border border-red-100 p-3"
+                        >
+                          <div className="flex items-center gap-2 text-sm font-medium text-red-800">
+                            <XCircle className="h-4 w-4" />
+                            {chapter.number}화
+                            {chapter.status === "PARTIAL" && " (부분 번역)"}
+                            {chapter.status === "FAILED" && " (실패)"}
+                          </div>
+                          {chapter.error && (
+                            <p className="mt-1 text-sm text-red-700 pl-6">
+                              {chapter.error}
+                            </p>
+                          )}
+                          {chapter.failedChunks && chapter.failedChunks.length > 0 && (
+                            <p className="mt-1 text-xs text-red-600 pl-6">
+                              실패한 청크: {chapter.failedChunks.map((f) => `#${f.index + 1}`).join(", ")}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+
+                  {/* 재시도 버튼 */}
+                  {onRetry && (status === "COMPLETED" || status === "FAILED") && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRetryFailed}
+                      disabled={isRetrying}
+                      className="w-full mt-3 border-red-200 text-red-700 hover:bg-red-50"
+                    >
+                      {isRetrying ? (
+                        <>
+                          <ButtonSpinner className="text-red-600" />
+                          재시도 중...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          실패한 {failedCount}개 회차 재번역
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

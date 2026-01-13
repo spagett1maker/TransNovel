@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -14,46 +15,140 @@ interface TranslationContext {
   glossary: Array<{ original: string; translated: string }>;
 }
 
+// 중간 저장 메타데이터 타입
+interface TranslationMeta {
+  lastSavedChunk: number;
+  totalChunks: number;
+  partialResults: string[];
+  startedAt: string;
+}
+
+// 중간 저장 간격 (N개 청크마다 저장)
+const INCREMENTAL_SAVE_INTERVAL = 3;
+
+// 타임스탬프 로그 헬퍼
+function log(prefix: string, message: string, data?: object) {
+  const timestamp = new Date().toISOString();
+  if (data) {
+    console.log(`[${timestamp}] ${prefix} ${message}`, JSON.stringify(data));
+  } else {
+    console.log(`[${timestamp}] ${prefix} ${message}`);
+  }
+}
+
 // 백그라운드 번역 처리 함수
 async function processTranslation(
   jobId: string,
   chapters: Array<{ id: string; number: number; originalContent: string }>,
   context: TranslationContext
 ) {
-  console.log("[Translation] processTranslation 시작", {
+  log("[Translation]", "==================== processTranslation 시작 ====================");
+  log("[Translation]", "작업 정보", {
     jobId,
     chaptersCount: chapters.length,
     title: context.titleKo,
+    chapterNumbers: chapters.map(c => c.number),
   });
 
   translationManager.startJob(jobId);
-  console.log("[Translation] 작업 시작됨:", jobId);
+  log("[Translation]", "작업 시작됨", { jobId });
 
-  for (const chapter of chapters) {
-    console.log(`[Translation] 챕터 ${chapter.number} 처리 시작`);
+  for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
+    const chapter = chapters[chapterIndex];
+
+    // 일시정지 요청 확인
+    if (translationManager.checkAndPause(jobId)) {
+      log("[Translation]", "작업이 일시정지됨, 루프 종료");
+      return; // 루프 종료
+    }
+
+    log("[Translation]", `========== 루프 시작: chapterIndex=${chapterIndex}, chapterNumber=${chapter.number} ==========`);
+
+    // Rate limit 방지: 첫 번째 챕터가 아니면 챕터 간 딜레이 추가
+    if (chapterIndex > 0) {
+      const chapterDelay = 2000; // 챕터 간 2초 딜레이
+      log("[Translation]", `챕터 간 딜레이 시작: ${chapterDelay}ms`);
+      await new Promise(resolve => setTimeout(resolve, chapterDelay));
+      log("[Translation]", "챕터 간 딜레이 완료");
+    }
+
+    log("[Translation]", `챕터 ${chapter.number} 처리 시작`, {
+      chapterIndex,
+      total: chapters.length,
+      contentLength: chapter.originalContent.length
+    });
     try {
-      // 상태 업데이트: 번역 중
-      console.log(`[Translation] 챕터 ${chapter.number} DB 상태 업데이트: TRANSLATING`);
-      await db.chapter.update({
-        where: { id: chapter.id },
+      // 중복 번역 방지: PENDING 상태인 경우에만 TRANSLATING으로 변경 (atomic update)
+      log("[Translation]", `챕터 ${chapter.number} DB 상태 업데이트 시작: TRANSLATING (atomic)`);
+      const updateResult = await db.chapter.updateMany({
+        where: {
+          id: chapter.id,
+          status: "PENDING", // 이 조건으로 중복 번역 방지
+        },
         data: { status: "TRANSLATING" },
       });
 
+      // 업데이트된 행이 없으면 다른 작업이 이미 번역 중
+      if (updateResult.count === 0) {
+        log("[Translation]", `챕터 ${chapter.number} 이미 다른 작업에서 처리 중, 스킵`);
+        translationManager.completeChapter(jobId, chapter.number); // 완료로 처리하고 스킵
+        continue;
+      }
+      log("[Translation]", `챕터 ${chapter.number} DB 상태 업데이트 완료 (locked)`);
+
       // 청크 분할
+      log("[Translation]", `챕터 ${chapter.number} 청크 분할 시작`);
       const chunks = splitIntoChunks(chapter.originalContent);
-      console.log(`[Translation] 챕터 ${chapter.number} 청크 분할 완료:`, chunks.length, "개");
+      log("[Translation]", `챕터 ${chapter.number} 청크 분할 완료`, {
+        chunksCount: chunks.length,
+        chunkLengths: chunks.map(c => c.length)
+      });
+
+      // 기존 중간 저장 데이터 확인 (이어서 번역 지원)
+      const existingChapter = await db.chapter.findUnique({
+        where: { id: chapter.id },
+        select: { translationMeta: true },
+      });
+      const existingMeta = existingChapter?.translationMeta as TranslationMeta | null;
+
+      // 중간 저장 상태 초기화
+      let partialResults: string[] = [];
+      let startFromChunk = 0;
+
+      // 이전 진행 상태가 있으면 이어서 번역
+      if (existingMeta && existingMeta.totalChunks === chunks.length && existingMeta.partialResults.length > 0) {
+        partialResults = existingMeta.partialResults;
+        startFromChunk = existingMeta.lastSavedChunk;
+        log("[Translation]", `챕터 ${chapter.number} 이전 진행 상태 발견, 이어서 번역`, {
+          startFromChunk,
+          existingResults: partialResults.length,
+        });
+      }
 
       // 챕터 시작 알림
+      log("[Translation]", `챕터 ${chapter.number} 번역 시작 알림 전송`);
       translationManager.startChapter(jobId, chapter.number, chunks.length);
-      console.log(`[Translation] 챕터 ${chapter.number} 번역 시작 알림 전송`);
 
-      // 청크 번역 (진행 콜백 포함)
-      console.log(`[Translation] 챕터 ${chapter.number} translateChunks 호출`);
-      const { results, failedChunks } = await translateChunks(
+      // 시작 청크가 있으면 진행률 업데이트
+      if (startFromChunk > 0) {
+        translationManager.updateChunkProgress(jobId, chapter.number, startFromChunk, chunks.length);
+      }
+
+      // 청크 번역 (진행 콜백 + 중간 저장 포함)
+      log("[Translation]", `챕터 ${chapter.number} translateChunks 호출 시작`);
+      const failedChunks: number[] = [];
+      let lastSavePoint = startFromChunk;
+
+      const { results, failedChunks: apiFailedChunks } = await translateChunks(
         chunks,
         context,
-        (current: number, total: number, result: ChunkTranslationResult) => {
-          console.log(`[Translation] 챕터 ${chapter.number} 청크 진행: ${current}/${total}, 성공: ${result.success}`);
+        async (current: number, total: number, result: ChunkTranslationResult, accumulatedResults: string[]) => {
+          log("[Translation]", `챕터 ${chapter.number} 청크 콜백`, {
+            current,
+            total,
+            success: result.success,
+            chapterIndex,
+          });
           translationManager.updateChunkProgress(
             jobId,
             chapter.number,
@@ -63,78 +158,123 @@ async function processTranslation(
 
           // 청크 실패 시 에러 보고
           if (!result.success && result.error) {
-            console.warn(`[Translation] 챕터 ${chapter.number} 청크 ${result.index} 실패:`, result.error);
+            log("[Translation]", `챕터 ${chapter.number} 청크 ${result.index} 실패`, { error: result.error });
             translationManager.reportChunkError(
               jobId,
               chapter.number,
               result.index,
               result.error
             );
+            failedChunks.push(result.index);
           }
-        }
+
+          // 중간 저장: N개 청크마다 DB에 저장
+          if (current > 0 && current % INCREMENTAL_SAVE_INTERVAL === 0 && current > lastSavePoint) {
+            lastSavePoint = current;
+            log("[Translation]", `챕터 ${chapter.number} 중간 저장`, { current, total, resultsCount: accumulatedResults.length });
+
+            try {
+              // 현재까지의 번역 결과와 메타데이터 함께 저장
+              const meta: TranslationMeta = {
+                lastSavedChunk: current,
+                totalChunks: total,
+                partialResults: [...partialResults, ...accumulatedResults], // 기존 결과 + 새 결과
+                startedAt: existingMeta?.startedAt || new Date().toISOString(),
+              };
+
+              await db.chapter.update({
+                where: { id: chapter.id },
+                data: { translationMeta: meta as unknown as Prisma.InputJsonValue },
+              });
+              log("[Translation]", `챕터 ${chapter.number} 중간 저장 완료`, { savedChunks: meta.partialResults.length });
+            } catch (saveError) {
+              log("[Translation]", `챕터 ${chapter.number} 중간 저장 실패 (무시하고 계속)`, {
+                error: saveError instanceof Error ? saveError.message : String(saveError),
+              });
+            }
+          }
+        },
+        startFromChunk // 시작 청크 인덱스 전달
       );
 
-      console.log(`[Translation] 챕터 ${chapter.number} translateChunks 완료`, {
-        resultsCount: results.length,
-        failedCount: failedChunks.length,
+      // 기존 결과와 새 결과 병합
+      const allResults = [...partialResults, ...results];
+
+      log("[Translation]", `챕터 ${chapter.number} translateChunks 완료`, {
+        resultsCount: allResults.length,
+        failedCount: apiFailedChunks.length,
+        chapterIndex,
       });
 
-      const translatedContent = results.join("\n\n");
-      console.log(`[Translation] 챕터 ${chapter.number} 번역 결과 길이:`, translatedContent.length);
+      const translatedContent = allResults.join("\n\n");
+      log("[Translation]", `챕터 ${chapter.number} 번역 결과`, {
+        length: translatedContent.length,
+        chapterIndex
+      });
 
-      // 번역 결과 저장
-      console.log(`[Translation] 챕터 ${chapter.number} DB 저장 시작`);
+      // 번역 결과 저장 (translationMeta 클리어)
+      log("[Translation]", `챕터 ${chapter.number} DB 저장 시작`);
       await db.chapter.update({
         where: { id: chapter.id },
         data: {
           translatedContent,
           status: "TRANSLATED",
+          translationMeta: Prisma.JsonNull, // 완료 시 메타데이터 클리어
         },
       });
-      console.log(`[Translation] 챕터 ${chapter.number} DB 저장 완료`);
+      log("[Translation]", `챕터 ${chapter.number} DB 저장 완료`);
 
       // 챕터 완료 알림 (부분 완료 vs 완전 완료)
       if (failedChunks.length > 0) {
+        log("[Translation]", `챕터 ${chapter.number} 부분 완료`, { failedChunks, chapterIndex });
         translationManager.completeChapterPartial(jobId, chapter.number, failedChunks);
-        console.warn(
-          `[Translation] 챕터 ${chapter.number} 부분 완료 - 실패한 청크: ${failedChunks.length}개`
-        );
       } else {
+        log("[Translation]", `챕터 ${chapter.number} 완전 완료`, { chapterIndex });
         translationManager.completeChapter(jobId, chapter.number);
-        console.log(`[Translation] 챕터 ${chapter.number} 완전 완료`);
       }
+
+      log("[Translation]", `========== 루프 종료: chapterIndex=${chapterIndex} 성공 ==========`);
     } catch (error) {
-      console.error(`[Translation] 챕터 ${chapter.number} 번역 실패:`, error);
+      log("[Translation]", `========== 루프 에러: chapterIndex=${chapterIndex} ==========`);
+      log("[Translation]", `챕터 ${chapter.number} 번역 실패`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        chapterIndex,
+      });
 
       // 에러 메시지 추출
       let errorMessage = "번역 실패";
       if (error instanceof TranslationError) {
         errorMessage = error.message;
-        console.error(`[Translation] TranslationError:`, {
+        log("[Translation]", "TranslationError 상세", {
           code: (error as TranslationError).code,
           message: error.message,
           retryable: (error as TranslationError).retryable,
         });
       } else if (error instanceof Error) {
         errorMessage = error.message;
-        console.error(`[Translation] Error:`, error.message);
+        log("[Translation]", "Error 상세", { message: error.message, stack: error.stack });
       }
 
-      // 상태 되돌리기
-      console.log(`[Translation] 챕터 ${chapter.number} DB 상태 되돌리기: PENDING`);
-      await db.chapter.update({
-        where: { id: chapter.id },
+      // 상태 되돌리기 (TRANSLATING인 경우에만 - 우리가 락을 잡은 경우)
+      log("[Translation]", `챕터 ${chapter.number} DB 상태 되돌리기: PENDING`);
+      await db.chapter.updateMany({
+        where: {
+          id: chapter.id,
+          status: "TRANSLATING", // 우리가 설정한 상태인 경우에만 되돌림
+        },
         data: { status: "PENDING" },
       });
 
       // 챕터 실패 알림
       translationManager.failChapter(jobId, chapter.number, errorMessage);
-      console.log(`[Translation] 챕터 ${chapter.number} 실패 알림 전송`);
+      log("[Translation]", `챕터 ${chapter.number} 실패 알림 전송 완료`);
     }
   }
 
   // 작업 완료
-  console.log("[Translation] 모든 챕터 처리 완료, 작업 종료:", jobId);
+  log("[Translation]", "==================== 모든 챕터 처리 완료 ====================");
+  log("[Translation]", "작업 종료", { jobId, totalChapters: chapters.length });
   translationManager.completeJob(jobId);
 }
 
@@ -179,6 +319,15 @@ export async function POST(req: Request) {
     }
     console.log("[Translation API] 작품 조회 성공:", work.titleKo);
 
+    // 중복 작업 방지: 원자적 슬롯 예약 (경쟁 조건 방지)
+    const reserved = translationManager.reserveJobSlot(workId);
+    if (!reserved) {
+      console.log("[Translation API] 이미 진행 중인 작업 있음");
+      return NextResponse.json({
+        error: "이 작품에 대해 이미 번역 작업이 진행 중입니다.",
+      }, { status: 409 });
+    }
+
     // 번역할 챕터 조회
     console.log("[Translation API] 챕터 조회:", chapterNumbers);
     const chapters = await db.chapter.findMany({
@@ -193,6 +342,8 @@ export async function POST(req: Request) {
 
     if (chapters.length === 0) {
       console.log("[Translation API] 번역할 회차 없음");
+      // 슬롯 예약 해제
+      translationManager.releaseJobSlot(workId);
       return NextResponse.json(
         { error: "번역할 회차가 없습니다." },
         { status: 400 }
@@ -220,6 +371,7 @@ export async function POST(req: Request) {
     // 작업 생성
     const jobId = translationManager.createJob(
       workId,
+      work.titleKo,
       chapters.map((ch) => ({ number: ch.number, id: ch.id }))
     );
     console.log("[Translation API] 작업 생성됨:", jobId);

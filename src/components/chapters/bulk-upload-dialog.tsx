@@ -80,17 +80,45 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.txt')) {
-      toast.error("TXT 파일만 업로드 가능합니다.");
+    const fileName = file.name.toLowerCase();
+    const isTxt = fileName.endsWith('.txt');
+    const isDocx = fileName.endsWith('.docx');
+
+    if (!isTxt && !isDocx) {
+      toast.error("TXT 또는 DOCX 파일만 업로드 가능합니다.");
       return;
     }
 
+    setIsLoading(true);
     try {
-      const text = await file.text();
-      setRawText(text);
-      toast.success("파일이 로드되었습니다.");
-    } catch {
-      toast.error("파일 읽기에 실패했습니다.");
+      if (isTxt) {
+        // TXT 파일은 클라이언트에서 직접 읽기
+        const text = await file.text();
+        setRawText(text);
+        toast.success("파일이 로드되었습니다.");
+      } else if (isDocx) {
+        // DOCX 파일은 서버에서 파싱
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch(`/api/works/${workId}/chapters/parse-file`, {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "파일 처리에 실패했습니다.");
+        }
+
+        setRawText(data.text);
+        toast.success(`파일이 로드되었습니다. (${data.charCount.toLocaleString()}자)`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "파일 읽기에 실패했습니다.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -134,20 +162,29 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
 
           <TabsContent value="file" className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="file">TXT 파일</Label>
+              <Label htmlFor="file">파일 업로드</Label>
               <div className="flex items-center gap-4">
                 <Input
                   id="file"
                   type="file"
-                  accept=".txt"
+                  accept=".txt,.docx"
                   onChange={handleFileUpload}
+                  disabled={isLoading}
                 />
               </div>
               <p className="text-xs text-gray-500">
-                UTF-8 인코딩된 TXT 파일을 업로드하세요
+                TXT 또는 DOCX 파일을 업로드하세요 (UTF-8 인코딩 권장)
               </p>
             </div>
-            {rawText && (
+            {isLoading && (
+              <div className="rounded-md bg-blue-50 p-4">
+                <p className="text-sm text-blue-600">
+                  <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" />
+                  파일을 처리하는 중...
+                </p>
+              </div>
+            )}
+            {rawText && !isLoading && (
               <div className="rounded-md bg-gray-50 p-4">
                 <p className="text-sm text-gray-600">
                   <FileText className="inline-block mr-2 h-4 w-4" />

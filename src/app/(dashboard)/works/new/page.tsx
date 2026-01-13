@@ -50,6 +50,8 @@ export default function NewWorkPage() {
 
   const form = useForm<WorkInput>({
     resolver: zodResolver(workSchema),
+    mode: "onBlur", // 실시간 검증: 필드에서 포커스 벗어날 때 검증
+    reValidateMode: "onChange", // 에러 발생 후에는 입력할 때마다 재검증
     defaultValues: {
       titleKo: "",
       titleOriginal: "",
@@ -72,6 +74,20 @@ export default function NewWorkPage() {
   });
 
   const currentStepIndex = STEPS.findIndex((s) => s.key === currentStep);
+
+  // 단계별 필드 정의
+  const stepFields: Record<Step, (keyof WorkInput)[]> = {
+    basic: ["titleKo", "titleOriginal", "publisher", "ageRating", "synopsis"],
+    details: ["genres", "sourceLanguage", "originalStatus", "expectedChapters"],
+    creators: ["creators", "platformName", "platformUrl"],
+  };
+
+  // 현재 단계 검증 함수
+  const validateCurrentStep = async (): Promise<boolean> => {
+    const fields = stepFields[currentStep];
+    const result = await form.trigger(fields);
+    return result;
+  };
 
   async function onSubmit(data: WorkInput) {
     setIsLoading(true);
@@ -112,11 +128,24 @@ export default function NewWorkPage() {
     }
   };
 
-  const goToStep = (step: Step) => {
-    setCurrentStep(step);
+  const goToStep = async (step: Step) => {
+    // 이전 단계로 돌아가는 것은 항상 허용
+    const targetIndex = STEPS.findIndex((s) => s.key === step);
+    if (targetIndex < currentStepIndex) {
+      setCurrentStep(step);
+      return;
+    }
+    // 앞으로 가는 경우 현재 단계 검증
+    const isValid = await validateCurrentStep();
+    if (isValid) {
+      setCurrentStep(step);
+    }
   };
 
-  const goNext = () => {
+  const goNext = async () => {
+    const isValid = await validateCurrentStep();
+    if (!isValid) return;
+
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < STEPS.length) {
       setCurrentStep(STEPS[nextIndex].key);

@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workSchema } from "@/lib/validations/work";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await getServerSession(authOptions);
 
@@ -16,6 +16,12 @@ export async function GET() {
 
     const userRole = session.user.role as UserRole;
     const userId = session.user.id;
+
+    // URL 파라미터에서 페이지네이션 옵션 추출
+    const url = new URL(req.url);
+    const page = parseInt(url.searchParams.get("page") || "1", 10);
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 100); // 최대 100개
+    const skip = (page - 1) * limit;
 
     // 역할별 필터링
     let whereClause = {};
@@ -30,24 +36,38 @@ export async function GET() {
       whereClause = { authorId: userId };
     }
 
-    const works = await db.work.findMany({
-      where: whereClause,
-      orderBy: { updatedAt: "desc" },
-      include: {
-        creators: true,
-        author: {
-          select: { id: true, name: true, email: true },
+    // 총 개수와 작품 목록 병렬 조회
+    const [total, works] = await Promise.all([
+      db.work.count({ where: whereClause }),
+      db.work.findMany({
+        where: whereClause,
+        orderBy: { updatedAt: "desc" },
+        skip,
+        take: limit,
+        include: {
+          creators: true,
+          author: {
+            select: { id: true, name: true, email: true },
+          },
+          editor: {
+            select: { id: true, name: true, email: true },
+          },
+          _count: {
+            select: { chapters: true },
+          },
         },
-        editor: {
-          select: { id: true, name: true, email: true },
-        },
-        _count: {
-          select: { chapters: true },
-        },
+      }),
+    ]);
+
+    return NextResponse.json({
+      works,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
       },
     });
-
-    return NextResponse.json(works);
   } catch (error) {
     console.error("Failed to fetch works:", error);
     return NextResponse.json(

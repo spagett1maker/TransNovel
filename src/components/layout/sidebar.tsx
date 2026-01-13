@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TranslationMonitor } from "@/components/layout/translation-monitor";
 import { cn } from "@/lib/utils";
 import { getRoleDisplayName } from "@/lib/permissions";
 import { UserRole } from "@prisma/client";
@@ -69,6 +70,11 @@ export function Sidebar() {
               </Link>
             );
           })}
+        </div>
+
+        {/* Translation Monitor */}
+        <div className="mt-8">
+          <TranslationMonitor />
         </div>
       </nav>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, FileText, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,48 +32,82 @@ interface DownloadDialogProps {
 type DownloadFormat = "txt" | "docx";
 type ContentType = "translated" | "edited";
 
+// 메모이제이션된 회차 아이템 컴포넌트 - O(1) 선택 조회
+const ChapterItem = memo(function ChapterItem({
+  chapter,
+  isSelected,
+  onToggle,
+}: {
+  chapter: Chapter;
+  isSelected: boolean;
+  onToggle: (number: number) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3 rounded p-1 hover:bg-gray-50">
+      <Checkbox
+        checked={isSelected}
+        onCheckedChange={() => onToggle(chapter.number)}
+      />
+      <span className="text-sm">
+        {chapter.number}화
+        {chapter.title && (
+          <span className="ml-1 text-gray-500">- {chapter.title}</span>
+        )}
+      </span>
+    </label>
+  );
+});
+
 export function DownloadDialog({
   workId,
-  workTitle,
   chapters,
 }: DownloadDialogProps) {
   const [open, setOpen] = useState(false);
-  const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
+  // Set 기반 선택 상태 - O(1) 조회/추가/삭제
+  const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [format, setFormat] = useState<DownloadFormat>("txt");
   const [contentType, setContentType] = useState<ContentType>("edited");
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // 다운로드 가능한 챕터 (번역 완료된 것만)
-  const downloadableChapters = chapters.filter((c) =>
-    ["TRANSLATED", "EDITED", "APPROVED"].includes(c.status)
+  // useMemo로 필터 결과 캐싱
+  const downloadableChapters = useMemo(
+    () => chapters.filter((c) => ["TRANSLATED", "EDITED", "APPROVED"].includes(c.status)),
+    [chapters]
   );
 
-  const toggleChapter = (number: number) => {
-    setSelectedChapters((prev) =>
-      prev.includes(number)
-        ? prev.filter((n) => n !== number)
-        : [...prev, number]
-    );
-  };
+  // useCallback으로 토글 함수 메모이제이션
+  const toggleChapter = useCallback((number: number) => {
+    setSelectedChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(number)) {
+        next.delete(number);
+      } else {
+        next.add(number);
+      }
+      return next;
+    });
+  }, []);
 
-  const selectAll = () => {
-    if (selectedChapters.length === downloadableChapters.length) {
-      setSelectedChapters([]);
-    } else {
-      setSelectedChapters(downloadableChapters.map((c) => c.number));
-    }
-  };
+  const selectAll = useCallback(() => {
+    setSelectedChapters((prev) => {
+      if (prev.size === downloadableChapters.length) {
+        return new Set();
+      } else {
+        return new Set(downloadableChapters.map((c) => c.number));
+      }
+    });
+  }, [downloadableChapters]);
 
   const handleDownload = async () => {
-    if (selectedChapters.length === 0) return;
+    if (selectedChapters.size === 0) return;
 
     setIsDownloading(true);
 
     try {
       const chaptersParam =
-        selectedChapters.length === downloadableChapters.length
+        selectedChapters.size === downloadableChapters.length
           ? "all"
-          : selectedChapters.sort((a, b) => a - b).join(",");
+          : Array.from(selectedChapters).sort((a, b) => a - b).join(",");
 
       const url = `/api/works/${workId}/download?format=${format}&chapters=${chaptersParam}&content=${contentType}`;
 
@@ -88,7 +122,7 @@ export function DownloadDialog({
       // 다이얼로그 닫기
       setTimeout(() => {
         setOpen(false);
-        setSelectedChapters([]);
+        setSelectedChapters(new Set());
       }, 500);
     } finally {
       setIsDownloading(false);
@@ -131,34 +165,23 @@ export function DownloadDialog({
                 onClick={selectAll}
                 className="h-auto py-1 text-xs"
               >
-                {selectedChapters.length === downloadableChapters.length
+                {selectedChapters.size === downloadableChapters.length
                   ? "전체 해제"
                   : "전체 선택"}
               </Button>
             </div>
             <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
               {downloadableChapters.map((chapter) => (
-                <label
+                <ChapterItem
                   key={chapter.number}
-                  className="flex cursor-pointer items-center gap-3 rounded p-1 hover:bg-gray-50"
-                >
-                  <Checkbox
-                    checked={selectedChapters.includes(chapter.number)}
-                    onCheckedChange={() => toggleChapter(chapter.number)}
-                  />
-                  <span className="text-sm">
-                    {chapter.number}화
-                    {chapter.title && (
-                      <span className="ml-1 text-gray-500">
-                        - {chapter.title}
-                      </span>
-                    )}
-                  </span>
-                </label>
+                  chapter={chapter}
+                  isSelected={selectedChapters.has(chapter.number)}
+                  onToggle={toggleChapter}
+                />
               ))}
             </div>
             <p className="text-xs text-gray-500">
-              {selectedChapters.length}개 선택됨 (총{" "}
+              {selectedChapters.size}개 선택됨 (총{" "}
               {downloadableChapters.length}개 다운로드 가능)
             </p>
           </div>
@@ -211,7 +234,7 @@ export function DownloadDialog({
           </Button>
           <Button
             onClick={handleDownload}
-            disabled={selectedChapters.length === 0 || isDownloading}
+            disabled={selectedChapters.size === 0 || isDownloading}
           >
             {isDownloading ? (
               <>

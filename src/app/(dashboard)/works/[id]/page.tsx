@@ -3,11 +3,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
+import { ChapterList } from "@/components/chapters/chapter-list";
 import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getSession } from "@/lib/auth";
-import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { db } from "@/lib/db";
 import { canAccessWork } from "@/lib/permissions";
 import { AGE_RATINGS, ORIGINAL_STATUS, SOURCE_LANGUAGES } from "@/lib/validations/work";
@@ -32,6 +32,14 @@ export default async function WorkDetailPage({
       creators: true,
       chapters: {
         orderBy: { number: "asc" },
+        // 챕터 목록에서는 메타데이터만 필요 (콘텐츠 제외로 메모리/대역폭 절약)
+        select: {
+          id: true,
+          number: true,
+          title: true,
+          status: true,
+          wordCount: true,
+        },
       },
       glossary: {
         take: 10,
@@ -169,9 +177,9 @@ export default async function WorkDetailPage({
               </p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" asChild>
+              {/* <Button variant="outline" size="sm" asChild>
                 <Link href={`/works/${id}/chapters`}>회차 관리</Link>
-              </Button>
+              </Button> */}
               <DownloadDialog
                 workId={work.id}
                 workTitle={work.titleKo}
@@ -193,50 +201,17 @@ export default async function WorkDetailPage({
               <BulkUploadDialog workId={id} />
             </div>
           ) : (
-            <div className="space-y-0">
-              {work.chapters.map((chapter, index) => {
-                const chapterStatus = getChapterStatusConfig(chapter.status);
-                const hasTranslation = ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status);
-
-                return (
-                  <Link
-                    key={chapter.id}
-                    href={`/works/${id}/chapters/${chapter.number}`}
-                    className="list-item group"
-                  >
-                    <div className="flex items-center gap-4 min-w-0 flex-1">
-                      <span className="text-xs text-muted-foreground tabular-nums w-8">
-                        {String(chapter.number).padStart(3, '0')}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium group-hover:text-muted-foreground transition-colors">
-                            {chapter.number}화
-                          </span>
-                          {chapter.title && (
-                            <span className="text-muted-foreground truncate">
-                              {chapter.title}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {chapter.wordCount.toLocaleString()}자
-                          {hasTranslation && " · 번역 완료"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <Badge variant={chapterStatus.variant} className="text-xs">
-                        {chapterStatus.label}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                        보기 →
-                      </span>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
+            <ChapterList
+              workId={id}
+              chapters={work.chapters.map((ch) => ({
+                id: ch.id,
+                number: ch.number,
+                title: ch.title,
+                status: ch.status,
+                wordCount: ch.wordCount,
+              }))}
+              itemsPerPage={10}
+            />
           )}
         </section>
 

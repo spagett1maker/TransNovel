@@ -13,7 +13,12 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     const { id, num } = await params;
-    const number = parseInt(num);
+    const number = parseInt(num, 10);
+
+    // NaN 또는 유효하지 않은 숫자 체크
+    if (Number.isNaN(number) || number < 1) {
+      return NextResponse.json({ error: "유효하지 않은 회차 번호입니다." }, { status: 400 });
+    }
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -63,7 +68,12 @@ export async function PATCH(
   try {
     const session = await getServerSession(authOptions);
     const { id, num } = await params;
-    const number = parseInt(num);
+    const number = parseInt(num, 10);
+
+    // NaN 또는 유효하지 않은 숫자 체크
+    if (Number.isNaN(number) || number < 1) {
+      return NextResponse.json({ error: "유효하지 않은 회차 번호입니다." }, { status: 400 });
+    }
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -141,7 +151,12 @@ export async function DELETE(
   try {
     const session = await getServerSession(authOptions);
     const { id, num } = await params;
-    const number = parseInt(num);
+    const number = parseInt(num, 10);
+
+    // NaN 또는 유효하지 않은 숫자 체크
+    if (Number.isNaN(number) || number < 1) {
+      return NextResponse.json({ error: "유효하지 않은 회차 번호입니다." }, { status: 400 });
+    }
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
