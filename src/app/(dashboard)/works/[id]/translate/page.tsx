@@ -331,7 +331,7 @@ export default function TranslatePage() {
     });
   }, [pendingChapters]);
 
-  const handleTranslate = async () => {
+  const handleTranslate = async (force: boolean = false) => {
     if (selectedChapters.size === 0) {
       toast.error("번역할 회차를 선택해주세요.");
       return;
@@ -348,12 +348,25 @@ export default function TranslatePage() {
         body: JSON.stringify({
           workId,
           chapterNumbers: sortedChapters,
+          force,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 제공
+        if (response.status === 409) {
+          toast.error("이미 진행 중인 번역 작업이 있습니다.", {
+            duration: 10000,
+            action: {
+              label: "강제 시작",
+              onClick: () => handleTranslate(true),
+            },
+            description: "기존 작업을 취소하고 새로 시작하려면 '강제 시작'을 클릭하세요.",
+          });
+          return;
+        }
         throw new Error(data.error || "번역 시작에 실패했습니다.");
       }
 
@@ -364,7 +377,7 @@ export default function TranslatePage() {
         sortedChapters.length
       );
 
-      toast.success("번역이 시작되었습니다!");
+      toast.success(force ? "기존 작업을 취소하고 새 번역이 시작되었습니다!" : "번역이 시작되었습니다!");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "번역 시작에 실패했습니다."
@@ -380,7 +393,7 @@ export default function TranslatePage() {
     toast.success("모든 번역이 완료되었습니다!");
   }, [fetchChapters]);
 
-  const handleRetryFailed = useCallback(async (chapterNumbers: number[]) => {
+  const handleRetryFailed = useCallback(async (chapterNumbers: number[], force: boolean = false) => {
     try {
       const response = await fetch("/api/translation", {
         method: "POST",
@@ -388,12 +401,25 @@ export default function TranslatePage() {
         body: JSON.stringify({
           workId,
           chapterNumbers,
+          force,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 제공
+        if (response.status === 409) {
+          toast.error("이미 진행 중인 번역 작업이 있습니다.", {
+            duration: 10000,
+            action: {
+              label: "강제 시작",
+              onClick: () => handleRetryFailed(chapterNumbers, true),
+            },
+            description: "기존 작업을 취소하고 새로 시작하려면 '강제 시작'을 클릭하세요.",
+          });
+          return;
+        }
         throw new Error(data.error || "재시도에 실패했습니다.");
       }
 
@@ -404,7 +430,7 @@ export default function TranslatePage() {
         chapterNumbers.length
       );
 
-      toast.success("재번역이 시작되었습니다!");
+      toast.success(force ? "기존 작업을 취소하고 재번역이 시작되었습니다!" : "재번역이 시작되었습니다!");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "재시도에 실패했습니다."
@@ -735,7 +761,7 @@ export default function TranslatePage() {
             </p>
             <Button
               size="lg"
-              onClick={handleTranslate}
+              onClick={() => handleTranslate()}
               disabled={isStarting || selectedChapters.size === 0}
               className="w-full sm:w-auto gap-2"
             >
