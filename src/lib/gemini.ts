@@ -1,6 +1,17 @@
 import { GoogleGenerativeAI, GoogleGenerativeAIError } from "@google/generative-ai";
+import { translationLogger } from "@/lib/translation-logger";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+
+// 번역 컨텍스트에 로깅 정보 추가
+export interface TranslationLoggingContext {
+  jobId?: string;
+  workId?: string;
+  chapterId?: string;
+  chapterNum?: number;
+  userId?: string;
+  userEmail?: string;
+}
 
 // 조건부 로깅 - 프로덕션에서는 비활성화
 const isDev = process.env.NODE_ENV === "development";
@@ -548,13 +559,32 @@ export async function translateChunks(
   chunks: string[],
   context: TranslationContext,
   onProgress?: ChunkProgressCallback,
-  startFromChunk: number = 0  // 이어서 번역할 시작 청크 인덱스
+  startFromChunk: number = 0,  // 이어서 번역할 시작 청크 인덱스
+  loggingContext?: TranslationLoggingContext  // DB 로깅용 컨텍스트
 ): Promise<{ results: string[]; failedChunks: number[] }> {
   log("translateChunks 시작", {
     totalChunks: chunks.length,
     startFromChunk,
     title: context.titleKo
   });
+
+  // 로깅 헬퍼
+  const logToDb = async (message: string, errorCode?: string, chunkIndex?: number, retryCount?: number) => {
+    if (loggingContext?.jobId) {
+      await translationLogger.error(message, {
+        category: "API_CALL" as const,
+        jobId: loggingContext.jobId,
+        workId: loggingContext.workId,
+        chapterId: loggingContext.chapterId,
+        chapterNum: loggingContext.chapterNum,
+        chunkIndex,
+        userId: loggingContext.userId,
+        userEmail: loggingContext.userEmail,
+        errorCode,
+        retryCount,
+      });
+    }
+  };
 
   const results: string[] = [];
   const failedChunks: number[] = [];
@@ -592,6 +622,14 @@ export async function translateChunks(
         message: translationError.message,
       });
 
+      // DB에 에러 로깅
+      await logToDb(
+        `청크 ${i + 1}/${chunks.length} 번역 실패: ${translationError.message}`,
+        translationError.code,
+        i,
+        consecutiveFailures
+      );
+
       // 실패한 청크는 원문으로 대체하고 표시
       results.push(`[번역 실패: ${translationError.message}]\n\n${chunks[i]}`);
       failedChunks.push(i);
@@ -610,6 +648,13 @@ export async function translateChunks(
         const recoveryDelay = addJitter(10000 * consecutiveFailures); // 연속 실패마다 10초씩 증가
         log(`연속 ${consecutiveFailures}회 실패, ${Math.round(recoveryDelay)}ms 추가 대기`);
         await delay(recoveryDelay);
+
+        // 연속 실패 로깅
+        await logToDb(
+          `연속 ${consecutiveFailures}회 실패, ${Math.round(recoveryDelay)}ms 대기`,
+          "CONSECUTIVE_WAIT",
+          i
+        );
       }
 
       // 재시도 불가능한 오류가 연속 N회 이상이면 중단

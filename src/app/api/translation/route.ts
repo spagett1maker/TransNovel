@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { splitIntoChunks, translateChunks, TranslationError, ChunkTranslationResult } from "@/lib/gemini";
+import { splitIntoChunks, translateChunks, TranslationError, ChunkTranslationResult, TranslationLoggingContext } from "@/lib/gemini";
 import { translationManager } from "@/lib/translation-manager";
 import { translationLogger } from "@/lib/translation-logger";
 import { LogCategory } from "@prisma/client";
@@ -215,7 +215,16 @@ async function processTranslation(
             }
           }
         },
-        startFromChunk // 시작 청크 인덱스 전달
+        startFromChunk, // 시작 청크 인덱스 전달
+        // 로깅 컨텍스트 전달
+        {
+          jobId,
+          workId,
+          chapterId: chapter.id,
+          chapterNum: chapter.number,
+          userId,
+          userEmail,
+        } as TranslationLoggingContext
       );
 
       // 기존 결과와 새 결과 병합
