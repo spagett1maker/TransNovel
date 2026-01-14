@@ -181,6 +181,8 @@ export default function TranslatePage() {
   const [stuckChapters, setStuckChapters] = useState<StuckChapter[]>([]);
   const [isRecovering, setIsRecovering] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showForceOption, setShowForceOption] = useState(false);
+  const [forceStart, setForceStart] = useState(false);
 
   const currentJob = getJobByWorkId(workId);
   const activeJobId = currentJob?.jobId ?? null;
@@ -331,7 +333,7 @@ export default function TranslatePage() {
     });
   }, [pendingChapters]);
 
-  const handleTranslate = async (force: boolean = false) => {
+  const handleTranslate = async () => {
     if (selectedChapters.size === 0) {
       toast.error("번역할 회차를 선택해주세요.");
       return;
@@ -348,27 +350,25 @@ export default function TranslatePage() {
         body: JSON.stringify({
           workId,
           chapterNumbers: sortedChapters,
-          force,
+          force: forceStart,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 제공
+        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 표시
         if (response.status === 409) {
-          toast.error("이미 진행 중인 번역 작업이 있습니다.", {
-            duration: 10000,
-            action: {
-              label: "강제 시작",
-              onClick: () => handleTranslate(true),
-            },
-            description: "기존 작업을 취소하고 새로 시작하려면 '강제 시작'을 클릭하세요.",
-          });
+          setShowForceOption(true);
+          toast.error("이미 진행 중인 번역 작업이 있습니다. 아래 체크박스를 선택 후 다시 시도하세요.");
           return;
         }
         throw new Error(data.error || "번역 시작에 실패했습니다.");
       }
+
+      // 성공 시 상태 초기화
+      setShowForceOption(false);
+      setForceStart(false);
 
       startTracking(
         data.jobId,
@@ -377,7 +377,7 @@ export default function TranslatePage() {
         sortedChapters.length
       );
 
-      toast.success(force ? "기존 작업을 취소하고 새 번역이 시작되었습니다!" : "번역이 시작되었습니다!");
+      toast.success(forceStart ? "기존 작업을 취소하고 새 번역이 시작되었습니다!" : "번역이 시작되었습니다!");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "번역 시작에 실패했습니다."
@@ -393,7 +393,7 @@ export default function TranslatePage() {
     toast.success("모든 번역이 완료되었습니다!");
   }, [fetchChapters]);
 
-  const handleRetryFailed = useCallback(async (chapterNumbers: number[], force: boolean = false) => {
+  const handleRetryFailed = useCallback(async (chapterNumbers: number[]) => {
     try {
       const response = await fetch("/api/translation", {
         method: "POST",
@@ -401,25 +401,13 @@ export default function TranslatePage() {
         body: JSON.stringify({
           workId,
           chapterNumbers,
-          force,
+          force: true, // 재시도는 항상 강제 시작
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 제공
-        if (response.status === 409) {
-          toast.error("이미 진행 중인 번역 작업이 있습니다.", {
-            duration: 10000,
-            action: {
-              label: "강제 시작",
-              onClick: () => handleRetryFailed(chapterNumbers, true),
-            },
-            description: "기존 작업을 취소하고 새로 시작하려면 '강제 시작'을 클릭하세요.",
-          });
-          return;
-        }
         throw new Error(data.error || "재시도에 실패했습니다.");
       }
 
@@ -430,7 +418,7 @@ export default function TranslatePage() {
         chapterNumbers.length
       );
 
-      toast.success(force ? "기존 작업을 취소하고 재번역이 시작되었습니다!" : "재번역이 시작되었습니다!");
+      toast.success("재번역이 시작되었습니다!");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "재시도에 실패했습니다."
@@ -755,28 +743,50 @@ export default function TranslatePage() {
           )}
 
           {/* 액션 */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-border bg-muted/30">
-            <p className="text-sm text-muted-foreground">
-              <span className="font-medium text-foreground tabular-nums">{selectedChapters.size}</span>개 회차 선택됨
-            </p>
-            <Button
-              size="lg"
-              onClick={() => handleTranslate()}
-              disabled={isStarting || selectedChapters.size === 0}
-              className="w-full sm:w-auto gap-2"
-            >
-              {isStarting ? (
-                <>
-                  <ButtonSpinner />
-                  시작 중...
-                </>
-              ) : (
-                <>
-                  <Languages className="h-4 w-4" />
-                  {selectedChapters.size}개 회차 번역 시작
-                </>
-              )}
-            </Button>
+          <div className="flex flex-col gap-4 p-5 border-t border-border bg-muted/30">
+            {/* 강제 시작 옵션 (409 에러 발생 시 표시) */}
+            {showForceOption && (
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-orange-200 bg-orange-50">
+                <Checkbox
+                  id="force-start"
+                  checked={forceStart}
+                  onCheckedChange={(checked) => setForceStart(checked === true)}
+                />
+                <label
+                  htmlFor="force-start"
+                  className="text-sm text-orange-800 cursor-pointer select-none"
+                >
+                  <span className="font-medium">기존 작업 취소 후 시작</span>
+                  <span className="text-orange-600 ml-1">
+                    - 진행 중인 번역 작업을 취소하고 새로 시작합니다
+                  </span>
+                </label>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground tabular-nums">{selectedChapters.size}</span>개 회차 선택됨
+              </p>
+              <Button
+                size="lg"
+                onClick={() => handleTranslate()}
+                disabled={isStarting || selectedChapters.size === 0 || (showForceOption && !forceStart)}
+                className="w-full sm:w-auto gap-2"
+              >
+                {isStarting ? (
+                  <>
+                    <ButtonSpinner />
+                    시작 중...
+                  </>
+                ) : (
+                  <>
+                    <Languages className="h-4 w-4" />
+                    {forceStart ? "기존 작업 취소 후 번역 시작" : `${selectedChapters.size}개 회차 번역 시작`}
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}
