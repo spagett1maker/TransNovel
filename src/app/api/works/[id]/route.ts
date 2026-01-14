@@ -191,6 +191,21 @@ export async function DELETE(
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
+    // 활성 번역 작업 확인 - 진행 중인 작업이 있으면 삭제 차단
+    const activeJob = await db.activeTranslationJob.findFirst({
+      where: {
+        workId: id,
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
+    });
+
+    if (activeJob) {
+      return NextResponse.json(
+        { error: "번역 작업이 진행 중인 작품은 삭제할 수 없습니다. 먼저 작업을 취소해주세요." },
+        { status: 409 }
+      );
+    }
+
     await db.work.delete({ where: { id } });
 
     return NextResponse.json({ success: true });

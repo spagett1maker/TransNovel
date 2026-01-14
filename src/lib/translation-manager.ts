@@ -164,31 +164,47 @@ class TranslationManager {
     }));
 
     await withDbRetry(async () => {
-      // 기존 활성 작업이 있으면 실패 처리
-      await prisma.activeTranslationJob.updateMany({
-        where: {
-          workId,
-          status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
-        },
-        data: {
-          status: "FAILED",
-          errorMessage: "새 작업으로 대체됨",
-        },
-      });
+      // 트랜잭션으로 원자적 처리 (레이스 컨디션 방지)
+      await prisma.$transaction(async (tx) => {
+        // 기존 활성 작업이 있으면 실패 처리
+        await tx.activeTranslationJob.updateMany({
+          where: {
+            workId,
+            status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+          },
+          data: {
+            status: "FAILED",
+            errorMessage: "새 작업으로 대체됨",
+          },
+        });
 
-      await prisma.activeTranslationJob.create({
-        data: {
-          jobId,
-          workId,
-          workTitle,
-          userId,
-          userEmail,
-          status: "PENDING",
-          totalChapters: chapters.length,
-          completedChapters: 0,
-          failedChapters: 0,
-          chaptersProgress: chaptersProgress as unknown as object,
-        },
+        // 동시 요청 체크 - 방금 생성된 작업이 있는지 확인
+        const recentJob = await tx.activeTranslationJob.findFirst({
+          where: {
+            workId,
+            status: { in: ["PENDING", "IN_PROGRESS"] },
+            startedAt: { gte: new Date(Date.now() - 5000) }, // 5초 이내 생성
+          },
+        });
+
+        if (recentJob) {
+          throw new Error("이미 진행 중인 번역 작업이 있습니다.");
+        }
+
+        await tx.activeTranslationJob.create({
+          data: {
+            jobId,
+            workId,
+            workTitle,
+            userId,
+            userEmail,
+            status: "PENDING",
+            totalChapters: chapters.length,
+            completedChapters: 0,
+            failedChapters: 0,
+            chaptersProgress: chaptersProgress as unknown as object,
+          },
+        });
       });
     }, "createJob");
 

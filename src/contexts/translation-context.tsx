@@ -289,6 +289,24 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshJobs]);
 
+  // 주기적으로 완료된 작업의 stale EventSource 정리 (메모리 누수 방지)
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      const currentJobs = jobs;
+      eventSourcesRef.current.forEach((es, jobId) => {
+        const job = currentJobs.get(jobId);
+        // 작업이 완료/실패/일시정지 상태이거나 작업이 없으면 EventSource 정리
+        if (!job || job.status === "COMPLETED" || job.status === "FAILED" || job.status === "PAUSED") {
+          console.log("[TranslationContext] Stale EventSource 정리:", jobId);
+          es.close();
+          eventSourcesRef.current.delete(jobId);
+        }
+      });
+    }, 30000); // 30초마다 정리
+
+    return () => clearInterval(cleanupInterval);
+  }, [jobs]);
+
   // 새 작업 추적 시작
   const startTracking = useCallback(
     (jobId: string, workId: string, workTitle: string, totalChapters: number) => {

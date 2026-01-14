@@ -1,7 +1,12 @@
 import { GoogleGenerativeAI, GoogleGenerativeAIError } from "@google/generative-ai";
 import { translationLogger } from "@/lib/translation-logger";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
+// API 키 검증 - 빈 문자열 기본값 대신 명확한 에러 발생
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  console.error("[CRITICAL] GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.");
+}
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "MISSING_API_KEY");
 
 // 번역 컨텍스트에 로깅 정보 추가
 export interface TranslationLoggingContext {

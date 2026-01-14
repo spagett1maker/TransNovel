@@ -1,4 +1,5 @@
 import { hash } from "bcryptjs";
+import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { db } from "@/lib/db";
@@ -7,7 +8,8 @@ import { registerSchema } from "@/lib/validations/auth";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password, role } = registerSchema.parse(body);
+    // role은 스키마 검증만 하고, 실제로는 AUTHOR로 고정 (보안상 ADMIN 지정 차단)
+    const { name, email, password } = registerSchema.parse(body);
 
     // Check if user already exists
     const existingUser = await db.user.findUnique({
@@ -24,13 +26,13 @@ export async function POST(req: Request) {
     // Hash password
     const hashedPassword = await hash(password, 12);
 
-    // Create user
+    // Create user - 항상 AUTHOR로 생성 (관리자 권한은 DB에서 직접 부여)
     const user = await db.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role,
+        role: UserRole.AUTHOR,
       },
     });
 

@@ -31,6 +31,53 @@ const INCREMENTAL_SAVE_INTERVAL = 3;
 const MAX_CHAPTER_SIZE = 500000; // 50만 자 (약 100KB)
 const WARN_CHAPTER_SIZE = 200000; // 20만 자 경고
 
+// ============================================
+// 사용자별 Rate Limiting (메모리 기반)
+// ============================================
+const RATE_LIMIT_REQUESTS = 5; // 윈도우당 최대 요청 수
+const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+const userRateLimits = new Map<string, RateLimitEntry>();
+
+// 오래된 rate limit 엔트리 정리 (메모리 누수 방지)
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, entry] of userRateLimits.entries()) {
+    if (entry.resetAt < now) {
+      userRateLimits.delete(userId);
+    }
+  }
+}, 60000); // 1분마다 정리
+
+function checkRateLimit(userId: string): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = userRateLimits.get(userId);
+
+  if (!entry || entry.resetAt < now) {
+    // 새 윈도우 시작
+    userRateLimits.set(userId, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    });
+    return { allowed: true };
+  }
+
+  if (entry.count >= RATE_LIMIT_REQUESTS) {
+    return {
+      allowed: false,
+      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
+    };
+  }
+
+  entry.count++;
+  return { allowed: true };
+}
+
 // 챕터 크기 검증
 function validateChapterSizes(
   chapters: Array<{ number: number; originalContent: string }>
@@ -380,6 +427,16 @@ export async function POST(req: Request) {
     }
     console.log("[Translation API] 인증 성공:", session.user.email);
 
+    // Rate Limiting 체크
+    const rateLimit = checkRateLimit(session.user.id);
+    if (!rateLimit.allowed) {
+      console.log("[Translation API] Rate limit 초과:", session.user.id);
+      return NextResponse.json(
+        { error: `요청이 너무 많습니다. ${rateLimit.retryAfter}초 후 다시 시도해주세요.` },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const { workId, chapterNumbers } = body as {
       workId: string;
@@ -391,6 +448,27 @@ export async function POST(req: Request) {
       console.log("[Translation API] 잘못된 요청: workId 또는 chapterNumbers 누락");
       return NextResponse.json(
         { error: "작품 ID와 회차 번호가 필요합니다." },
+        { status: 400 }
+      );
+    }
+
+    // 챕터 번호 검증 (보안)
+    const MAX_CHAPTERS_PER_REQUEST = 100;
+    const MAX_CHAPTER_NUMBER = 10000;
+
+    if (chapterNumbers.length > MAX_CHAPTERS_PER_REQUEST) {
+      return NextResponse.json(
+        { error: `한 번에 최대 ${MAX_CHAPTERS_PER_REQUEST}개 챕터만 번역할 수 있습니다.` },
+        { status: 400 }
+      );
+    }
+
+    const invalidChapters = chapterNumbers.filter(
+      (n) => !Number.isInteger(n) || n <= 0 || n > MAX_CHAPTER_NUMBER
+    );
+    if (invalidChapters.length > 0) {
+      return NextResponse.json(
+        { error: `잘못된 챕터 번호가 포함되어 있습니다: ${invalidChapters.slice(0, 5).join(", ")}${invalidChapters.length > 5 ? "..." : ""}` },
         { status: 400 }
       );
     }
@@ -498,19 +576,21 @@ export async function POST(req: Request) {
     // 클라이언트가 SSE 연결할 시간을 주기 위해 약간의 딜레이 추가
     console.log("[Translation API] 백그라운드 번역 시작 (500ms 딜레이 후)");
 
-    setTimeout(() => {
-      processTranslation(
-        jobId,
-        workId,
-        chapters.map((ch) => ({
-          id: ch.id,
-          number: ch.number,
-          originalContent: ch.originalContent,
-        })),
-        context,
-        userId,
-        userEmail
-      ).catch(async (error) => {
+    setTimeout(async () => {
+      try {
+        await processTranslation(
+          jobId,
+          workId,
+          chapters.map((ch) => ({
+            id: ch.id,
+            number: ch.number,
+            originalContent: ch.originalContent,
+          })),
+          context,
+          userId,
+          userEmail
+        );
+      } catch (error) {
         console.error("[Translation API] 백그라운드 작업 실패:", error);
 
         let errorMessage = "번역 실패";
@@ -522,33 +602,44 @@ export async function POST(req: Request) {
           errorMessage = error.message;
         }
 
-        // 작업 실패 로깅
-        await translationLogger.logJobFailed(jobId, errorCode, errorMessage, {
-          userId,
-          userEmail,
-          workId,
-          errorStack: error instanceof Error ? error.stack : undefined,
-        });
+        // 에러 로깅 및 상태 업데이트 (각각 try-catch로 보호)
+        try {
+          await translationLogger.logJobFailed(jobId, errorCode, errorMessage, {
+            userId,
+            userEmail,
+            workId,
+            errorStack: error instanceof Error ? error.stack : undefined,
+          });
+        } catch (logError) {
+          console.error("[Translation API] 실패 로깅 중 오류:", logError);
+        }
 
-        // 작업 히스토리 저장 (실패)
-        await translationLogger.saveJobHistory({
-          jobId,
-          workId,
-          workTitle: work.titleKo,
-          userId,
-          userEmail,
-          status: "FAILED",
-          totalChapters: chapters.length,
-          completedChapters: 0,
-          failedChapters: chapters.length,
-          errorMessage,
-          failedChapterNums: chapters.map(ch => ch.number),
-          startedAt: new Date(),
-          completedAt: new Date(),
-        });
+        try {
+          await translationLogger.saveJobHistory({
+            jobId,
+            workId,
+            workTitle: work.titleKo,
+            userId,
+            userEmail,
+            status: "FAILED",
+            totalChapters: chapters.length,
+            completedChapters: 0,
+            failedChapters: chapters.length,
+            errorMessage,
+            failedChapterNums: chapters.map(ch => ch.number),
+            startedAt: new Date(),
+            completedAt: new Date(),
+          });
+        } catch (historyError) {
+          console.error("[Translation API] 히스토리 저장 중 오류:", historyError);
+        }
 
-        await translationManager.failJob(jobId, errorMessage);
-      });
+        try {
+          await translationManager.failJob(jobId, errorMessage);
+        } catch (failError) {
+          console.error("[Translation API] 작업 실패 처리 중 오류:", failError);
+        }
+      }
     }, 500); // 500ms 딜레이
 
     // 즉시 jobId 반환
