@@ -110,6 +110,7 @@ export interface TranslationJobSummary {
   };
   error?: string;
   createdAt: Date;
+  updatedAt: Date; // 멈춘 작업 감지용
 }
 
 export interface ProgressEvent {
@@ -432,6 +433,7 @@ class TranslationManager {
         : undefined,
       error: dbJob.errorMessage || undefined,
       createdAt: dbJob.startedAt,
+      updatedAt: dbJob.updatedAt,
     };
   }
 
@@ -465,6 +467,7 @@ class TranslationManager {
           : undefined,
         error: dbJob.errorMessage || undefined,
         createdAt: dbJob.startedAt,
+        updatedAt: dbJob.updatedAt,
       };
     });
   }
@@ -513,6 +516,7 @@ class TranslationManager {
           : undefined,
         error: dbJob.errorMessage || undefined,
         createdAt: dbJob.startedAt,
+        updatedAt: dbJob.updatedAt,
       };
     });
   }
@@ -545,6 +549,7 @@ class TranslationManager {
           : undefined,
         error: dbJob.errorMessage || undefined,
         createdAt: dbJob.startedAt,
+        updatedAt: dbJob.updatedAt,
       };
     });
   }

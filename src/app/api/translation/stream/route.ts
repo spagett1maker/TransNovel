@@ -15,6 +15,8 @@ const POLL_INTERVAL = 1000;
 const KEEPALIVE_INTERVAL = 15000;
 // DB 폴링 재시도 설정
 const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+// 멈춘 작업 타임아웃 (5분)
+const STUCK_JOB_TIMEOUT_MS = 5 * 60 * 1000;
 
 // DB 쿼리 재시도 래퍼
 async function withRetry<T>(
@@ -172,6 +174,39 @@ export async function GET(req: Request) {
               jobId,
               type: "job_failed",
               data: { error: "작업이 삭제되었습니다" },
+            });
+            cleanup();
+            return;
+          }
+
+          // 멈춘 작업 감지 (5분 이상 업데이트 없음)
+          if (
+            currentSummary.status === "IN_PROGRESS" &&
+            currentSummary.updatedAt &&
+            Date.now() - new Date(currentSummary.updatedAt).getTime() > STUCK_JOB_TIMEOUT_MS
+          ) {
+            console.log(
+              `[${timestamp()}] [SSE Stream] 작업이 ${STUCK_JOB_TIMEOUT_MS / 60000}분 이상 멈춤, 실패 처리:`,
+              jobId
+            );
+
+            // DB에서 작업 실패 처리
+            try {
+              await translationManager.failJob(
+                jobId,
+                "번역 작업이 응답하지 않습니다. 네트워크 문제이거나 서버가 재시작되었을 수 있습니다."
+              );
+            } catch (failError) {
+              console.error(`[${timestamp()}] [SSE Stream] 실패 처리 중 오류:`, failError);
+            }
+
+            sendEvent({
+              jobId,
+              type: "job_failed",
+              data: {
+                status: "FAILED",
+                error: "번역 작업이 응답하지 않습니다. 다시 시도해주세요.",
+              },
             });
             cleanup();
             return;

@@ -27,6 +27,7 @@ export interface TranslationJobSummary {
   };
   error?: string;
   createdAt: Date;
+  updatedAt?: Date; // 멈춘 작업 감지용
 }
 
 interface TranslationContextType {
@@ -242,10 +243,12 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             };
             error?: string;
             createdAt: string;
+            updatedAt?: string;
           }) => {
             newJobs.set(job.jobId, {
               ...job,
               createdAt: new Date(job.createdAt),
+              updatedAt: job.updatedAt ? new Date(job.updatedAt) : undefined,
             });
 
             // 진행 중인 작업에 대해 SSE 연결 대기 목록에 추가
