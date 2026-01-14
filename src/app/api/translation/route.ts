@@ -454,12 +454,12 @@ export async function POST(req: Request) {
     }
 
     // 챕터 번호 검증 (보안)
-    const MAX_CHAPTERS_PER_REQUEST = 100;
+    const MAX_CHAPTERS_PER_REQUEST = 2000; // 실제 처리는 순차적이므로 큰 제한 불필요
     const MAX_CHAPTER_NUMBER = 10000;
 
     if (chapterNumbers.length > MAX_CHAPTERS_PER_REQUEST) {
       return NextResponse.json(
-        { error: `한 번에 최대 ${MAX_CHAPTERS_PER_REQUEST}개 챕터만 번역할 수 있습니다.` },
+        { error: `한 번에 최대 ${MAX_CHAPTERS_PER_REQUEST}개 챕터까지 선택할 수 있습니다.` },
         { status: 400 }
       );
     }
