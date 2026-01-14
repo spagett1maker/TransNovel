@@ -164,9 +164,9 @@ class TranslationManager {
     }));
 
     await withDbRetry(async () => {
-      // 트랜잭션으로 원자적 처리 (레이스 컨디션 방지)
+      // 트랜잭션으로 원자적 처리
       await prisma.$transaction(async (tx) => {
-        // 기존 활성 작업이 있으면 실패 처리
+        // 기존 활성 작업이 있으면 실패 처리 (reserveJobSlot에서 이미 처리했지만, 안전을 위해 유지)
         await tx.activeTranslationJob.updateMany({
           where: {
             workId,
@@ -177,19 +177,6 @@ class TranslationManager {
             errorMessage: "새 작업으로 대체됨",
           },
         });
-
-        // 동시 요청 체크 - 방금 생성된 작업이 있는지 확인
-        const recentJob = await tx.activeTranslationJob.findFirst({
-          where: {
-            workId,
-            status: { in: ["PENDING", "IN_PROGRESS"] },
-            startedAt: { gte: new Date(Date.now() - 5000) }, // 5초 이내 생성
-          },
-        });
-
-        if (recentJob) {
-          throw new Error("이미 진행 중인 번역 작업이 있습니다.");
-        }
 
         await tx.activeTranslationJob.create({
           data: {
@@ -645,7 +632,7 @@ class TranslationManager {
   }
 
   // 슬롯 예약 (중복 생성 방지 - DB 기반)
-  async reserveJobSlot(workId: string): Promise<boolean> {
+  async reserveJobSlot(workId: string, force?: boolean): Promise<boolean> {
     const existing = await prisma.activeTranslationJob.findFirst({
       where: {
         workId,
@@ -654,6 +641,18 @@ class TranslationManager {
     });
 
     if (existing) {
+      if (force) {
+        // 강제 시작: 기존 작업을 취소하고 새 작업 허용
+        log("작업 슬롯 강제 예약 - 기존 작업 취소:", existing.jobId);
+        await prisma.activeTranslationJob.update({
+          where: { jobId: existing.jobId },
+          data: {
+            status: "FAILED",
+            errorMessage: "사용자가 새 작업을 강제로 시작함",
+          },
+        });
+        return true;
+      }
       log("작업 슬롯 예약 실패 - 활성 작업 존재:", existing.jobId);
       return false;
     }

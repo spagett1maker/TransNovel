@@ -438,11 +438,12 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { workId, chapterNumbers } = body as {
+    const { workId, chapterNumbers, force } = body as {
       workId: string;
       chapterNumbers: number[];
+      force?: boolean; // 기존 작업 강제 취소 후 시작
     };
-    console.log("[Translation API] 요청 데이터:", { workId, chapterNumbers });
+    console.log("[Translation API] 요청 데이터:", { workId, chapterNumbers, force });
 
     if (!workId || !chapterNumbers || chapterNumbers.length === 0) {
       console.log("[Translation API] 잘못된 요청: workId 또는 chapterNumbers 누락");
@@ -489,11 +490,11 @@ export async function POST(req: Request) {
     console.log("[Translation API] 작품 조회 성공:", work.titleKo);
 
     // 중복 작업 방지: 원자적 슬롯 예약 (DB 기반)
-    const reserved = await translationManager.reserveJobSlot(workId);
+    const reserved = await translationManager.reserveJobSlot(workId, force);
     if (!reserved) {
       console.log("[Translation API] 이미 진행 중인 작업 있음");
       return NextResponse.json({
-        error: "이 작품에 대해 이미 번역 작업이 진행 중입니다.",
+        error: "이 작품에 대해 이미 번역 작업이 진행 중입니다. 강제로 새 작업을 시작하려면 '기존 작업 취소 후 시작' 옵션을 사용하세요.",
       }, { status: 409 });
     }
 
