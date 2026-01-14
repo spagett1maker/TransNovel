@@ -1,4 +1,11 @@
-import { EventEmitter } from "events";
+import { db as prisma } from "./db";
+import { Prisma } from "@prisma/client";
+
+// JSON에서 ChapterProgress 배열로 안전하게 변환
+function parseChaptersProgress(json: Prisma.JsonValue | null): ChapterProgress[] {
+  if (!json || !Array.isArray(json)) return [];
+  return json as unknown as ChapterProgress[];
+}
 
 // 조건부 로깅 - 프로덕션에서는 비활성화
 const isDev = process.env.NODE_ENV === "development";
@@ -48,7 +55,7 @@ export interface TranslationJob {
   failedChapters: number;
   error?: string;
   createdAt: Date;
-  isPauseRequested?: boolean; // 일시정지 요청 플래그
+  isPauseRequested?: boolean;
 }
 
 // 클라이언트에 전송할 경량 요약 정보
@@ -99,410 +106,282 @@ export interface ProgressEvent {
   };
 }
 
+// DB 기반 Translation Manager (서버리스 환경 지원)
 class TranslationManager {
-  private jobs: Map<string, TranslationJob> = new Map();
-  private emitter: EventEmitter = new EventEmitter();
-
-  // 최대 작업 수 제한 (메모리 누수 방지)
-  private readonly MAX_JOBS = 500;
-  // 완료된 작업 자동 정리 시간 (5분)
-  private readonly CLEANUP_DELAY_MS = 5 * 60 * 1000;
-  // 청크 진행률 스로틀 간격 (100ms)
-  private readonly CHUNK_THROTTLE_MS = 100;
-
-  // 청크 진행률 스로틀링을 위한 마지막 이벤트 시간 추적
-  private lastChunkEmitTime: Map<string, number> = new Map();
-  // 스로틀링으로 스킵된 마지막 이벤트를 저장 (나중에 전송)
-  private pendingChunkUpdates: Map<string, { chapterNumber: number; currentChunk: number; totalChunks: number }> = new Map();
-  private pendingChunkTimers: Map<string, NodeJS.Timeout> = new Map();
-
-  // 작업 생성 중인 workId 추적 (중복 생성 방지)
-  private pendingWorkIds: Set<string> = new Set();
-
-  // 최대 리스너 수 증가 (동시 연결 지원)
-  constructor() {
-    this.emitter.setMaxListeners(100);
-  }
-
-  // 작업 슬롯 예약 (원자적 중복 체크)
-  // 성공 시 true, 이미 작업이 있으면 false 반환
-  reserveJobSlot(workId: string): boolean {
-    // 이미 예약 중이거나 활성 작업이 있는지 체크
-    if (this.pendingWorkIds.has(workId)) {
-      log("작업 슬롯 예약 실패 - 이미 예약 중:", workId);
-      return false;
-    }
-
-    const existingJob = this.getActiveJobByWorkId(workId);
-    if (existingJob) {
-      log("작업 슬롯 예약 실패 - 활성 작업 존재:", existingJob.id);
-      return false;
-    }
-
-    // 예약 성공
-    this.pendingWorkIds.add(workId);
-    log("작업 슬롯 예약 성공:", workId);
-    return true;
-  }
-
-  // 작업 슬롯 예약 해제 (작업 생성 실패 시)
-  releaseJobSlot(workId: string): void {
-    this.pendingWorkIds.delete(workId);
-    log("작업 슬롯 예약 해제:", workId);
-  }
-
-  // 오래된 완료/실패 작업 정리 (MAX_JOBS 초과 시)
-  private trimOldJobs(): void {
-    if (this.jobs.size <= this.MAX_JOBS) return;
-
-    const completedOrFailed = Array.from(this.jobs.values())
-      .filter((job) => job.status === "COMPLETED" || job.status === "FAILED")
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-    // 가장 오래된 완료/실패 작업부터 삭제
-    const toDelete = completedOrFailed.slice(
-      0,
-      this.jobs.size - this.MAX_JOBS
-    );
-    toDelete.forEach((job) => {
-      log("오래된 작업 정리:", job.id);
-      this.jobs.delete(job.id);
-    });
-  }
-
-  // 새 작업 생성
-  createJob(
+  // 새 작업 생성 (DB에 저장)
+  async createJob(
     workId: string,
     workTitle: string,
-    chapters: Array<{ number: number; id: string }>
-  ): string {
-    // 작업 생성 전 오래된 작업 정리
-    this.trimOldJobs();
-
+    chapters: Array<{ number: number; id: string }>,
+    userId: string,
+    userEmail?: string
+  ): Promise<string> {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     log("작업 생성:", { jobId, workId, workTitle, chapters: chapters.length });
 
-    const job: TranslationJob = {
-      id: jobId,
-      workId,
-      workTitle,
-      status: "PENDING",
-      chapters: chapters.map((ch) => ({
-        number: ch.number,
-        chapterId: ch.id,
+    const chaptersProgress: ChapterProgress[] = chapters.map((ch) => ({
+      number: ch.number,
+      chapterId: ch.id,
+      status: "PENDING" as ChapterProgressStatus,
+      currentChunk: 0,
+      totalChunks: 0,
+    }));
+
+    // 기존 활성 작업이 있으면 실패 처리
+    await prisma.activeTranslationJob.updateMany({
+      where: {
+        workId,
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: "새 작업으로 대체됨",
+      },
+    });
+
+    await prisma.activeTranslationJob.create({
+      data: {
+        jobId,
+        workId,
+        workTitle,
+        userId,
+        userEmail,
         status: "PENDING",
-        currentChunk: 0,
-        totalChunks: 0,
-      })),
-      completedChapters: 0,
-      totalChapters: chapters.length,
-      failedChapters: 0,
-      createdAt: new Date(),
-    };
-
-    this.jobs.set(jobId, job);
-
-    // 작업 생성 완료 후 예약 슬롯 해제
-    this.pendingWorkIds.delete(workId);
+        totalChapters: chapters.length,
+        completedChapters: 0,
+        failedChapters: 0,
+        chaptersProgress: chaptersProgress as unknown as object,
+      },
+    });
 
     return jobId;
   }
 
-  // 작업 조회
-  getJob(jobId: string): TranslationJob | null {
-    const job = this.jobs.get(jobId) || null;
-    log("getJob:", { jobId, found: !!job, totalJobs: this.jobs.size });
-    return job;
+  // 작업 조회 (DB에서)
+  async getJob(jobId: string): Promise<TranslationJob | null> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+
+    if (!dbJob) {
+      log("getJob: 작업을 찾을 수 없음", jobId);
+      return null;
+    }
+
+    return this.dbJobToTranslationJob(dbJob);
   }
 
   // 작업 시작
-  startJob(jobId: string): void {
+  async startJob(jobId: string): Promise<void> {
     log("작업 시작:", jobId);
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      logError("작업을 찾을 수 없음:", jobId);
-      return;
-    }
 
-    job.status = "IN_PROGRESS";
-    log("작업 상태 변경: IN_PROGRESS");
-    this.emit({
-      jobId,
-      type: "job_started",
-      data: {
-        status: job.status,
-        totalChapters: job.totalChapters,
-      },
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
+      data: { status: "IN_PROGRESS" },
     });
   }
 
   // 챕터 번역 시작
-  startChapter(jobId: string, chapterNumber: number, totalChunks: number): void {
+  async startChapter(jobId: string, chapterNumber: number, totalChunks: number): Promise<void> {
     log("챕터 시작:", { jobId, chapterNumber, totalChunks });
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      logError("작업을 찾을 수 없음:", jobId);
-      return;
-    }
 
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) {
-      logError("챕터를 찾을 수 없음:", chapterNumber);
-      return;
-    }
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return;
 
-    chapter.status = "TRANSLATING";
-    chapter.totalChunks = totalChunks;
-    chapter.currentChunk = 0;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
+    if (chapterIndex === -1) return;
 
-    this.emit({
-      jobId,
-      type: "chapter_started",
+    chapters[chapterIndex].status = "TRANSLATING";
+    chapters[chapterIndex].totalChunks = totalChunks;
+    chapters[chapterIndex].currentChunk = 0;
+
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
       data: {
-        chapterNumber,
+        currentChapterNum: chapterNumber,
+        currentChunkIndex: 0,
         totalChunks,
+        chaptersProgress: chapters as unknown as object,
       },
     });
   }
 
-  // 청크 진행 업데이트 (스로틀링 적용)
-  updateChunkProgress(
+  // 청크 진행 업데이트
+  async updateChunkProgress(
     jobId: string,
     chapterNumber: number,
     currentChunk: number,
     totalChunks: number
-  ): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
+  ): Promise<void> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return;
 
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
+    if (chapterIndex === -1) return;
 
-    // 내부 상태는 항상 업데이트
-    chapter.currentChunk = currentChunk;
-    chapter.totalChunks = totalChunks;
+    chapters[chapterIndex].currentChunk = currentChunk;
+    chapters[chapterIndex].totalChunks = totalChunks;
 
-    const throttleKey = `${jobId}:${chapterNumber}`;
-    const now = Date.now();
-    const lastEmit = this.lastChunkEmitTime.get(throttleKey) || 0;
-    const timeSinceLastEmit = now - lastEmit;
-
-    // 마지막 청크이거나 첫 청크인 경우 즉시 전송
-    const isFirstOrLast = currentChunk === 1 || currentChunk === totalChunks;
-
-    if (isFirstOrLast || timeSinceLastEmit >= this.CHUNK_THROTTLE_MS) {
-      // 즉시 전송
-      this.lastChunkEmitTime.set(throttleKey, now);
-
-      // 대기 중인 타이머가 있으면 취소
-      const existingTimer = this.pendingChunkTimers.get(throttleKey);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
-        this.pendingChunkTimers.delete(throttleKey);
-      }
-      this.pendingChunkUpdates.delete(throttleKey);
-
-      this.emit({
-        jobId,
-        type: "chunk_progress",
-        data: {
-          chapterNumber,
-          currentChunk,
-          totalChunks,
-        },
-      });
-    } else {
-      // 스로틀링: 마지막 이벤트 저장하고 나중에 전송
-      this.pendingChunkUpdates.set(throttleKey, { chapterNumber, currentChunk, totalChunks });
-
-      // 이미 타이머가 있으면 재사용 (새로 만들지 않음)
-      if (!this.pendingChunkTimers.has(throttleKey)) {
-        const timer = setTimeout(() => {
-          const pending = this.pendingChunkUpdates.get(throttleKey);
-          if (pending) {
-            this.lastChunkEmitTime.set(throttleKey, Date.now());
-            this.emit({
-              jobId,
-              type: "chunk_progress",
-              data: pending,
-            });
-            this.pendingChunkUpdates.delete(throttleKey);
-          }
-          this.pendingChunkTimers.delete(throttleKey);
-        }, this.CHUNK_THROTTLE_MS - timeSinceLastEmit);
-
-        this.pendingChunkTimers.set(throttleKey, timer);
-      }
-    }
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
+      data: {
+        currentChunkIndex: currentChunk,
+        totalChunks,
+        chaptersProgress: chapters as unknown as object,
+      },
+    });
   }
 
   // 청크 에러 보고
-  reportChunkError(
+  async reportChunkError(
     jobId: string,
     chapterNumber: number,
     chunkIndex: number,
     error: string
-  ): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
+  ): Promise<void> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return;
 
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
+    if (chapterIndex === -1) return;
 
-    if (!chapter.failedChunks) {
-      chapter.failedChunks = [];
+    if (!chapters[chapterIndex].failedChunks) {
+      chapters[chapterIndex].failedChunks = [];
     }
-    chapter.failedChunks.push({ index: chunkIndex, error });
+    chapters[chapterIndex].failedChunks!.push({ index: chunkIndex, error });
 
-    this.emit({
-      jobId,
-      type: "chunk_error",
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
       data: {
-        chapterNumber,
-        chunkIndex,
-        error,
+        chaptersProgress: chapters as unknown as object,
       },
     });
   }
 
   // 챕터 완료
-  completeChapter(jobId: string, chapterNumber: number): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
+  async completeChapter(jobId: string, chapterNumber: number): Promise<void> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return;
 
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
+    if (chapterIndex === -1) return;
 
-    chapter.status = "COMPLETED";
-    chapter.currentChunk = chapter.totalChunks;
-    job.completedChapters++;
+    chapters[chapterIndex].status = "COMPLETED";
+    chapters[chapterIndex].currentChunk = chapters[chapterIndex].totalChunks;
 
-    this.emit({
-      jobId,
-      type: "chapter_completed",
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
       data: {
-        chapterNumber,
-        completedChapters: job.completedChapters,
-        totalChapters: job.totalChapters,
+        completedChapters: dbJob.completedChapters + 1,
+        currentChapterNum: null,
+        currentChunkIndex: null,
+        totalChunks: null,
+        chaptersProgress: chapters as unknown as object,
       },
     });
   }
 
   // 챕터 부분 완료 (일부 청크 실패)
-  completeChapterPartial(
+  async completeChapterPartial(
     jobId: string,
     chapterNumber: number,
-    failedChunkIndices: number[]
-  ): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
-
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
-
-    chapter.status = "COMPLETED";
-    chapter.currentChunk = chapter.totalChunks;
-    job.completedChapters++;
-
-    this.emit({
-      jobId,
-      type: "chapter_partial",
-      data: {
-        chapterNumber,
-        completedChapters: job.completedChapters,
-        totalChapters: job.totalChapters,
-        failedChunks: failedChunkIndices,
-      },
-    });
+    _failedChunkIndices: number[]
+  ): Promise<void> {
+    // 부분 완료도 완료로 처리
+    await this.completeChapter(jobId, chapterNumber);
   }
 
   // 챕터 실패
-  failChapter(jobId: string, chapterNumber: number, error: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
+  async failChapter(jobId: string, chapterNumber: number, error: string): Promise<void> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return;
 
-    const chapter = job.chapters.find((ch) => ch.number === chapterNumber);
-    if (!chapter) return;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
+    if (chapterIndex === -1) return;
 
-    chapter.status = "FAILED";
-    chapter.error = error;
-    job.failedChapters++;
+    chapters[chapterIndex].status = "FAILED";
+    chapters[chapterIndex].error = error;
 
-    this.emit({
-      jobId,
-      type: "chapter_failed",
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
       data: {
-        chapterNumber,
-        error,
-        failedChapters: job.failedChapters,
+        failedChapters: dbJob.failedChapters + 1,
+        currentChapterNum: null,
+        currentChunkIndex: null,
+        totalChunks: null,
+        chaptersProgress: chapters as unknown as object,
       },
     });
   }
 
   // 작업 완료
-  completeJob(jobId: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
-
-    job.status = "COMPLETED";
-
-    this.emit({
-      jobId,
-      type: "job_completed",
-      data: {
-        status: job.status,
-        completedChapters: job.completedChapters,
-        totalChapters: job.totalChapters,
-      },
+  async completeJob(jobId: string): Promise<void> {
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
+      data: { status: "COMPLETED" },
     });
 
-    // 완료 후 자동 정리
-    setTimeout(() => {
-      log("완료된 작업 자동 정리:", jobId);
-      this.jobs.delete(jobId);
-    }, this.CLEANUP_DELAY_MS);
+    // 히스토리에 저장
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (dbJob) {
+      await this.saveToHistory(dbJob, "COMPLETED");
+    }
   }
 
   // 작업 실패
-  failJob(jobId: string, error: string): void {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
-
-    job.status = "FAILED";
-    job.error = error;
-
-    this.emit({
-      jobId,
-      type: "job_failed",
+  async failJob(jobId: string, error: string): Promise<void> {
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
       data: {
-        status: job.status,
-        error,
+        status: "FAILED",
+        errorMessage: error,
       },
     });
 
-    // 실패 후 자동 정리
-    setTimeout(() => {
-      log("실패한 작업 자동 정리:", jobId);
-      this.jobs.delete(jobId);
-    }, this.CLEANUP_DELAY_MS);
+    // 히스토리에 저장
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (dbJob) {
+      await this.saveToHistory(dbJob, "FAILED");
+    }
   }
 
   // 작업 요약 정보 생성
-  getJobSummary(jobId: string): TranslationJobSummary | null {
-    const job = this.jobs.get(jobId);
-    if (!job) return null;
+  async getJobSummary(jobId: string): Promise<TranslationJobSummary | null> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return null;
 
-    // 현재 번역 중인 챕터 찾기
-    const translatingChapter = job.chapters.find((ch) => ch.status === "TRANSLATING");
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
 
     return {
-      jobId: job.id,
-      workId: job.workId,
-      workTitle: job.workTitle,
-      status: job.status,
-      totalChapters: job.totalChapters,
-      completedChapters: job.completedChapters,
-      failedChapters: job.failedChapters,
+      jobId: dbJob.jobId,
+      workId: dbJob.workId,
+      workTitle: dbJob.workTitle,
+      status: dbJob.status as TranslationJobStatus,
+      totalChapters: dbJob.totalChapters,
+      completedChapters: dbJob.completedChapters,
+      failedChapters: dbJob.failedChapters,
       currentChapter: translatingChapter
         ? {
             number: translatingChapter.number,
@@ -510,163 +389,306 @@ class TranslationManager {
             totalChunks: translatingChapter.totalChunks,
           }
         : undefined,
-      error: job.error,
-      createdAt: job.createdAt,
+      error: dbJob.errorMessage || undefined,
+      createdAt: dbJob.startedAt,
     };
   }
 
-  // 활성 작업 목록 조회 (PENDING 또는 IN_PROGRESS)
-  getActiveJobs(): TranslationJobSummary[] {
-    const activeJobs: TranslationJobSummary[] = [];
-
-    this.jobs.forEach((job) => {
-      if (job.status === "PENDING" || job.status === "IN_PROGRESS") {
-        const summary = this.getJobSummary(job.id);
-        if (summary) {
-          activeJobs.push(summary);
-        }
-      }
+  // 활성 작업 목록 조회
+  async getActiveJobs(): Promise<TranslationJobSummary[]> {
+    const dbJobs = await prisma.activeTranslationJob.findMany({
+      where: {
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
+      orderBy: { startedAt: "asc" },
     });
 
-    // 생성 시간순 정렬
-    activeJobs.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    return dbJobs.map((dbJob) => {
+      const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+      const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
 
-    return activeJobs;
+      return {
+        jobId: dbJob.jobId,
+        workId: dbJob.workId,
+        workTitle: dbJob.workTitle,
+        status: dbJob.status as TranslationJobStatus,
+        totalChapters: dbJob.totalChapters,
+        completedChapters: dbJob.completedChapters,
+        failedChapters: dbJob.failedChapters,
+        currentChapter: translatingChapter
+          ? {
+              number: translatingChapter.number,
+              currentChunk: translatingChapter.currentChunk,
+              totalChunks: translatingChapter.totalChunks,
+            }
+          : undefined,
+        error: dbJob.errorMessage || undefined,
+        createdAt: dbJob.startedAt,
+      };
+    });
   }
 
-  // 특정 작품의 활성 작업 조회 (중복 작업 방지용)
-  getActiveJobByWorkId(workId: string): TranslationJob | null {
-    for (const job of this.jobs.values()) {
-      if (job.workId === workId && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
-        return job;
-      }
-    }
-    return null;
-  }
-
-  // 모든 작업 목록 조회 (완료/실패 포함)
-  getAllJobs(): TranslationJobSummary[] {
-    const allJobs: TranslationJobSummary[] = [];
-
-    this.jobs.forEach((job) => {
-      const summary = this.getJobSummary(job.id);
-      if (summary) {
-        allJobs.push(summary);
-      }
+  // 특정 작품의 활성 작업 조회
+  async getActiveJobByWorkId(workId: string): Promise<TranslationJob | null> {
+    const dbJob = await prisma.activeTranslationJob.findFirst({
+      where: {
+        workId,
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
     });
 
-    // 생성 시간순 정렬
-    allJobs.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-    return allJobs;
+    if (!dbJob) return null;
+    return this.dbJobToTranslationJob(dbJob);
   }
 
-  // 작업 삭제 (UI에서 닫기)
-  removeJob(jobId: string): void {
+  // 사용자의 활성 작업 조회
+  async getActiveJobsByUserId(userId: string): Promise<TranslationJobSummary[]> {
+    const dbJobs = await prisma.activeTranslationJob.findMany({
+      where: {
+        userId,
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
+      orderBy: { startedAt: "desc" },
+    });
+
+    return dbJobs.map((dbJob) => {
+      const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+      const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+
+      return {
+        jobId: dbJob.jobId,
+        workId: dbJob.workId,
+        workTitle: dbJob.workTitle,
+        status: dbJob.status as TranslationJobStatus,
+        totalChapters: dbJob.totalChapters,
+        completedChapters: dbJob.completedChapters,
+        failedChapters: dbJob.failedChapters,
+        currentChapter: translatingChapter
+          ? {
+              number: translatingChapter.number,
+              currentChunk: translatingChapter.currentChunk,
+              totalChunks: translatingChapter.totalChunks,
+            }
+          : undefined,
+        error: dbJob.errorMessage || undefined,
+        createdAt: dbJob.startedAt,
+      };
+    });
+  }
+
+  // 모든 작업 목록 조회
+  async getAllJobs(): Promise<TranslationJobSummary[]> {
+    const dbJobs = await prisma.activeTranslationJob.findMany({
+      orderBy: { startedAt: "desc" },
+      take: 100, // 최근 100개만
+    });
+
+    return dbJobs.map((dbJob) => {
+      const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+      const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+
+      return {
+        jobId: dbJob.jobId,
+        workId: dbJob.workId,
+        workTitle: dbJob.workTitle,
+        status: dbJob.status as TranslationJobStatus,
+        totalChapters: dbJob.totalChapters,
+        completedChapters: dbJob.completedChapters,
+        failedChapters: dbJob.failedChapters,
+        currentChapter: translatingChapter
+          ? {
+              number: translatingChapter.number,
+              currentChunk: translatingChapter.currentChunk,
+              totalChunks: translatingChapter.totalChunks,
+            }
+          : undefined,
+        error: dbJob.errorMessage || undefined,
+        createdAt: dbJob.startedAt,
+      };
+    });
+  }
+
+  // 작업 삭제
+  async removeJob(jobId: string): Promise<void> {
     log("작업 삭제:", jobId);
-    this.jobs.delete(jobId);
+    await prisma.activeTranslationJob.delete({
+      where: { jobId },
+    }).catch(() => {
+      // 이미 삭제된 경우 무시
+    });
   }
 
   // 일시정지 요청
-  pauseJob(jobId: string): boolean {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      logError("일시정지 실패 - 작업을 찾을 수 없음:", jobId);
+  async pauseJob(jobId: string): Promise<boolean> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+
+    if (!dbJob || dbJob.status !== "IN_PROGRESS") {
       return false;
     }
 
-    if (job.status !== "IN_PROGRESS") {
-      log("일시정지 실패 - 진행 중인 작업만 일시정지 가능:", job.status);
-      return false;
-    }
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
+      data: { isPauseRequested: true },
+    });
 
-    job.isPauseRequested = true;
     log("일시정지 요청됨:", jobId);
-
     return true;
   }
 
-  // 일시정지 확인 및 상태 업데이트 (번역 루프에서 호출)
-  checkAndPause(jobId: string): boolean {
-    const job = this.jobs.get(jobId);
-    if (!job) return false;
+  // 일시정지 확인 및 상태 업데이트
+  async checkAndPause(jobId: string): Promise<boolean> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
 
-    if (job.isPauseRequested) {
-      job.status = "PAUSED";
-      job.isPauseRequested = false;
+    if (!dbJob || !dbJob.isPauseRequested) return false;
 
-      // 현재 번역 중인 챕터를 PENDING으로 되돌림
-      const translatingChapter = job.chapters.find(
-        (ch) => ch.status === "TRANSLATING"
-      );
-      if (translatingChapter) {
-        translatingChapter.status = "PENDING";
-        translatingChapter.currentChunk = 0;
-      }
-
-      this.emit({
-        jobId,
-        type: "job_paused",
-        data: {
-          status: job.status,
-          completedChapters: job.completedChapters,
-          totalChapters: job.totalChapters,
-        },
-      });
-
-      log("작업 일시정지됨:", jobId);
-      return true;
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    const translatingIndex = chapters.findIndex((ch) => ch.status === "TRANSLATING");
+    if (translatingIndex !== -1) {
+      chapters[translatingIndex].status = "PENDING";
+      chapters[translatingIndex].currentChunk = 0;
     }
 
-    return false;
+    await prisma.activeTranslationJob.update({
+      where: { jobId },
+      data: {
+        status: "PAUSED",
+        isPauseRequested: false,
+        chaptersProgress: chapters as unknown as object,
+      },
+    });
+
+    // 히스토리에 저장
+    await this.saveToHistory({ ...dbJob, status: "PAUSED" }, "PAUSED");
+
+    log("작업 일시정지됨:", jobId);
+    return true;
   }
 
-  // 작업 재개를 위한 남은 챕터 번호 목록 반환
-  getPendingChapterNumbers(jobId: string): number[] {
-    const job = this.jobs.get(jobId);
-    if (!job) return [];
+  // 남은 챕터 번호 목록
+  async getPendingChapterNumbers(jobId: string): Promise<number[]> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+    });
+    if (!dbJob) return [];
 
-    return job.chapters
+    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+    return chapters
       .filter((ch) => ch.status === "PENDING" || ch.status === "TRANSLATING")
       .map((ch) => ch.number);
   }
 
-  // 일시정지된 작업인지 확인
-  isPaused(jobId: string): boolean {
-    const job = this.jobs.get(jobId);
-    return job?.status === "PAUSED";
+  // 일시정지 상태 확인
+  async isPaused(jobId: string): Promise<boolean> {
+    const dbJob = await prisma.activeTranslationJob.findUnique({
+      where: { jobId },
+      select: { status: true },
+    });
+    return dbJob?.status === "PAUSED";
   }
 
-  // 이벤트 발생
-  private emit(event: ProgressEvent): void {
-    log("이벤트 발생:", event.type, event.jobId);
-    this.emitter.emit(`job:${event.jobId}`, event);
+  // 슬롯 예약 (중복 생성 방지 - DB 기반)
+  async reserveJobSlot(workId: string): Promise<boolean> {
+    const existing = await prisma.activeTranslationJob.findFirst({
+      where: {
+        workId,
+        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+      },
+    });
+
+    if (existing) {
+      log("작업 슬롯 예약 실패 - 활성 작업 존재:", existing.jobId);
+      return false;
+    }
+
+    return true;
   }
 
-  // 구독
-  subscribe(
-    jobId: string,
-    callback: (event: ProgressEvent) => void
-  ): () => void {
-    const eventName = `job:${jobId}`;
-    this.emitter.on(eventName, callback);
+  // 슬롯 해제 (DB에서는 필요 없음, 호환성을 위해 유지)
+  releaseJobSlot(_workId: string): void {
+    // DB 기반에서는 작업 생성/실패 시 자동 처리됨
+  }
 
-    return () => {
-      this.emitter.off(eventName, callback);
+  // DB 레코드를 TranslationJob으로 변환
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private dbJobToTranslationJob(dbJob: any): TranslationJob {
+    return {
+      id: dbJob.jobId,
+      workId: dbJob.workId,
+      workTitle: dbJob.workTitle,
+      status: dbJob.status as TranslationJobStatus,
+      chapters: parseChaptersProgress(dbJob.chaptersProgress) || [],
+      completedChapters: dbJob.completedChapters,
+      totalChapters: dbJob.totalChapters,
+      failedChapters: dbJob.failedChapters,
+      error: dbJob.errorMessage || undefined,
+      createdAt: dbJob.startedAt,
+      isPauseRequested: dbJob.isPauseRequested,
     };
   }
+
+  // 히스토리에 저장
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async saveToHistory(dbJob: any, status: string): Promise<void> {
+    try {
+      const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
+      const failedChapterNums = chapters
+        .filter((ch) => ch.status === "FAILED")
+        .map((ch) => ch.number);
+
+      await prisma.translationJobHistory.upsert({
+        where: { jobId: dbJob.jobId },
+        update: {
+          status,
+          completedChapters: dbJob.completedChapters,
+          failedChapters: dbJob.failedChapters,
+          errorMessage: dbJob.errorMessage,
+          failedChapterNums,
+          completedAt: new Date(),
+          durationMs: Date.now() - new Date(dbJob.startedAt).getTime(),
+        },
+        create: {
+          jobId: dbJob.jobId,
+          workId: dbJob.workId,
+          workTitle: dbJob.workTitle,
+          userId: dbJob.userId,
+          userEmail: dbJob.userEmail,
+          status,
+          totalChapters: dbJob.totalChapters,
+          completedChapters: dbJob.completedChapters,
+          failedChapters: dbJob.failedChapters,
+          errorMessage: dbJob.errorMessage,
+          failedChapterNums,
+          startedAt: dbJob.startedAt,
+          completedAt: new Date(),
+          durationMs: Date.now() - new Date(dbJob.startedAt).getTime(),
+        },
+      });
+    } catch (e) {
+      logError("히스토리 저장 실패:", e);
+    }
+  }
+
+  // 오래된 완료/실패 작업 정리 (정기 실행용)
+  async cleanupOldJobs(olderThanHours: number = 24): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+
+    const result = await prisma.activeTranslationJob.deleteMany({
+      where: {
+        status: { in: ["COMPLETED", "FAILED"] },
+        updatedAt: { lt: cutoff },
+      },
+    });
+
+    log(`${result.count}개의 오래된 작업 정리됨`);
+    return result.count;
+  }
 }
 
-// globalThis를 사용하여 개발 모드에서 HMR 시에도 싱글톤 유지
-const globalForTranslation = globalThis as unknown as {
-  translationManager: TranslationManager | undefined;
-};
+// 싱글톤 인스턴스
+export const translationManager = new TranslationManager();
 
-export const translationManager =
-  globalForTranslation.translationManager ?? new TranslationManager();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForTranslation.translationManager = translationManager;
-}
-
-log("싱글톤 초기화됨, 기존 작업 수:", translationManager["jobs"].size);
+log("DB 기반 Translation Manager 초기화됨");

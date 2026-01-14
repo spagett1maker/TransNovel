@@ -267,6 +267,48 @@ model TranslationLog {
   @@index([level, createdAt])
 }
 
+// 활성 번역 작업 (서버리스 환경 지원 - DB 기반)
+model ActiveTranslationJob {
+  id                String    @id @default(cuid())
+  jobId             String    @unique  // 클라이언트 식별용 ID
+
+  workId            String
+  workTitle         String
+  userId            String
+  userEmail         String?
+
+  // 상태
+  status            String    @default("PENDING")  // PENDING, IN_PROGRESS, PAUSED, COMPLETED, FAILED
+  isPauseRequested  Boolean   @default(false)
+
+  // 진행률
+  totalChapters     Int
+  completedChapters Int       @default(0)
+  failedChapters    Int       @default(0)
+
+  // 현재 진행 중인 챕터 정보
+  currentChapterNum Int?
+  currentChunkIndex Int?
+  totalChunks       Int?
+
+  // 챕터별 상태 (JSON)
+  // [{ number, chapterId, status, currentChunk, totalChunks, error? }]
+  chaptersProgress  Json?
+
+  // 에러 정보
+  errorMessage      String?   @db.Text
+
+  // 시간 정보
+  startedAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([workId, status])  // 작품당 하나의 활성 작업만
+  @@index([workId])
+  @@index([userId])
+  @@index([status])
+  @@index([updatedAt])
+}
+
 // 번역 작업 히스토리 (영구 저장)
 model TranslationJobHistory {
   id                String    @id @default(cuid())

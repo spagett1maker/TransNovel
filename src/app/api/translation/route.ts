@@ -7,7 +7,6 @@ import { db } from "@/lib/db";
 import { splitIntoChunks, translateChunks, TranslationError, ChunkTranslationResult, TranslationLoggingContext } from "@/lib/gemini";
 import { translationManager } from "@/lib/translation-manager";
 import { translationLogger } from "@/lib/translation-logger";
-import { LogCategory } from "@prisma/client";
 
 interface TranslationContext {
   titleKo: string;
@@ -67,7 +66,7 @@ async function processTranslation(
     userEmail
   );
 
-  translationManager.startJob(jobId);
+  await translationManager.startJob(jobId);
   log("[Translation]", "작업 시작됨", { jobId });
 
   // 실패한 챕터 번호 추적
@@ -77,7 +76,7 @@ async function processTranslation(
     const chapter = chapters[chapterIndex];
 
     // 일시정지 요청 확인
-    if (translationManager.checkAndPause(jobId)) {
+    if (await translationManager.checkAndPause(jobId)) {
       log("[Translation]", "작업이 일시정지됨, 루프 종료");
       return; // 루프 종료
     }
@@ -111,7 +110,7 @@ async function processTranslation(
       // 업데이트된 행이 없으면 다른 작업이 이미 번역 중
       if (updateResult.count === 0) {
         log("[Translation]", `챕터 ${chapter.number} 이미 다른 작업에서 처리 중, 스킵`);
-        translationManager.completeChapter(jobId, chapter.number); // 완료로 처리하고 스킵
+        await translationManager.completeChapter(jobId, chapter.number); // 완료로 처리하고 스킵
         continue;
       }
       log("[Translation]", `챕터 ${chapter.number} DB 상태 업데이트 완료 (locked)`);
@@ -147,12 +146,12 @@ async function processTranslation(
 
       // 챕터 시작 알림 및 로깅
       log("[Translation]", `챕터 ${chapter.number} 번역 시작 알림 전송`);
-      translationManager.startChapter(jobId, chapter.number, chunks.length);
+      await translationManager.startChapter(jobId, chapter.number, chunks.length);
       await translationLogger.logChapterStart(jobId, workId, chapter.id, chapter.number, chunks.length, { userId, userEmail });
 
       // 시작 청크가 있으면 진행률 업데이트
       if (startFromChunk > 0) {
-        translationManager.updateChunkProgress(jobId, chapter.number, startFromChunk, chunks.length);
+        await translationManager.updateChunkProgress(jobId, chapter.number, startFromChunk, chunks.length);
       }
 
       // 청크 번역 (진행 콜백 + 중간 저장 포함)
@@ -170,7 +169,7 @@ async function processTranslation(
             success: result.success,
             chapterIndex,
           });
-          translationManager.updateChunkProgress(
+          await translationManager.updateChunkProgress(
             jobId,
             chapter.number,
             current,
@@ -180,7 +179,7 @@ async function processTranslation(
           // 청크 실패 시 에러 보고
           if (!result.success && result.error) {
             log("[Translation]", `챕터 ${chapter.number} 청크 ${result.index} 실패`, { error: result.error });
-            translationManager.reportChunkError(
+            await translationManager.reportChunkError(
               jobId,
               chapter.number,
               result.index,
@@ -258,11 +257,11 @@ async function processTranslation(
       const chapterDuration = Date.now() - jobStartTime;
       if (failedChunks.length > 0) {
         log("[Translation]", `챕터 ${chapter.number} 부분 완료`, { failedChunks, chapterIndex });
-        translationManager.completeChapterPartial(jobId, chapter.number, failedChunks);
+        await translationManager.completeChapterPartial(jobId, chapter.number, failedChunks);
         await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, failedChunks.length, { userId, userEmail });
       } else {
         log("[Translation]", `챕터 ${chapter.number} 완전 완료`, { chapterIndex });
-        translationManager.completeChapter(jobId, chapter.number);
+        await translationManager.completeChapter(jobId, chapter.number);
         await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, 0, { userId, userEmail });
       }
 
@@ -300,7 +299,7 @@ async function processTranslation(
       });
 
       // 챕터 실패 알림 및 로깅
-      translationManager.failChapter(jobId, chapter.number, errorMessage);
+      await translationManager.failChapter(jobId, chapter.number, errorMessage);
       failedChapterNums.push(chapter.number);
 
       const errorCode = error instanceof TranslationError ? error.code : "UNKNOWN";
@@ -340,7 +339,7 @@ async function processTranslation(
     durationMs: jobDuration,
   });
 
-  translationManager.completeJob(jobId);
+  await translationManager.completeJob(jobId);
 }
 
 export async function POST(req: Request) {
@@ -384,8 +383,8 @@ export async function POST(req: Request) {
     }
     console.log("[Translation API] 작품 조회 성공:", work.titleKo);
 
-    // 중복 작업 방지: 원자적 슬롯 예약 (경쟁 조건 방지)
-    const reserved = translationManager.reserveJobSlot(workId);
+    // 중복 작업 방지: 원자적 슬롯 예약 (DB 기반)
+    const reserved = await translationManager.reserveJobSlot(workId);
     if (!reserved) {
       console.log("[Translation API] 이미 진행 중인 작업 있음");
       return NextResponse.json({
@@ -407,7 +406,7 @@ export async function POST(req: Request) {
 
     if (chapters.length === 0) {
       console.log("[Translation API] 번역할 회차 없음");
-      // 슬롯 예약 해제
+      // 슬롯 예약 해제 (DB 기반에서는 필요 없지만 호환성 유지)
       translationManager.releaseJobSlot(workId);
       return NextResponse.json(
         { error: "번역할 회차가 없습니다." },
@@ -433,19 +432,23 @@ export async function POST(req: Request) {
       glossaryCount: context.glossary.length,
     });
 
-    // 작업 생성
-    const jobId = translationManager.createJob(
+    // 사용자 정보
+    const userId = session.user.id;
+    const userEmail = session.user.email || undefined;
+
+    // 작업 생성 (DB에 저장)
+    const jobId = await translationManager.createJob(
       workId,
       work.titleKo,
-      chapters.map((ch) => ({ number: ch.number, id: ch.id }))
+      chapters.map((ch) => ({ number: ch.number, id: ch.id })),
+      userId,
+      userEmail
     );
     console.log("[Translation API] 작업 생성됨:", jobId);
 
     // 백그라운드에서 번역 실행 (await 하지 않음)
     // 클라이언트가 SSE 연결할 시간을 주기 위해 약간의 딜레이 추가
     console.log("[Translation API] 백그라운드 번역 시작 (500ms 딜레이 후)");
-    const userId = session.user.id;
-    const userEmail = session.user.email || undefined;
 
     setTimeout(() => {
       processTranslation(
@@ -496,7 +499,7 @@ export async function POST(req: Request) {
           completedAt: new Date(),
         });
 
-        translationManager.failJob(jobId, errorMessage);
+        await translationManager.failJob(jobId, errorMessage);
       });
     }, 500); // 500ms 딜레이
 

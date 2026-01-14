@@ -16,7 +16,7 @@ export async function GET() {
     }
 
     // 모든 작업 조회 (활성 + 최근 완료/실패)
-    const jobs = translationManager.getAllJobs();
+    const jobs = await translationManager.getAllJobs();
 
     console.log("[Translation Active API] 작업 목록 조회:", {
       totalJobs: jobs.length,
@@ -49,7 +49,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "jobId가 필요합니다." }, { status: 400 });
     }
 
-    translationManager.removeJob(jobId);
+    await translationManager.removeJob(jobId);
 
     console.log("[Translation Active API] 작업 삭제:", jobId);
 

@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const success = translationManager.pauseJob(jobId);
+    const success = await translationManager.pauseJob(jobId);
 
     if (!success) {
       return NextResponse.json(
