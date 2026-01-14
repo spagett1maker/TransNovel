@@ -17,6 +17,9 @@ interface BulkUploadRequest {
   separator?: string;
 }
 
+// 배치 크기 (한 번에 처리할 챕터 수)
+const BATCH_SIZE = 50;
+
 /**
  * 텍스트에서 챕터를 자동 감지하여 분리
  * 패턴: 第X章, 第X话, 第X節, Chapter X, 제X화, 제X장 등
@@ -160,31 +163,66 @@ export async function POST(
 
     uniqueChapters.sort((a, b) => a.number - b.number);
 
-    // 데이터베이스에 저장
-    const createdChapters = await db.$transaction(
-      uniqueChapters.map((chapter) =>
-        db.chapter.upsert({
-          where: {
-            workId_number: {
-              workId: id,
-              number: chapter.number,
-            },
-          },
-          update: {
-            title: chapter.title || null,
-            originalContent: chapter.content,
-            wordCount: chapter.content.length,
-          },
-          create: {
+    // 기존 챕터 번호 조회 (한 번에)
+    const existingChapters = await db.chapter.findMany({
+      where: {
+        workId: id,
+        number: { in: uniqueChapters.map(c => c.number) },
+      },
+      select: { number: true },
+    });
+    const existingNumbers = new Set(existingChapters.map(c => c.number));
+
+    // 새 챕터와 업데이트할 챕터 분리
+    const newChapters = uniqueChapters.filter(c => !existingNumbers.has(c.number));
+    const updateChapters = uniqueChapters.filter(c => existingNumbers.has(c.number));
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    // 새 챕터 일괄 생성 (createMany - 매우 빠름)
+    if (newChapters.length > 0) {
+      // 배치로 나누어 처리
+      for (let i = 0; i < newChapters.length; i += BATCH_SIZE) {
+        const batch = newChapters.slice(i, i + BATCH_SIZE);
+        await db.chapter.createMany({
+          data: batch.map(chapter => ({
             workId: id,
             number: chapter.number,
             title: chapter.title || null,
             originalContent: chapter.content,
             wordCount: chapter.content.length,
-          },
-        })
-      )
-    );
+          })),
+          skipDuplicates: true,
+        });
+        createdCount += batch.length;
+      }
+    }
+
+    // 기존 챕터 업데이트 (배치 트랜잭션)
+    if (updateChapters.length > 0) {
+      for (let i = 0; i < updateChapters.length; i += BATCH_SIZE) {
+        const batch = updateChapters.slice(i, i + BATCH_SIZE);
+        await db.$transaction(
+          batch.map(chapter =>
+            db.chapter.update({
+              where: {
+                workId_number: {
+                  workId: id,
+                  number: chapter.number,
+                },
+              },
+              data: {
+                title: chapter.title || null,
+                originalContent: chapter.content,
+                wordCount: chapter.content.length,
+              },
+            })
+          )
+        );
+        updatedCount += batch.length;
+      }
+    }
 
     // 총 회차 수 업데이트 및 상태 변경
     const totalChapters = await db.chapter.count({ where: { workId: id } });
@@ -199,12 +237,9 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      created: createdChapters.length,
-      chapters: createdChapters.map(ch => ({
-        number: ch.number,
-        title: ch.title,
-        wordCount: ch.wordCount,
-      })),
+      created: createdCount,
+      updated: updatedCount,
+      total: createdCount + updatedCount,
     }, { status: 201 });
   } catch (error) {
     console.error("Bulk upload error:", error);
