@@ -95,6 +95,20 @@ export async function POST(req: Request) {
       );
     }
 
+    // User 존재 여부 확인 (FK 에러 방지)
+    const user = await db.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true },
+    });
+
+    if (!user) {
+      console.error("User not found in database:", session.user.id);
+      return NextResponse.json(
+        { error: "사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요." },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
     const validatedData = workSchema.parse(body);
 
@@ -130,6 +144,15 @@ export async function POST(req: Request) {
     return NextResponse.json(work, { status: 201 });
   } catch (error) {
     console.error("Failed to create work:", error);
+
+    // Prisma FK 에러 처리
+    if (error instanceof Error && error.message.includes("Foreign key constraint")) {
+      return NextResponse.json(
+        { error: "사용자 인증에 문제가 있습니다. 로그아웃 후 다시 로그인해주세요." },
+        { status: 401 }
+      );
+    }
+
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

@@ -62,10 +62,20 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id;
         token.role = user.role;
+      }
+      // 주기적으로 사용자 존재 여부 확인 (세션 갱신 시)
+      if (trigger === "update" || !token.role) {
+        const dbUser = await db.user.findUnique({
+          where: { id: token.id as string },
+          select: { id: true, role: true },
+        });
+        if (dbUser) {
+          token.role = dbUser.role;
+        }
       }
       return token;
     },
