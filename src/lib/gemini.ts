@@ -352,6 +352,23 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 치명적 에러 로깅 (관리자 알림용)
+async function logCriticalError(code: string, message: string, details?: Record<string, unknown>): Promise<void> {
+  console.error(`[CRITICAL ERROR] ${code}: ${message}`, details);
+
+  // DB에 치명적 에러 로깅 (관리자 대시보드에서 확인 가능)
+  try {
+    await translationLogger.error(`[CRITICAL] ${message}`, {
+      category: "SYSTEM" as const,
+      errorCode: code,
+      metadata: details,
+    });
+  } catch (e) {
+    // 로깅 실패해도 계속 진행
+    console.error("[CRITICAL ERROR] 로깅 실패:", e);
+  }
+}
+
 // Gemini API 에러 분석
 function analyzeError(error: unknown): TranslationError {
   if (error instanceof GoogleGenerativeAIError) {
@@ -375,8 +392,13 @@ function analyzeError(error: unknown): TranslationError {
       );
     }
 
-    // Invalid API key
+    // Invalid API key - 치명적 에러, 관리자 알림 필요
     if (message.includes("api key") || message.includes("authentication") || message.includes("401")) {
+      // 비동기로 치명적 에러 로깅 (응답 대기 안 함)
+      logCriticalError("AUTH_ERROR", "Gemini API 키 인증 실패", {
+        originalMessage: error.message,
+        timestamp: new Date().toISOString(),
+      });
       return new TranslationError(
         "API 인증 실패. 관리자에게 문의하세요.",
         "AUTH_ERROR",
@@ -384,8 +406,12 @@ function analyzeError(error: unknown): TranslationError {
       );
     }
 
-    // Model not available
+    // Model not available - 치명적 에러
     if (message.includes("model") || message.includes("not found") || message.includes("404")) {
+      logCriticalError("MODEL_ERROR", "Gemini 모델 사용 불가", {
+        originalMessage: error.message,
+        timestamp: new Date().toISOString(),
+      });
       return new TranslationError(
         "AI 모델을 사용할 수 없습니다. 관리자에게 문의하세요.",
         "MODEL_ERROR",

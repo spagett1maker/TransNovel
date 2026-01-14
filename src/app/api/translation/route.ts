@@ -27,6 +27,33 @@ interface TranslationMeta {
 // 중간 저장 간격 (N개 청크마다 저장)
 const INCREMENTAL_SAVE_INTERVAL = 3;
 
+// 챕터 크기 제한 (안전 마진 포함)
+const MAX_CHAPTER_SIZE = 500000; // 50만 자 (약 100KB)
+const WARN_CHAPTER_SIZE = 200000; // 20만 자 경고
+
+// 챕터 크기 검증
+function validateChapterSizes(
+  chapters: Array<{ number: number; originalContent: string }>
+): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  for (const chapter of chapters) {
+    const size = chapter.originalContent.length;
+    if (size > MAX_CHAPTER_SIZE) {
+      errors.push(`${chapter.number}화: ${(size / 10000).toFixed(1)}만 자 (최대 ${MAX_CHAPTER_SIZE / 10000}만 자 초과)`);
+    } else if (size > WARN_CHAPTER_SIZE) {
+      warnings.push(`${chapter.number}화: ${(size / 10000).toFixed(1)}만 자 (처리 시간이 길어질 수 있음)`);
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
 // 타임스탬프 로그 헬퍼
 function log(prefix: string, message: string, data?: object) {
   const timestamp = new Date().toISOString();
@@ -412,6 +439,27 @@ export async function POST(req: Request) {
         { error: "번역할 회차가 없습니다." },
         { status: 400 }
       );
+    }
+
+    // 챕터 크기 검증
+    const sizeValidation = validateChapterSizes(
+      chapters.map((ch) => ({ number: ch.number, originalContent: ch.originalContent }))
+    );
+
+    if (!sizeValidation.valid) {
+      console.log("[Translation API] 챕터 크기 초과:", sizeValidation.errors);
+      translationManager.releaseJobSlot(workId);
+      return NextResponse.json(
+        {
+          error: "일부 회차가 너무 큽니다. 분할 후 다시 시도해주세요.",
+          details: sizeValidation.errors,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (sizeValidation.warnings.length > 0) {
+      console.log("[Translation API] 챕터 크기 경고:", sizeValidation.warnings);
     }
 
     // 번역 컨텍스트 생성

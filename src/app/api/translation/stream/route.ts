@@ -13,6 +13,25 @@ export const dynamic = "force-dynamic";
 const POLL_INTERVAL = 1000;
 // Keepalive 간격 (ms)
 const KEEPALIVE_INTERVAL = 15000;
+// DB 폴링 재시도 설정
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+
+// DB 쿼리 재시도 래퍼
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  delayMs: number = 500
+): Promise<T | null> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
+    }
+  }
+  return null;
+}
 
 export async function GET(req: Request) {
   console.log("[SSE Stream] GET 요청 수신");
@@ -130,11 +149,22 @@ export async function GET(req: Request) {
 
       // DB 폴링으로 상태 변화 감지
       console.log(`[${timestamp()}] [SSE Stream] DB 폴링 시작`);
+      let consecutiveFailures = 0;
+
       pollInterval = setInterval(async () => {
         if (isStreamClosed) return;
 
         try {
-          const currentSummary = await translationManager.getJobSummary(jobId);
+          // 재시도 로직을 적용한 DB 조회
+          const currentSummary = await withRetry(
+            () => translationManager.getJobSummary(jobId),
+            3,
+            500
+          );
+
+          // 재시도 성공 시 실패 카운터 리셋
+          consecutiveFailures = 0;
+
           if (!currentSummary) {
             // 작업이 삭제됨
             console.log(`[${timestamp()}] [SSE Stream] 작업 삭제됨, 스트림 종료`);
@@ -247,7 +277,26 @@ export async function GET(req: Request) {
 
           prevState = currentSummary;
         } catch (error) {
-          console.error(`[${timestamp()}] [SSE Stream] 폴링 오류:`, error);
+          consecutiveFailures++;
+          console.error(
+            `[${timestamp()}] [SSE Stream] 폴링 오류 (${consecutiveFailures}/${MAX_CONSECUTIVE_POLL_FAILURES}):`,
+            error
+          );
+
+          // 연속 실패가 임계값을 초과하면 스트림 종료
+          if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+            console.error(
+              `[${timestamp()}] [SSE Stream] 연속 ${MAX_CONSECUTIVE_POLL_FAILURES}회 폴링 실패, 스트림 종료`
+            );
+            sendEvent({
+              jobId,
+              type: "job_failed",
+              data: {
+                error: "서버 연결이 불안정합니다. 페이지를 새로고침해주세요.",
+              },
+            });
+            cleanup();
+          }
         }
       }, POLL_INTERVAL);
 

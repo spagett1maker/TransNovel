@@ -16,6 +16,42 @@ const logError = (...args: unknown[]) => {
   console.error("[TranslationManager]", ...args);
 };
 
+// DB 작업 재시도 래퍼 (연결 실패 대응)
+async function withDbRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries: number = 3
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = lastError.message.toLowerCase();
+
+      // 연결 관련 에러인 경우만 재시도
+      const isConnectionError =
+        errorMessage.includes("connection") ||
+        errorMessage.includes("timeout") ||
+        errorMessage.includes("econnrefused") ||
+        errorMessage.includes("econnreset") ||
+        errorMessage.includes("socket");
+
+      if (!isConnectionError || attempt === maxRetries - 1) {
+        throw lastError;
+      }
+
+      const waitMs = Math.min(1000 * Math.pow(2, attempt), 10000); // 최대 10초
+      logError(`DB 작업 "${operationName}" 실패 (시도 ${attempt + 1}/${maxRetries}), ${waitMs}ms 후 재시도:`, lastError.message);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  throw lastError || new Error(`DB 작업 "${operationName}" 실패`);
+}
+
 export type TranslationJobStatus =
   | "PENDING"
   | "IN_PROGRESS"
@@ -127,32 +163,34 @@ class TranslationManager {
       totalChunks: 0,
     }));
 
-    // 기존 활성 작업이 있으면 실패 처리
-    await prisma.activeTranslationJob.updateMany({
-      where: {
-        workId,
-        status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
-      },
-      data: {
-        status: "FAILED",
-        errorMessage: "새 작업으로 대체됨",
-      },
-    });
+    await withDbRetry(async () => {
+      // 기존 활성 작업이 있으면 실패 처리
+      await prisma.activeTranslationJob.updateMany({
+        where: {
+          workId,
+          status: { in: ["PENDING", "IN_PROGRESS", "PAUSED"] },
+        },
+        data: {
+          status: "FAILED",
+          errorMessage: "새 작업으로 대체됨",
+        },
+      });
 
-    await prisma.activeTranslationJob.create({
-      data: {
-        jobId,
-        workId,
-        workTitle,
-        userId,
-        userEmail,
-        status: "PENDING",
-        totalChapters: chapters.length,
-        completedChapters: 0,
-        failedChapters: 0,
-        chaptersProgress: chaptersProgress as unknown as object,
-      },
-    });
+      await prisma.activeTranslationJob.create({
+        data: {
+          jobId,
+          workId,
+          workTitle,
+          userId,
+          userEmail,
+          status: "PENDING",
+          totalChapters: chapters.length,
+          completedChapters: 0,
+          failedChapters: 0,
+          chaptersProgress: chaptersProgress as unknown as object,
+        },
+      });
+    }, "createJob");
 
     return jobId;
   }
