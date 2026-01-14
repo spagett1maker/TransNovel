@@ -36,7 +36,6 @@ import {
 import {
   translateChaptersClient,
   createCancelToken,
-  splitIntoChunks,
   type CancelToken,
 } from "@/lib/client-translation";
 
@@ -46,7 +45,6 @@ interface Chapter {
   title: string | null;
   status: string;
   wordCount: number;
-  originalContent?: string;
 }
 
 interface TranslationProgress {
@@ -317,7 +315,7 @@ export default function TranslatePage() {
   const fetchChapters = useCallback(async () => {
     try {
       const [chaptersRes, workRes] = await Promise.all([
-        fetch(`/api/works/${workId}/chapters?all=true&limit=2000&includeContent=true`),
+        fetch(`/api/works/${workId}/chapters?all=true&limit=2000`),
         fetch(`/api/works/${workId}`),
       ]);
 
@@ -417,43 +415,20 @@ export default function TranslatePage() {
 
     const sortedChapterNumbers = Array.from(selectedChapters).sort((a, b) => a - b);
 
-    // 선택된 챕터의 원문 콘텐츠가 필요 - API에서 가져오기
-    const chaptersToTranslate: { id: string; number: number; originalContent: string }[] = [];
+    // 챕터 ID와 번호만 전달 (원문은 번역할 때 가져옴)
+    const chaptersToTranslate: { id: string; number: number }[] = [];
+
+    for (const chapterNum of sortedChapterNumbers) {
+      const chapter = chapters.find((c) => c.number === chapterNum);
+      if (!chapter) continue;
+      chaptersToTranslate.push({
+        id: chapter.id,
+        number: chapter.number,
+      });
+    }
 
     try {
-      // 원문 콘텐츠 가져오기
-      for (const chapterNum of sortedChapterNumbers) {
-        const chapter = chapters.find((c) => c.number === chapterNum);
-        if (!chapter) continue;
-
-        // 콘텐츠가 없으면 개별 API 호출
-        if (!chapter.originalContent) {
-          const res = await fetch(`/api/works/${workId}/chapters/${chapterNum}`);
-          if (!res.ok) {
-            toast.error(`${chapterNum}화 콘텐츠를 가져오는데 실패했습니다.`);
-            return;
-          }
-          const data = await res.json();
-          chaptersToTranslate.push({
-            id: chapter.id,
-            number: chapter.number,
-            originalContent: data.originalContent,
-          });
-        } else {
-          chaptersToTranslate.push({
-            id: chapter.id,
-            number: chapter.number,
-            originalContent: chapter.originalContent,
-          });
-        }
-      }
-
-      // 번역 예상 정보 표시
-      const totalChunks = chaptersToTranslate.reduce((sum, ch) => {
-        return sum + splitIntoChunks(ch.originalContent).length;
-      }, 0);
-
-      toast.info(`${chaptersToTranslate.length}개 회차, 총 ${totalChunks}개 청크 번역을 시작합니다.`);
+      toast.info(`${chaptersToTranslate.length}개 회차 번역을 시작합니다.`);
 
       // 취소 토큰 생성
       cancelTokenRef.current = createCancelToken();

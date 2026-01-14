@@ -37,16 +37,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // 청크 크기 제한 (1500자 이하만 허용 - 10초 내 처리 보장)
-    if (text.length > 1500) {
+    // 청크 크기 제한 (800자 이하만 허용 - 10초 내 처리 보장)
+    if (text.length > 800) {
       return NextResponse.json(
-        { error: "청크가 너무 큽니다. 1500자 이하로 분할해주세요." },
+        { error: "청크가 너무 큽니다. 800자 이하로 분할해주세요." },
         { status: 400 }
       );
     }
 
-    // 단일 청크 번역 (재시도 2회로 제한 - 시간 절약)
-    const translated = await translateText(text, context, 2);
+    // 단일 청크 번역 (재시도 1회로 제한 - Vercel 10초 제한)
+    const translated = await translateText(text, context, 1);
 
     return NextResponse.json({
       translated,

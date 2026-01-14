@@ -805,7 +805,8 @@ function splitLongParagraph(paragraph: string, maxLength: number): string[] {
 const MAX_INPUT_TOKENS = 30000; // Gemini 2.5 Flash는 1M 토큰 지원, 안전하게 30K로 제한
 const WARN_TOKEN_THRESHOLD = 20000;
 
-export function splitIntoChunks(text: string, maxLength: number = 1000): string[] {
+// Vercel Hobby 플랜 (10초 제한)에서 안정적으로 동작하도록 500자로 설정
+export function splitIntoChunks(text: string, maxLength: number = 500): string[] {
   const paragraphs = text.split(/\n\n+/);
   const chunks: string[] = [];
   let currentChunk = "";

@@ -9,12 +9,6 @@ interface TranslationContext {
   glossary?: Array<{ original: string; translated: string; note?: string }>;
 }
 
-interface ChapterToTranslate {
-  id: string;
-  number: number;
-  originalContent: string;
-}
-
 interface TranslationProgress {
   currentChapter: number;
   totalChapters: number;
@@ -28,8 +22,8 @@ interface TranslationProgress {
 
 type ProgressCallback = (progress: TranslationProgress) => void;
 
-// 텍스트를 청크로 분할 (서버 로직과 동일)
-export function splitIntoChunks(text: string, maxLength: number = 1000): string[] {
+// 텍스트를 청크로 분할 (서버 로직과 동일, Vercel Hobby 플랜용 500자)
+export function splitIntoChunks(text: string, maxLength: number = 500): string[] {
   const paragraphs = text.split(/\n\n+/);
   const chunks: string[] = [];
   let currentChunk = "";
@@ -128,13 +122,26 @@ async function translateChunk(
         body: JSON.stringify({ text, context }),
       });
 
+      // 504 Gateway Timeout 처리
+      if (response.status === 504) {
+        throw new Error("서버 응답 시간 초과. 잠시 후 다시 시도합니다.");
+      }
+
+      // 비-JSON 응답 처리 (Vercel 에러 페이지 등)
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("비-JSON 응답:", text.substring(0, 200));
+        throw new Error("서버 오류가 발생했습니다. 잠시 후 다시 시도합니다.");
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
         // 503은 재시도 가능
         if (response.status === 503 && data.retryable && attempt < retries - 1) {
           // 지수 백오프
-          await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt)));
+          await new Promise((r) => setTimeout(r, 3000 * Math.pow(2, attempt)));
           continue;
         }
         throw new Error(data.error || "번역 실패");
@@ -144,9 +151,10 @@ async function translateChunk(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
-      // 네트워크 에러는 재시도
+      // 재시도 (마지막 시도가 아닐 때만)
       if (attempt < retries - 1) {
-        await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt)));
+        console.log(`번역 재시도 ${attempt + 1}/${retries}:`, lastError.message);
+        await new Promise((r) => setTimeout(r, 3000 * Math.pow(2, attempt)));
         continue;
       }
     }
@@ -202,10 +210,29 @@ export function createCancelToken(): CancelToken {
   };
 }
 
-// 클라이언트 측 번역 실행
+// 챕터 정보 (원문 없이)
+interface ChapterInfo {
+  id: string;
+  number: number;
+}
+
+// 챕터 원문 가져오기
+async function fetchChapterContent(
+  workId: string,
+  chapterNumber: number
+): Promise<string> {
+  const response = await fetch(`/api/works/${workId}/chapters/${chapterNumber}`);
+  if (!response.ok) {
+    throw new Error(`${chapterNumber}화 콘텐츠를 가져오는데 실패했습니다.`);
+  }
+  const data = await response.json();
+  return data.originalContent;
+}
+
+// 클라이언트 측 번역 실행 (챕터 원문은 필요할 때만 가져옴)
 export async function translateChaptersClient(
   workId: string,
-  chapters: ChapterToTranslate[],
+  chapters: ChapterInfo[],
   onProgress: ProgressCallback,
   cancelToken?: CancelToken
 ): Promise<{ completedChapters: number; failedChapters: number[] }> {
@@ -234,12 +261,17 @@ export async function translateChaptersClient(
 
     const chapter = chapters[i];
     progress.currentChapter = chapter.number;
+    progress.currentChunk = 0;
+    progress.totalChunks = 0;
+    onProgress(progress);
 
     try {
+      // 번역할 때 원문 가져오기 (메모리 효율)
+      const originalContent = await fetchChapterContent(workId, chapter.number);
+
       // 청크 분할
-      const chunks = splitIntoChunks(chapter.originalContent);
+      const chunks = splitIntoChunks(originalContent);
       progress.totalChunks = chunks.length;
-      progress.currentChunk = 0;
       onProgress(progress);
 
       const translatedChunks: string[] = [];
