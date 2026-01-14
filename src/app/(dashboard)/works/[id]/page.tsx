@@ -69,12 +69,10 @@ export default async function WorkDetailPage({
 
   const isAuthor = work.authorId === session.user.id || userRole === UserRole.ADMIN;
 
-  const translatedCount = await db.chapter.count({
-    where: {
-      workId: id,
-      status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
-    },
-  });
+  // 이미 가져온 chapters 데이터에서 계산 (별도 쿼리 불필요)
+  const translatedCount = work.chapters.filter(
+    (ch) => ["TRANSLATED", "EDITED", "APPROVED"].includes(ch.status)
+  ).length;
 
   const progressPercent = work._count.chapters > 0
     ? Math.round((translatedCount / work._count.chapters) * 100)

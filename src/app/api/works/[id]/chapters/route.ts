@@ -128,41 +128,67 @@ export async function POST(
       );
     }
 
-    // Create chapters
-    const createdChapters = await db.$transaction(
-      chapters.map((chapter) =>
-        db.chapter.upsert({
-          where: {
-            workId_number: {
-              workId: id,
-              number: chapter.number,
-            },
-          },
-          update: {
-            title: chapter.title,
-            originalContent: chapter.content,
-            wordCount: chapter.content.length,
-          },
-          create: {
-            workId: id,
-            number: chapter.number,
-            title: chapter.title,
-            originalContent: chapter.content,
-            wordCount: chapter.content.length,
-          },
-        })
-      )
-    );
+    // 기존 챕터 수 조회 (한 번에)
+    const [existingCount, existingChapters] = await Promise.all([
+      db.chapter.count({ where: { workId: id } }),
+      db.chapter.findMany({
+        where: {
+          workId: id,
+          number: { in: chapters.map(c => c.number) },
+        },
+        select: { number: true },
+      }),
+    ]);
+    const existingNumbers = new Set(existingChapters.map(c => c.number));
 
-    // Update total chapters count
-    const totalChapters = await db.chapter.count({ where: { workId: id } });
+    // 새 챕터와 업데이트할 챕터 분리
+    const newChapters = chapters.filter(c => !existingNumbers.has(c.number));
+    const updateChapters = chapters.filter(c => existingNumbers.has(c.number));
+
+    let createdCount = 0;
+
+    // 새 챕터 일괄 생성
+    if (newChapters.length > 0) {
+      await db.chapter.createMany({
+        data: newChapters.map(chapter => ({
+          workId: id,
+          number: chapter.number,
+          title: chapter.title || null,
+          originalContent: chapter.content,
+          wordCount: chapter.content.length,
+        })),
+        skipDuplicates: true,
+      });
+      createdCount = newChapters.length;
+    }
+
+    // 기존 챕터 업데이트 (배치)
+    if (updateChapters.length > 0) {
+      await db.$transaction(
+        updateChapters.map(chapter =>
+          db.chapter.update({
+            where: {
+              workId_number: { workId: id, number: chapter.number },
+            },
+            data: {
+              title: chapter.title || null,
+              originalContent: chapter.content,
+              wordCount: chapter.content.length,
+            },
+          })
+        )
+      );
+    }
+
+    // 총 회차 수 계산 (별도 쿼리 불필요)
+    const totalChapters = existingCount + createdCount;
     await db.work.update({
       where: { id },
       data: { totalChapters },
     });
 
     return NextResponse.json(
-      { created: createdChapters.length },
+      { created: createdCount, updated: updateChapters.length },
       { status: 201 }
     );
   } catch (error) {

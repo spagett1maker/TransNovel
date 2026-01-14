@@ -192,6 +192,20 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         currentEs.close();
         eventSourcesRef.current.delete(jobId);
       }
+
+      // 작업 상태를 FAILED로 업데이트 (서버에서 찾을 수 없는 경우)
+      setJobs((prev) => {
+        const newJobs = new Map(prev);
+        const job = newJobs.get(jobId);
+        if (job && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
+          newJobs.set(jobId, {
+            ...job,
+            status: "FAILED",
+            error: "연결 끊김 - 페이지를 새로고침하고 다시 시도해주세요",
+          });
+        }
+        return newJobs;
+      });
     };
   }, []);
 

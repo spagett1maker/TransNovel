@@ -265,6 +265,9 @@ model TranslationLog {
   @@index([errorCode])
   @@index([createdAt])
   @@index([level, createdAt])
+  @@index([category, createdAt])      // 어드민 로그 필터링용
+  @@index([level, category])          // 복합 필터링용
+  @@index([workId, createdAt])        // 작품별 로그 조회용
 }
 
 // 활성 번역 작업 (서버리스 환경 지원 - DB 기반)
