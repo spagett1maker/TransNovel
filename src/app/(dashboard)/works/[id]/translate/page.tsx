@@ -12,15 +12,16 @@ import {
   HelpCircle,
   Languages,
   Loader2,
+  Pause,
   RefreshCw,
   Sparkles,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { TranslationProgress } from "@/components/translation/progress-monitor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,7 +33,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useTranslation } from "@/contexts/translation-context";
+import {
+  translateChaptersClient,
+  createCancelToken,
+  splitIntoChunks,
+  type CancelToken,
+} from "@/lib/client-translation";
 
 interface Chapter {
   id: string;
@@ -40,15 +46,18 @@ interface Chapter {
   title: string | null;
   status: string;
   wordCount: number;
+  originalContent?: string;
 }
 
-interface StuckChapter {
-  id: string;
-  number: number;
-  title: string | null;
-  stuckSince: string;
-  progressPercent: number;
-  hasPartialResults: boolean;
+interface TranslationProgress {
+  currentChapter: number;
+  totalChapters: number;
+  currentChunk: number;
+  totalChunks: number;
+  completedChapters: number;
+  failedChapters: number;
+  status: "idle" | "translating" | "completed" | "failed" | "cancelled";
+  error?: string;
 }
 
 // 상태별 설정
@@ -166,31 +175,149 @@ function StatusLegend() {
   );
 }
 
+// 실시간 번역 진행률 모니터
+function ClientTranslationProgress({
+  progress,
+  onCancel,
+  onComplete,
+  onRetry,
+  failedChapters,
+}: {
+  progress: TranslationProgress;
+  onCancel: () => void;
+  onComplete: () => void;
+  onRetry: (chapterNumbers: number[]) => void;
+  failedChapters: number[];
+}) {
+  const totalProgress = progress.totalChapters > 0
+    ? Math.round(((progress.completedChapters + progress.failedChapters) / progress.totalChapters) * 100)
+    : 0;
+
+  const chunkProgress = progress.totalChunks > 0
+    ? Math.round((progress.currentChunk / progress.totalChunks) * 100)
+    : 0;
+
+  useEffect(() => {
+    if (progress.status === "completed") {
+      onComplete();
+    }
+  }, [progress.status, onComplete]);
+
+  if (progress.status === "idle") {
+    return null;
+  }
+
+  return (
+    <div className="section-surface p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          {progress.status === "translating" ? (
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          ) : progress.status === "completed" ? (
+            <CheckCircle2 className="h-5 w-5 text-green-600" />
+          ) : progress.status === "cancelled" ? (
+            <XCircle className="h-5 w-5 text-orange-600" />
+          ) : (
+            <XCircle className="h-5 w-5 text-red-600" />
+          )}
+          <span className="font-medium">
+            {progress.status === "translating" && "번역 진행 중..."}
+            {progress.status === "completed" && "번역 완료!"}
+            {progress.status === "cancelled" && "번역 취소됨"}
+            {progress.status === "failed" && "번역 실패"}
+          </span>
+        </div>
+
+        {progress.status === "translating" && (
+          <Button variant="outline" size="sm" onClick={onCancel} className="gap-2">
+            <Pause className="h-4 w-4" />
+            중지
+          </Button>
+        )}
+      </div>
+
+      {/* 전체 진행률 */}
+      <div className="space-y-2 mb-4">
+        <div className="flex justify-between text-sm">
+          <span>전체 진행률</span>
+          <span className="tabular-nums">
+            {progress.completedChapters}/{progress.totalChapters}화 ({totalProgress}%)
+          </span>
+        </div>
+        <Progress value={totalProgress} className="h-2" />
+      </div>
+
+      {/* 현재 챕터 진행률 */}
+      {progress.status === "translating" && progress.totalChunks > 0 && (
+        <div className="space-y-2 mb-4">
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>{progress.currentChapter}화 번역 중</span>
+            <span className="tabular-nums">
+              {progress.currentChunk}/{progress.totalChunks} 청크 ({chunkProgress}%)
+            </span>
+          </div>
+          <Progress value={chunkProgress} className="h-1.5" />
+        </div>
+      )}
+
+      {/* 실패 통계 */}
+      {progress.failedChapters > 0 && (
+        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg mt-4">
+          <div className="flex items-center gap-2 text-red-700">
+            <AlertTriangle className="h-4 w-4" />
+            <span className="text-sm">
+              {progress.failedChapters}개 회차 실패
+              {failedChapters.length > 0 && ` (${failedChapters.slice(0, 5).join(", ")}${failedChapters.length > 5 ? "..." : ""}화)`}
+            </span>
+          </div>
+          {(progress.status === "completed" || progress.status === "failed") && failedChapters.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRetry(failedChapters)}
+              className="gap-2 text-red-700 border-red-300 hover:bg-red-100"
+            >
+              <RefreshCw className="h-4 w-4" />
+              재시도
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ITEMS_PER_PAGE = 30;
 
 export default function TranslatePage() {
   const params = useParams();
   const workId = params.id as string;
 
-  const { getJobByWorkId, startTracking } = useTranslation();
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
-  const [isStarting, setIsStarting] = useState(false);
   const [workTitle, setWorkTitle] = useState<string>("");
-  const [stuckChapters, setStuckChapters] = useState<StuckChapter[]>([]);
-  const [isRecovering, setIsRecovering] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [showForceOption, setShowForceOption] = useState(false);
-  const [forceStart, setForceStart] = useState(false);
 
-  const currentJob = getJobByWorkId(workId);
-  const activeJobId = currentJob?.jobId ?? null;
+  // 클라이언트 번역 상태
+  const [translationProgress, setTranslationProgress] = useState<TranslationProgress>({
+    currentChapter: 0,
+    totalChapters: 0,
+    currentChunk: 0,
+    totalChunks: 0,
+    completedChapters: 0,
+    failedChapters: 0,
+    status: "idle",
+  });
+  const [failedChapterNumbers, setFailedChapterNumbers] = useState<number[]>([]);
+  const cancelTokenRef = useRef<CancelToken | null>(null);
+
+  const isTranslating = translationProgress.status === "translating";
 
   const fetchChapters = useCallback(async () => {
     try {
       const [chaptersRes, workRes] = await Promise.all([
-        fetch(`/api/works/${workId}/chapters?all=true&limit=2000`),
+        fetch(`/api/works/${workId}/chapters?all=true&limit=2000&includeContent=true`),
         fetch(`/api/works/${workId}`),
       ]);
 
@@ -210,55 +337,9 @@ export default function TranslatePage() {
     }
   }, [workId]);
 
-  const checkStuckTranslations = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/translation/recovery?workId=${workId}`);
-      if (res.ok) {
-        const data = await res.json();
-        const thisWorkRecovery = data.recoverable?.find(
-          (r: { workId: string }) => r.workId === workId
-        );
-        if (thisWorkRecovery) {
-          setStuckChapters(thisWorkRecovery.stuckChapters);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to check stuck translations:", error);
-    }
-  }, [workId]);
-
-  const handleRecovery = useCallback(async (action: "reset" | "clear") => {
-    setIsRecovering(true);
-    try {
-      const res = await fetch("/api/translation/recovery", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workId, action }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        toast.success(data.message);
-        setStuckChapters([]);
-        fetchChapters();
-      } else {
-        toast.error(data.error || "복구 실패");
-      }
-    } catch {
-      toast.error("복구 중 오류 발생");
-    } finally {
-      setIsRecovering(false);
-    }
-  }, [workId, fetchChapters]);
-
   useEffect(() => {
     fetchChapters();
   }, [fetchChapters]);
-
-  useEffect(() => {
-    checkStuckTranslations();
-  }, [checkStuckTranslations]);
 
   // 필터 결과 캐싱
   const pendingChapters = useMemo(
@@ -282,13 +363,11 @@ export default function TranslatePage() {
     return chapters.slice(start, start + ITEMS_PER_PAGE);
   }, [chapters, currentPage]);
 
-  // 현재 페이지의 대기 상태 챕터
   const currentPagePendingChapters = useMemo(
     () => paginatedChapters.filter((c) => c.status === "PENDING"),
     [paginatedChapters]
   );
 
-  // 페이지 변경 시 스크롤 위치 초기화하지 않음 (선택 유지)
   const goToPage = useCallback((page: number) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   }, [totalPages]);
@@ -305,24 +384,20 @@ export default function TranslatePage() {
     });
   }, []);
 
-  // 현재 페이지의 대기 챕터 전체 선택/해제
   const selectCurrentPage = useCallback(() => {
     setSelectedChapters((prev) => {
       const next = new Set(prev);
       const allCurrentPageSelected = currentPagePendingChapters.every((c) => next.has(c.number));
 
       if (allCurrentPageSelected) {
-        // 현재 페이지 해제
         currentPagePendingChapters.forEach((c) => next.delete(c.number));
       } else {
-        // 현재 페이지 선택
         currentPagePendingChapters.forEach((c) => next.add(c.number));
       }
       return next;
     });
   }, [currentPagePendingChapters]);
 
-  // 전체 대기 챕터 선택/해제
   const selectAll = useCallback(() => {
     setSelectedChapters((prev) => {
       if (prev.size === pendingChapters.length) {
@@ -333,99 +408,114 @@ export default function TranslatePage() {
     });
   }, [pendingChapters]);
 
+  // 클라이언트 측 번역 시작
   const handleTranslate = async () => {
     if (selectedChapters.size === 0) {
       toast.error("번역할 회차를 선택해주세요.");
       return;
     }
 
-    setIsStarting(true);
+    const sortedChapterNumbers = Array.from(selectedChapters).sort((a, b) => a - b);
+
+    // 선택된 챕터의 원문 콘텐츠가 필요 - API에서 가져오기
+    const chaptersToTranslate: { id: string; number: number; originalContent: string }[] = [];
 
     try {
-      const sortedChapters = Array.from(selectedChapters).sort((a, b) => a - b);
+      // 원문 콘텐츠 가져오기
+      for (const chapterNum of sortedChapterNumbers) {
+        const chapter = chapters.find((c) => c.number === chapterNum);
+        if (!chapter) continue;
 
-      const response = await fetch("/api/translation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workId,
-          chapterNumbers: sortedChapters,
-          force: forceStart,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        // 409: 이미 진행 중인 작업이 있는 경우 강제 시작 옵션 표시
-        if (response.status === 409) {
-          setShowForceOption(true);
-          toast.error("이미 진행 중인 번역 작업이 있습니다. 아래 체크박스를 선택 후 다시 시도하세요.");
-          return;
+        // 콘텐츠가 없으면 개별 API 호출
+        if (!chapter.originalContent) {
+          const res = await fetch(`/api/works/${workId}/chapters/${chapterNum}`);
+          if (!res.ok) {
+            toast.error(`${chapterNum}화 콘텐츠를 가져오는데 실패했습니다.`);
+            return;
+          }
+          const data = await res.json();
+          chaptersToTranslate.push({
+            id: chapter.id,
+            number: chapter.number,
+            originalContent: data.originalContent,
+          });
+        } else {
+          chaptersToTranslate.push({
+            id: chapter.id,
+            number: chapter.number,
+            originalContent: chapter.originalContent,
+          });
         }
-        throw new Error(data.error || "번역 시작에 실패했습니다.");
       }
 
-      // 성공 시 상태 초기화
-      setShowForceOption(false);
-      setForceStart(false);
+      // 번역 예상 정보 표시
+      const totalChunks = chaptersToTranslate.reduce((sum, ch) => {
+        return sum + splitIntoChunks(ch.originalContent).length;
+      }, 0);
 
-      startTracking(
-        data.jobId,
+      toast.info(`${chaptersToTranslate.length}개 회차, 총 ${totalChunks}개 청크 번역을 시작합니다.`);
+
+      // 취소 토큰 생성
+      cancelTokenRef.current = createCancelToken();
+
+      // 진행 상태 초기화
+      setTranslationProgress({
+        currentChapter: 0,
+        totalChapters: chaptersToTranslate.length,
+        currentChunk: 0,
+        totalChunks: 0,
+        completedChapters: 0,
+        failedChapters: 0,
+        status: "translating",
+      });
+      setFailedChapterNumbers([]);
+
+      // 클라이언트 측 번역 실행
+      const result = await translateChaptersClient(
         workId,
-        workTitle || "번역 작업",
-        sortedChapters.length
+        chaptersToTranslate,
+        (progress) => setTranslationProgress(progress),
+        cancelTokenRef.current
       );
 
-      toast.success(forceStart ? "기존 작업을 취소하고 새 번역이 시작되었습니다!" : "번역이 시작되었습니다!");
+      setFailedChapterNumbers(result.failedChapters);
+
+      if (result.failedChapters.length === 0) {
+        toast.success("모든 번역이 완료되었습니다!");
+      } else if (result.completedChapters > 0) {
+        toast.warning(`${result.completedChapters}개 완료, ${result.failedChapters.length}개 실패`);
+      } else {
+        toast.error("번역에 실패했습니다.");
+      }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "번역 시작에 실패했습니다."
-      );
-    } finally {
-      setIsStarting(false);
+      console.error("Translation error:", error);
+      toast.error(error instanceof Error ? error.message : "번역 시작에 실패했습니다.");
+      setTranslationProgress((prev) => ({ ...prev, status: "failed" }));
     }
   };
 
+  // 번역 취소
+  const handleCancel = useCallback(() => {
+    if (cancelTokenRef.current) {
+      cancelTokenRef.current.cancel();
+      toast.info("번역을 중지하고 있습니다...");
+    }
+  }, []);
+
+  // 번역 완료 처리
   const handleTranslationComplete = useCallback(() => {
     setSelectedChapters(new Set());
     fetchChapters();
-    toast.success("모든 번역이 완료되었습니다!");
   }, [fetchChapters]);
 
+  // 실패 회차 재시도
   const handleRetryFailed = useCallback(async (chapterNumbers: number[]) => {
-    try {
-      const response = await fetch("/api/translation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workId,
-          chapterNumbers,
-          force: true, // 재시도는 항상 강제 시작
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "재시도에 실패했습니다.");
-      }
-
-      startTracking(
-        data.jobId,
-        workId,
-        workTitle || "번역 작업",
-        chapterNumbers.length
-      );
-
-      toast.success("재번역이 시작되었습니다!");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "재시도에 실패했습니다."
-      );
-      throw error;
-    }
-  }, [workId, workTitle, startTracking]);
+    setSelectedChapters(new Set(chapterNumbers));
+    // 약간의 딜레이 후 자동 시작
+    setTimeout(() => {
+      handleTranslate();
+    }, 100);
+  }, []);
 
   return (
     <div className="max-w-4xl">
@@ -495,63 +585,21 @@ export default function TranslatePage() {
         </div>
       )}
 
-      {/* 번역 진행 모니터 */}
-      {activeJobId && (
+      {/* 클라이언트 번역 진행 모니터 */}
+      {translationProgress.status !== "idle" && (
         <div className="mb-6">
-          <TranslationProgress
-            jobId={activeJobId}
-            workId={workId}
+          <ClientTranslationProgress
+            progress={translationProgress}
+            onCancel={handleCancel}
             onComplete={handleTranslationComplete}
             onRetry={handleRetryFailed}
+            failedChapters={failedChapterNumbers}
           />
         </div>
       )}
 
-      {/* 멈춘 번역 복구 배너 */}
-      {stuckChapters.length > 0 && !activeJobId && (
-        <div className="section-surface border-orange-200 bg-orange-50/50 p-5 mb-6">
-          <div className="flex items-start gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100">
-              <AlertTriangle className="h-5 w-5 text-orange-600" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-orange-900">
-                이전 번역 작업이 중단되었습니다
-              </h3>
-              <p className="text-sm text-orange-700 mt-1">
-                {stuckChapters.length}개 회차가 번역 중 멈췄습니다.
-                {stuckChapters.some(c => c.hasPartialResults) && (
-                  <span className="block mt-1 text-orange-600">
-                    일부 회차는 중간 저장된 결과가 있어 이어서 번역할 수 있습니다.
-                  </span>
-                )}
-              </p>
-              <div className="mt-4 flex flex-col sm:flex-row gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => handleRecovery("reset")}
-                  disabled={isRecovering}
-                  className="gap-2"
-                >
-                  {isRecovering ? <ButtonSpinner /> : <RefreshCw className="h-4 w-4" />}
-                  이어서 번역
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleRecovery("clear")}
-                  disabled={isRecovering}
-                >
-                  처음부터 다시
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 용어집 안내 */}
-      {!activeJobId && stuckChapters.length === 0 && !isLoading && pendingChapters.length > 0 && (
+      {!isTranslating && !isLoading && pendingChapters.length > 0 && translationProgress.status === "idle" && (
         <div className="section-surface border-blue-200 bg-blue-50/50 p-4 mb-6">
           <p className="text-sm text-blue-800">
             <strong className="font-medium">팁:</strong> 번역 전에{" "}
@@ -586,7 +634,7 @@ export default function TranslatePage() {
             <Link href={`/works/${workId}/chapters`}>회차 업로드하기</Link>
           </Button>
         </div>
-      ) : pendingChapters.length === 0 && !activeJobId ? (
+      ) : pendingChapters.length === 0 && !isTranslating && translationProgress.status === "idle" ? (
         /* 번역 대기 없음 */
         <div className="section-surface p-16 text-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mx-auto mb-4">
@@ -605,7 +653,7 @@ export default function TranslatePage() {
             </Button>
           </div>
         </div>
-      ) : !activeJobId && (
+      ) : !isTranslating && translationProgress.status !== "translating" && (
         /* 회차 선택 */
         <div className="section-surface">
           {/* 헤더 */}
@@ -675,7 +723,6 @@ export default function TranslatePage() {
               </Button>
 
               <div className="flex items-center gap-1 mx-2">
-                {/* 페이지 번호 버튼들 */}
                 {(() => {
                   const pages: (number | "ellipsis")[] = [];
                   const maxVisible = 5;
@@ -744,47 +791,18 @@ export default function TranslatePage() {
 
           {/* 액션 */}
           <div className="flex flex-col gap-4 p-5 border-t border-border bg-muted/30">
-            {/* 강제 시작 옵션 (409 에러 발생 시 표시) */}
-            {showForceOption && (
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-orange-200 bg-orange-50">
-                <Checkbox
-                  id="force-start"
-                  checked={forceStart}
-                  onCheckedChange={(checked) => setForceStart(checked === true)}
-                />
-                <label
-                  htmlFor="force-start"
-                  className="text-sm text-orange-800 cursor-pointer select-none"
-                >
-                  <span className="font-medium">기존 작업 취소 후 시작</span>
-                  <span className="text-orange-600 ml-1">
-                    - 진행 중인 번역 작업을 취소하고 새로 시작합니다
-                  </span>
-                </label>
-              </div>
-            )}
-
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <p className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground tabular-nums">{selectedChapters.size}</span>개 회차 선택됨
               </p>
               <Button
                 size="lg"
-                onClick={() => handleTranslate()}
-                disabled={isStarting || selectedChapters.size === 0 || (showForceOption && !forceStart)}
+                onClick={handleTranslate}
+                disabled={selectedChapters.size === 0}
                 className="w-full sm:w-auto gap-2"
               >
-                {isStarting ? (
-                  <>
-                    <ButtonSpinner />
-                    시작 중...
-                  </>
-                ) : (
-                  <>
-                    <Languages className="h-4 w-4" />
-                    {forceStart ? "기존 작업 취소 후 번역 시작" : `${selectedChapters.size}개 회차 번역 시작`}
-                  </>
-                )}
+                <Languages className="h-4 w-4" />
+                {`${selectedChapters.size}개 회차 번역 시작`}
               </Button>
             </div>
           </div>
