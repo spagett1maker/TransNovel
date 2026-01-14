@@ -203,3 +203,98 @@ model GlossaryItem {
   @@unique([workId, original])
   @@index([workId])
 }
+
+// ============================================
+// 번역 로그 및 모니터링
+// ============================================
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+enum LogCategory {
+  TRANSLATION      // 번역 관련
+  API_CALL         // Gemini API 호출
+  RATE_LIMIT       // Rate limit 관련
+  CHUNK            // 청크 처리
+  CHAPTER          // 챕터 처리
+  JOB              // 작업 전체
+  SYSTEM           // 시스템
+}
+
+model TranslationLog {
+  id          String      @id @default(cuid())
+  level       LogLevel    @default(INFO)
+  category    LogCategory @default(TRANSLATION)
+
+  // 관련 엔티티
+  jobId       String?
+  workId      String?
+  chapterId   String?
+  chapterNum  Int?
+  chunkIndex  Int?
+
+  // 사용자 정보
+  userId      String?
+  userEmail   String?
+
+  // 로그 내용
+  message     String      @db.Text
+  errorCode   String?     // TranslationError 코드
+  errorStack  String?     @db.Text
+  metadata    Json?       // 추가 메타데이터 (JSON)
+
+  // 성능 메트릭
+  durationMs  Int?        // 소요 시간
+  retryCount  Int?        // 재시도 횟수
+
+  // 환경 정보
+  clientIp    String?
+  userAgent   String?
+
+  createdAt   DateTime    @default(now())
+
+  @@index([level])
+  @@index([category])
+  @@index([jobId])
+  @@index([workId])
+  @@index([userId])
+  @@index([errorCode])
+  @@index([createdAt])
+  @@index([level, createdAt])
+}
+
+// 번역 작업 히스토리 (영구 저장)
+model TranslationJobHistory {
+  id                String    @id @default(cuid())
+  jobId             String    @unique  // translationManager의 jobId
+
+  workId            String
+  workTitle         String
+  userId            String
+  userEmail         String?
+
+  status            String    // COMPLETED, FAILED, PAUSED
+  totalChapters     Int
+  completedChapters Int
+  failedChapters    Int
+
+  // 실패 정보
+  errorMessage      String?   @db.Text
+  failedChapterNums Int[]     // 실패한 챕터 번호 목록
+
+  // 시간 정보
+  startedAt         DateTime
+  completedAt       DateTime?
+  durationMs        Int?      // 전체 소요 시간
+
+  createdAt         DateTime  @default(now())
+
+  @@index([workId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}

@@ -6,6 +6,8 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { splitIntoChunks, translateChunks, TranslationError, ChunkTranslationResult } from "@/lib/gemini";
 import { translationManager } from "@/lib/translation-manager";
+import { translationLogger } from "@/lib/translation-logger";
+import { LogCategory } from "@prisma/client";
 
 interface TranslationContext {
   titleKo: string;
@@ -39,9 +41,14 @@ function log(prefix: string, message: string, data?: object) {
 // 백그라운드 번역 처리 함수
 async function processTranslation(
   jobId: string,
+  workId: string,
   chapters: Array<{ id: string; number: number; originalContent: string }>,
-  context: TranslationContext
+  context: TranslationContext,
+  userId: string,
+  userEmail?: string
 ) {
+  const jobStartTime = Date.now();
+
   log("[Translation]", "==================== processTranslation 시작 ====================");
   log("[Translation]", "작업 정보", {
     jobId,
@@ -50,8 +57,21 @@ async function processTranslation(
     chapterNumbers: chapters.map(c => c.number),
   });
 
+  // 로거에 작업 시작 기록
+  await translationLogger.logJobStart(
+    jobId,
+    workId,
+    context.titleKo,
+    chapters.length,
+    userId,
+    userEmail
+  );
+
   translationManager.startJob(jobId);
   log("[Translation]", "작업 시작됨", { jobId });
+
+  // 실패한 챕터 번호 추적
+  const failedChapterNums: number[] = [];
 
   for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
     const chapter = chapters[chapterIndex];
@@ -125,9 +145,10 @@ async function processTranslation(
         });
       }
 
-      // 챕터 시작 알림
+      // 챕터 시작 알림 및 로깅
       log("[Translation]", `챕터 ${chapter.number} 번역 시작 알림 전송`);
       translationManager.startChapter(jobId, chapter.number, chunks.length);
+      await translationLogger.logChapterStart(jobId, workId, chapter.id, chapter.number, chunks.length, { userId, userEmail });
 
       // 시작 청크가 있으면 진행률 업데이트
       if (startFromChunk > 0) {
@@ -225,12 +246,15 @@ async function processTranslation(
       log("[Translation]", `챕터 ${chapter.number} DB 저장 완료`);
 
       // 챕터 완료 알림 (부분 완료 vs 완전 완료)
+      const chapterDuration = Date.now() - jobStartTime;
       if (failedChunks.length > 0) {
         log("[Translation]", `챕터 ${chapter.number} 부분 완료`, { failedChunks, chapterIndex });
         translationManager.completeChapterPartial(jobId, chapter.number, failedChunks);
+        await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, failedChunks.length, { userId, userEmail });
       } else {
         log("[Translation]", `챕터 ${chapter.number} 완전 완료`, { chapterIndex });
         translationManager.completeChapter(jobId, chapter.number);
+        await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, 0, { userId, userEmail });
       }
 
       log("[Translation]", `========== 루프 종료: chapterIndex=${chapterIndex} 성공 ==========`);
@@ -266,15 +290,47 @@ async function processTranslation(
         data: { status: "PENDING" },
       });
 
-      // 챕터 실패 알림
+      // 챕터 실패 알림 및 로깅
       translationManager.failChapter(jobId, chapter.number, errorMessage);
+      failedChapterNums.push(chapter.number);
+
+      const errorCode = error instanceof TranslationError ? error.code : "UNKNOWN";
+      await translationLogger.logChapterFailed(jobId, chapter.number, errorCode, errorMessage, {
+        userId,
+        userEmail,
+        errorStack: error instanceof Error ? error.stack : undefined,
+      });
       log("[Translation]", `챕터 ${chapter.number} 실패 알림 전송 완료`);
     }
   }
 
   // 작업 완료
+  const jobDuration = Date.now() - jobStartTime;
+  const completedChapters = chapters.length - failedChapterNums.length;
+
   log("[Translation]", "==================== 모든 챕터 처리 완료 ====================");
-  log("[Translation]", "작업 종료", { jobId, totalChapters: chapters.length });
+  log("[Translation]", "작업 종료", { jobId, totalChapters: chapters.length, completedChapters, failedChapters: failedChapterNums.length });
+
+  // 로거에 작업 완료 기록
+  await translationLogger.logJobComplete(jobId, completedChapters, failedChapterNums.length, jobDuration, { userId, userEmail });
+
+  // 작업 히스토리 저장
+  await translationLogger.saveJobHistory({
+    jobId,
+    workId,
+    workTitle: context.titleKo,
+    userId,
+    userEmail,
+    status: failedChapterNums.length === chapters.length ? "FAILED" : "COMPLETED",
+    totalChapters: chapters.length,
+    completedChapters,
+    failedChapters: failedChapterNums.length,
+    failedChapterNums,
+    startedAt: new Date(jobStartTime),
+    completedAt: new Date(),
+    durationMs: jobDuration,
+  });
+
   translationManager.completeJob(jobId);
 }
 
@@ -379,24 +435,57 @@ export async function POST(req: Request) {
     // 백그라운드에서 번역 실행 (await 하지 않음)
     // 클라이언트가 SSE 연결할 시간을 주기 위해 약간의 딜레이 추가
     console.log("[Translation API] 백그라운드 번역 시작 (500ms 딜레이 후)");
+    const userId = session.user.id;
+    const userEmail = session.user.email || undefined;
+
     setTimeout(() => {
       processTranslation(
         jobId,
+        workId,
         chapters.map((ch) => ({
           id: ch.id,
           number: ch.number,
           originalContent: ch.originalContent,
         })),
-        context
-      ).catch((error) => {
+        context,
+        userId,
+        userEmail
+      ).catch(async (error) => {
         console.error("[Translation API] 백그라운드 작업 실패:", error);
 
         let errorMessage = "번역 실패";
+        let errorCode = "UNKNOWN";
         if (error instanceof TranslationError) {
           errorMessage = error.message;
+          errorCode = error.code;
         } else if (error instanceof Error) {
           errorMessage = error.message;
         }
+
+        // 작업 실패 로깅
+        await translationLogger.logJobFailed(jobId, errorCode, errorMessage, {
+          userId,
+          userEmail,
+          workId,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        });
+
+        // 작업 히스토리 저장 (실패)
+        await translationLogger.saveJobHistory({
+          jobId,
+          workId,
+          workTitle: work.titleKo,
+          userId,
+          userEmail,
+          status: "FAILED",
+          totalChapters: chapters.length,
+          completedChapters: 0,
+          failedChapters: chapters.length,
+          errorMessage,
+          failedChapterNums: chapters.map(ch => ch.number),
+          startedAt: new Date(),
+          completedAt: new Date(),
+        });
 
         translationManager.failJob(jobId, errorMessage);
       });

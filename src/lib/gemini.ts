@@ -15,9 +15,14 @@ const logError = (...args: unknown[]) => {
 // API 타임아웃 및 Rate Limiter 설정
 // ============================================
 
-const API_TIMEOUT_MS = 60000; // 60초 타임아웃
-const RATE_LIMIT_RPM = 15; // 분당 최대 요청 수 (Gemini Free tier: 15 RPM)
+const API_TIMEOUT_MS = 90000; // 90초 타임아웃 (네트워크 불안정 대응)
+const RATE_LIMIT_RPM = 10; // 분당 최대 요청 수 (안정성을 위해 10으로 제한)
 const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
+
+// 실패 임계값 설정
+const MAX_CONSECUTIVE_FAILURES = 5; // 연속 실패 허용 횟수 (기존 3 -> 5)
+const MAX_FAILURE_RATE = 0.3; // 최대 실패율 30% (기존 20% -> 30%)
+const MIN_FAILURES_FOR_RATE_CHECK = 10; // 실패율 체크 시작 최소 실패 수 (기존 5 -> 10)
 
 // 글로벌 Rate Limiter (싱글톤) - Promise 기반 큐로 경쟁 조건 방지
 class RateLimiter {
@@ -607,9 +612,13 @@ export async function translateChunks(
         await delay(recoveryDelay);
       }
 
-      // 재시도 불가능한 오류가 연속 3회 또는 전체 5회 이상이면 중단
-      if (!translationError.retryable && consecutiveFailures >= 3) {
-        logError("연속 비재시도 오류로 번역 중단", { failedChunks });
+      // 재시도 불가능한 오류가 연속 N회 이상이면 중단
+      if (!translationError.retryable && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        logError("연속 비재시도 오류로 번역 중단", {
+          failedChunks,
+          consecutiveFailures,
+          threshold: MAX_CONSECUTIVE_FAILURES,
+        });
         throw new TranslationError(
           `연속 오류로 번역 중단: ${translationError.message}`,
           "CONSECUTIVE_FAILURES",
@@ -617,12 +626,13 @@ export async function translateChunks(
         );
       }
 
-      // 전체 실패율이 20% 초과하면 중단 (500청크 중 100개 실패 시)
+      // 전체 실패율이 임계값 초과하면 중단
       const processedCount = i - startFromChunk + 1;
-      if (failedChunks.length > processedCount * 0.2 && failedChunks.length >= 5) {
-        logError("실패율 20% 초과로 번역 중단", {
+      if (failedChunks.length > processedCount * MAX_FAILURE_RATE && failedChunks.length >= MIN_FAILURES_FOR_RATE_CHECK) {
+        logError(`실패율 ${MAX_FAILURE_RATE * 100}% 초과로 번역 중단`, {
           failedCount: failedChunks.length,
-          processedChunks: processedCount
+          processedChunks: processedCount,
+          failureRate: (failedChunks.length / processedCount * 100).toFixed(1) + '%',
         });
         throw new TranslationError(
           `실패율이 너무 높습니다 (${failedChunks.length}/${processedCount} 실패)`,

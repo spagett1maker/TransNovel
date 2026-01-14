@@ -28,12 +28,24 @@ const editorNavigation = [
   { name: "검토 목록", href: "/works" },
 ];
 
+// 관리자 전용 네비게이션
+const adminNavigation = [
+  { name: "대시보드", href: "/dashboard" },
+  { name: "프로젝트", href: "/works" },
+  { name: "모니터링", href: "/admin" },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
 
   const userRole = (session?.user?.role as UserRole) || UserRole.AUTHOR;
-  const navigation = userRole === UserRole.EDITOR ? editorNavigation : authorNavigation;
+  const navigation =
+    userRole === UserRole.ADMIN
+      ? adminNavigation
+      : userRole === UserRole.EDITOR
+        ? editorNavigation
+        : authorNavigation;
 
   return (
     <div className="flex h-full w-64 flex-col bg-muted/30">
