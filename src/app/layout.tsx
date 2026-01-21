@@ -6,6 +6,7 @@ import { TranslationProvider } from "@/contexts/translation-context";
 import { BibleGenerationProvider } from "@/contexts/bible-generation-context";
 import { GlobalTranslationIndicator } from "@/components/layout/global-translation-indicator";
 import { Toaster } from "@/components/ui/sonner";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 import "./globals.css";
 
@@ -44,7 +45,9 @@ export default function RootLayout({
           <TranslationProvider>
             <BibleGenerationProvider>
               {children}
-              <GlobalTranslationIndicator />
+              <ErrorBoundary fallback={null}>
+                <GlobalTranslationIndicator />
+              </ErrorBoundary>
               <Toaster />
             </BibleGenerationProvider>
           </TranslationProvider>
