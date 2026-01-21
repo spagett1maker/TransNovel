@@ -60,7 +60,7 @@ const ChapterItem = memo(function ChapterItem({
 
 export function DownloadDialog({
   workId,
-  chapters,
+  chapters = [],
 }: DownloadDialogProps) {
   const [open, setOpen] = useState(false);
   // Set 기반 선택 상태 - O(1) 조회/추가/삭제
@@ -69,10 +69,13 @@ export function DownloadDialog({
   const [contentType, setContentType] = useState<ContentType>("edited");
   const [isDownloading, setIsDownloading] = useState(false);
 
+  // 안전하게 배열 처리
+  const safeChapters = Array.isArray(chapters) ? chapters : [];
+
   // useMemo로 필터 결과 캐싱
   const downloadableChapters = useMemo(
-    () => chapters.filter((c) => ["TRANSLATED", "EDITED", "APPROVED"].includes(c.status)),
-    [chapters]
+    () => safeChapters.filter((c) => ["TRANSLATED", "EDITED", "APPROVED"].includes(c.status)),
+    [safeChapters]
   );
 
   // useCallback으로 토글 함수 메모이제이션

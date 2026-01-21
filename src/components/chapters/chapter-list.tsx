@@ -33,7 +33,7 @@ interface ChapterListProps {
   itemsPerPage?: number;
 }
 
-export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterListProps) {
+export function ChapterList({ workId, chapters = [], itemsPerPage = 30 }: ChapterListProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const { getJobByWorkId } = useTranslation();
 
@@ -42,12 +42,14 @@ export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterList
   const isTranslating = job && (job.status === "PENDING" || job.status === "IN_PROGRESS");
   const currentTranslatingChapter = isTranslating ? job.currentChapter?.number : null;
 
-  const totalPages = Math.ceil(chapters.length / itemsPerPage);
+  // 안전하게 배열 처리
+  const safeChapters = Array.isArray(chapters) ? chapters : [];
+  const totalPages = Math.ceil(safeChapters.length / itemsPerPage);
 
   const paginatedChapters = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
-    return chapters.slice(start, start + itemsPerPage);
-  }, [chapters, currentPage, itemsPerPage]);
+    return safeChapters.slice(start, start + itemsPerPage);
+  }, [safeChapters, currentPage, itemsPerPage]);
 
   const goToPage = (page: number) => {
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
@@ -215,7 +217,7 @@ export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterList
           </Button>
 
           <span className="ml-3 text-sm text-muted-foreground tabular-nums">
-            {(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, chapters.length)} / {chapters.length}
+            {(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, safeChapters.length)} / {safeChapters.length}
           </span>
         </div>
       )}
