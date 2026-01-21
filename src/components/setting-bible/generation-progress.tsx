@@ -89,6 +89,20 @@ export function GenerationProgress({
     }
   }, [workId, isCancelRequested, clearCancelRequest]);
 
+  // 페이지 이탈 방지 (생성 중일 때)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (state.status === "generating") {
+        e.preventDefault();
+        e.returnValue = "설정집 분석이 진행 중입니다. 페이지를 벗어나면 분석이 중단됩니다.";
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [state.status]);
+
   const generateBible = useCallback(async () => {
     setState((prev) => ({ ...prev, status: "generating", error: undefined }));
     setShouldCancel(false);
@@ -331,10 +345,18 @@ export function GenerationProgress({
             </div>
           )}
 
+          {/* 페이지 이탈 주의 안내 */}
+          {state.status === "generating" && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+              <p className="font-medium">분석 중 이 페이지를 벗어나지 마세요</p>
+              <p className="mt-1 text-xs text-blue-600">페이지를 닫거나 이동하면 분석이 중단됩니다.</p>
+            </div>
+          )}
+
           {/* 재시도 상태 표시 */}
           {state.status === "generating" && state.retryCount && state.retryCount > 0 && (
             <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
-              API 서버가 혼잡합니다. 30초 후 자동으로 재시도합니다...
+              API 서버가 혼잡합니다. 15초 후 자동으로 재시도합니다...
             </div>
           )}
 
