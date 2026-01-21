@@ -2,71 +2,109 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function WorkDetailLoading() {
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-6xl animate-in fade-in duration-300">
       {/* Breadcrumb */}
       <nav className="mb-8">
-        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-4 w-24" />
       </nav>
 
-      {/* Header */}
+      {/* Page Header */}
       <header className="pb-10 border-b border-border mb-10">
-        <div className="flex items-start justify-between gap-8">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-4">
-              <Skeleton className="h-6 w-20 rounded-full" />
-              <Skeleton className="h-6 w-16 rounded-full" />
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex-1 min-w-0 space-y-3">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-4 w-12" />
             </div>
-            <Skeleton className="h-10 w-2/3 mb-3" />
-            <Skeleton className="h-5 w-1/3" />
+            <Skeleton className="h-9 w-64" />
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-32 mt-3" />
           </div>
-          <div className="flex gap-3">
-            <Skeleton className="h-10 w-24" />
+          <div className="flex gap-2 shrink-0">
+            <Skeleton className="h-10 w-28" />
             <Skeleton className="h-10 w-24" />
           </div>
         </div>
       </header>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="section-surface p-5">
-            <Skeleton className="h-4 w-16 mb-2" />
-            <Skeleton className="h-8 w-12" />
-          </div>
-        ))}
-      </div>
+      {/* Stats Row */}
+      <section className="mb-12">
+        <div className="grid gap-4 sm:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="stat-card">
+              <Skeleton className="h-3 w-12 mb-2" />
+              <Skeleton className="h-8 w-16" />
+            </div>
+          ))}
+        </div>
+      </section>
 
-      {/* Content Grid */}
-      <div className="grid md:grid-cols-3 gap-6">
-        <div className="md:col-span-2 space-y-6">
-          {/* Chapter List */}
-          <div className="section-surface p-6">
-            <Skeleton className="h-6 w-24 mb-4" />
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex items-center justify-between py-3 border-b">
-                  <div className="flex items-center gap-3">
-                    <Skeleton className="h-5 w-16" />
-                    <Skeleton className="h-5 w-32" />
+      {/* Main Content Grid */}
+      <div className="grid gap-10 lg:grid-cols-[1fr_320px]">
+        {/* Chapter List Skeleton */}
+        <section>
+          <div className="section-header">
+            <div>
+              <Skeleton className="h-6 w-24 mb-2" />
+              <Skeleton className="h-4 w-48" />
+            </div>
+            <Skeleton className="h-9 w-24" />
+          </div>
+
+          <div className="space-y-0">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div
+                key={i}
+                className="list-item"
+              >
+                <div className="flex items-center gap-4 min-w-0 flex-1">
+                  <Skeleton className="h-4 w-8" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-5 w-24" />
+                    <Skeleton className="h-3 w-16" />
                   </div>
-                  <Skeleton className="h-5 w-16 rounded-full" />
+                </div>
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Sidebar Skeleton */}
+        <aside className="space-y-8">
+          {/* Synopsis */}
+          <div>
+            <Skeleton className="h-3 w-12 mb-4" />
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+          </div>
+
+          {/* Original Work Info */}
+          <div>
+            <Skeleton className="h-3 w-16 mb-4" />
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex justify-between">
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-20" />
                 </div>
               ))}
             </div>
           </div>
-        </div>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          <div className="section-surface p-6">
-            <Skeleton className="h-6 w-24 mb-4" />
-            <div className="space-y-3">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
+          {/* Quick Actions */}
+          <div>
+            <Skeleton className="h-3 w-16 mb-4" />
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
             </div>
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   );
