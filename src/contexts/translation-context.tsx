@@ -12,6 +12,7 @@ import {
 } from "react";
 
 // 경량 작업 요약 정보 (서버와 동일한 구조)
+// 챕터 단위 진행률만 추적 (청크 없음)
 export interface TranslationJobSummary {
   jobId: string;
   workId: string;
@@ -22,12 +23,18 @@ export interface TranslationJobSummary {
   failedChapters: number;
   currentChapter?: {
     number: number;
-    currentChunk: number;
-    totalChunks: number;
   };
   error?: string;
   createdAt: Date;
   updatedAt?: Date; // 멈춘 작업 감지용
+  // 계산된 진행률 (0-100) - 모든 UI에서 동일한 값 사용
+  progress: number;
+}
+
+// 진행률 계산 헬퍼 함수
+function calculateProgress(completedChapters: number, totalChapters: number): number {
+  if (totalChapters === 0) return 0;
+  return Math.round((completedChapters / totalChapters) * 100);
 }
 
 interface TranslationContextType {
@@ -45,6 +52,23 @@ interface TranslationContextType {
   refreshJobs: () => Promise<void>;
   getJobByWorkId: (workId: string) => TranslationJobSummary | undefined;
   pauseJob: (jobId: string) => Promise<boolean>;
+  resumeJob: (jobId: string) => Promise<{ success: boolean; error?: string }>;
+  // 클라이언트 측 번역 상태 업데이트 (translate/page.tsx에서 사용)
+  updateClientProgress: (
+    workId: string,
+    workTitle: string,
+    progress: {
+      status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED";
+      totalChapters: number;
+      completedChapters: number;
+      failedChapters: number;
+      currentChapter?: {
+        number: number;
+      };
+      error?: string;
+    }
+  ) => void;
+  removeClientJob: (workId: string) => void;
 }
 
 const TranslationContext = createContext<TranslationContextType | undefined>(
@@ -93,45 +117,53 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           if (!job) return prev;
 
           switch (data.type) {
-            case "job_started":
+            case "job_started": {
+              const totalChapters = data.data.totalChapters ?? job.totalChapters;
               newJobs.set(jobId, {
                 ...job,
                 status: "IN_PROGRESS",
-                totalChapters: data.data.totalChapters ?? job.totalChapters,
-                currentChapter: data.data.currentChapter,
+                totalChapters,
+                currentChapter: data.data.currentChapter
+                  ? { number: data.data.currentChapter.number }
+                  : undefined,
+                progress: calculateProgress(job.completedChapters, totalChapters),
               });
               break;
+            }
 
             case "chapter_started":
               newJobs.set(jobId, {
                 ...job,
                 currentChapter: {
                   number: data.data.chapterNumber,
-                  currentChunk: 0,
-                  totalChunks: data.data.totalChunks ?? 0,
                 },
               });
               break;
 
+            // chunk_progress는 더 이상 사용하지 않지만 하위 호환성을 위해 유지
             case "chunk_progress":
-              newJobs.set(jobId, {
-                ...job,
-                currentChapter: {
-                  number: data.data.chapterNumber,
-                  currentChunk: data.data.currentChunk ?? 0,
-                  totalChunks: data.data.totalChunks ?? job.currentChapter?.totalChunks ?? 0,
-                },
-              });
+              // 청크 진행률은 무시하고 챕터 번호만 업데이트
+              if (data.data.chapterNumber) {
+                newJobs.set(jobId, {
+                  ...job,
+                  currentChapter: {
+                    number: data.data.chapterNumber,
+                  },
+                });
+              }
               break;
 
             case "chapter_completed":
-            case "chapter_partial":
+            case "chapter_partial": {
+              const completedChapters = data.data.completedChapters ?? job.completedChapters + 1;
               newJobs.set(jobId, {
                 ...job,
-                completedChapters: data.data.completedChapters ?? job.completedChapters + 1,
+                completedChapters,
                 currentChapter: undefined,
+                progress: calculateProgress(completedChapters, job.totalChapters),
               });
               break;
+            }
 
             case "chapter_failed":
               newJobs.set(jobId, {
@@ -149,14 +181,17 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
               });
               break;
 
-            case "job_completed":
+            case "job_completed": {
+              const completedChapters = data.data.completedChapters ?? job.totalChapters;
               newJobs.set(jobId, {
                 ...job,
                 status: "COMPLETED",
-                completedChapters: data.data.completedChapters ?? job.totalChapters,
+                completedChapters,
                 currentChapter: undefined,
+                progress: 100,
               });
               break;
+            }
 
             case "job_failed":
               newJobs.set(jobId, {
@@ -238,8 +273,6 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             failedChapters: number;
             currentChapter?: {
               number: number;
-              currentChunk: number;
-              totalChunks: number;
             };
             error?: string;
             createdAt: string;
@@ -247,8 +280,12 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           }) => {
             newJobs.set(job.jobId, {
               ...job,
+              currentChapter: job.currentChapter
+                ? { number: job.currentChapter.number }
+                : undefined,
               createdAt: new Date(job.createdAt),
               updatedAt: job.updatedAt ? new Date(job.updatedAt) : undefined,
+              progress: calculateProgress(job.completedChapters, job.totalChapters),
             });
 
             // 진행 중인 작업에 대해 SSE 연결 대기 목록에 추가
@@ -329,6 +366,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         completedChapters: 0,
         failedChapters: 0,
         createdAt: new Date(),
+        progress: 0,
       };
 
       setJobs((prev) => {
@@ -466,6 +504,106 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // 작업 재개
+  const resumeJob = useCallback(
+    async (jobId: string): Promise<{ success: boolean; error?: string }> => {
+      console.log("[TranslationContext] 재개 요청:", jobId);
+
+      try {
+        const response = await fetch("/api/translation/resume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          console.error("[TranslationContext] 재개 실패:", data.error);
+          return { success: false, error: data.error };
+        }
+
+        // 재개 성공 시 SSE 연결 시작 (기존 jobId 재사용)
+        connectSSE(jobId);
+
+        // 작업 상태를 IN_PROGRESS로 업데이트
+        setJobs((prev) => {
+          const newJobs = new Map(prev);
+          const job = newJobs.get(jobId);
+          if (job) {
+            newJobs.set(jobId, {
+              ...job,
+              status: "IN_PROGRESS",
+              totalChapters: data.totalChapters || job.totalChapters,
+              progress: calculateProgress(job.completedChapters, data.totalChapters || job.totalChapters),
+            });
+          }
+          return newJobs;
+        });
+
+        return { success: true };
+      } catch (error) {
+        console.error("[TranslationContext] 재개 에러:", error);
+        return { success: false, error: "네트워크 오류가 발생했습니다." };
+      }
+    },
+    [connectSSE]
+  );
+
+  // 클라이언트 측 번역 상태 업데이트 (translate/page.tsx에서 사용)
+  const updateClientProgress = useCallback(
+    (
+      workId: string,
+      workTitle: string,
+      progress: {
+        status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED";
+        totalChapters: number;
+        completedChapters: number;
+        failedChapters: number;
+        currentChapter?: {
+          number: number;
+        };
+        error?: string;
+      }
+    ) => {
+      // 클라이언트 측 번역은 "client-" prefix로 구분
+      const jobId = `client-${workId}`;
+
+      setJobs((prev) => {
+        const newJobs = new Map(prev);
+        const existingJob = newJobs.get(jobId);
+
+        newJobs.set(jobId, {
+          jobId,
+          workId,
+          workTitle,
+          status: progress.status,
+          totalChapters: progress.totalChapters,
+          completedChapters: progress.completedChapters,
+          failedChapters: progress.failedChapters,
+          currentChapter: progress.currentChapter,
+          error: progress.error,
+          createdAt: existingJob?.createdAt || new Date(),
+          updatedAt: new Date(),
+          progress: calculateProgress(progress.completedChapters, progress.totalChapters),
+        });
+
+        return newJobs;
+      });
+    },
+    []
+  );
+
+  // 클라이언트 측 번역 작업 제거
+  const removeClientJob = useCallback((workId: string) => {
+    const jobId = `client-${workId}`;
+    setJobs((prev) => {
+      const newJobs = new Map(prev);
+      newJobs.delete(jobId);
+      return newJobs;
+    });
+  }, []);
+
   return (
     <TranslationContext.Provider
       value={{
@@ -478,6 +616,9 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         refreshJobs,
         getJobByWorkId,
         pauseJob,
+        resumeJob,
+        updateClientProgress,
+        removeClientJob,
       }}
     >
       {children}

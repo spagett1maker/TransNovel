@@ -22,11 +22,16 @@ export async function GET(req: Request) {
       );
     }
 
-    // 작품과 용어집 조회
+    // 작품, 용어집, 설정집 조회
     const work = await db.work.findUnique({
       where: { id: workId },
       include: {
         glossary: true,
+        settingBible: {
+          include: {
+            characters: true,
+          },
+        },
       },
     });
 
@@ -44,6 +49,16 @@ export async function GET(req: Request) {
         translated: g.translated,
         note: g.note,
       })),
+      // 설정집 데이터
+      characters: work.settingBible?.characters.map((c) => ({
+        nameOriginal: c.nameOriginal,
+        nameKorean: c.nameKorean,
+        role: c.role,
+        speechStyle: c.speechStyle,
+        personality: c.personality,
+      })),
+      translationGuide: work.settingBible?.translationGuide,
+      bibleStatus: work.settingBible?.status,
     });
   } catch (error) {
     console.error("[Translation Context API] 오류:", error);

@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ButtonSpinner, Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
 interface ChunkError {
   index: number;
@@ -65,35 +66,39 @@ interface TranslationProgressProps {
   onRetry?: (chapterNumbers: number[]) => Promise<void>;
 }
 
-// 상태별 스타일 설정
+// 상태별 스타일 설정 (디자인 시스템 통일)
 const STATUS_STYLES = {
   IN_PROGRESS: {
-    container: "border-primary/30 bg-primary/5",
-    icon: <Zap className="h-5 w-5 text-primary" />,
-    iconBg: "bg-primary/10",
+    container: "border-status-progress/30 bg-status-progress/5 translation-progress-card active",
+    icon: <Zap className="h-5 w-5 text-status-progress" />,
+    iconBg: "bg-status-progress/10",
     title: "번역 진행 중",
     description: "AI가 열심히 번역하고 있습니다...",
+    progressBarClass: "[&>div]:bg-status-progress",
   },
   COMPLETED: {
-    container: "border-green-200 bg-green-50/50",
-    icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
-    iconBg: "bg-green-100",
+    container: "border-status-success/30 bg-status-success/5",
+    icon: <CheckCircle2 className="h-5 w-5 text-status-success" />,
+    iconBg: "bg-status-success/10",
     title: "번역 완료!",
     description: "모든 회차의 번역이 완료되었습니다.",
+    progressBarClass: "[&>div]:bg-status-success",
   },
   FAILED: {
-    container: "border-red-200 bg-red-50/50",
-    icon: <XCircle className="h-5 w-5 text-red-600" />,
-    iconBg: "bg-red-100",
+    container: "border-status-error/30 bg-status-error/5",
+    icon: <XCircle className="h-5 w-5 text-status-error" />,
+    iconBg: "bg-status-error/10",
     title: "번역 중 오류 발생",
     description: "일부 회차에서 오류가 발생했습니다.",
+    progressBarClass: "[&>div]:bg-status-error",
   },
   PENDING: {
-    container: "border-gray-200 bg-gray-50/50",
-    icon: <Clock className="h-5 w-5 text-gray-500" />,
-    iconBg: "bg-gray-100",
+    container: "border-status-pending/30 bg-status-pending/5",
+    icon: <Clock className="h-5 w-5 text-muted-foreground" />,
+    iconBg: "bg-muted",
     title: "번역 준비 중",
     description: "잠시 후 번역이 시작됩니다...",
+    progressBarClass: "",
   },
 };
 
@@ -300,13 +305,13 @@ export function TranslationProgress({
   const styles = STATUS_STYLES[statusKey] || STATUS_STYLES.PENDING;
 
   return (
-    <div className={`section-surface ${styles.container} overflow-hidden`}>
+    <div className={cn("section-surface overflow-hidden", styles.container)}>
       {/* 헤더 */}
       <div className="p-5">
         <div className="flex items-start gap-4">
-          <div className={`flex h-10 w-10 items-center justify-center rounded-full ${styles.iconBg} shrink-0`}>
+          <div className={cn("flex h-10 w-10 items-center justify-center rounded-full shrink-0", styles.iconBg)}>
             {status === "IN_PROGRESS" ? (
-              <Loader2 className="h-5 w-5 text-primary animate-spin" />
+              <Loader2 className="h-5 w-5 text-status-progress animate-spin" />
             ) : (
               styles.icon
             )}
@@ -330,8 +335,13 @@ export function TranslationProgress({
         </div>
 
         {/* 전체 진행률 바 */}
-        <div className="mt-4">
-          <Progress value={overallProgress} className="h-2" />
+        <div className="mt-4 relative">
+          <Progress value={overallProgress} className={cn("h-2", styles.progressBarClass)} />
+          {status === "IN_PROGRESS" && (
+            <div className="absolute inset-0 overflow-hidden rounded-full">
+              <div className="progress-shimmer h-full w-full" />
+            </div>
+          )}
         </div>
 
         {/* 현재 챕터 진행률 */}
@@ -339,14 +349,14 @@ export function TranslationProgress({
           <div className="mt-4 p-3 rounded-lg bg-background/50 border">
             <div className="flex items-center justify-between text-sm mb-2">
               <div className="flex items-center gap-2">
-                <Spinner size="sm" className="text-primary" />
+                <Spinner size="sm" className="text-status-progress" />
                 <span className="font-medium">{currentChapter.number}화 번역 중</span>
               </div>
               <span className="text-muted-foreground tabular-nums">
                 {currentChapter.currentChunk}/{currentChapter.totalChunks} 청크
               </span>
             </div>
-            <Progress value={chunkProgress} className="h-1.5" />
+            <Progress value={chunkProgress} className="h-1.5 [&>div]:bg-status-progress/70" />
           </div>
         )}
       </div>
@@ -354,7 +364,7 @@ export function TranslationProgress({
       {/* 에러 메시지 */}
       {error && (
         <div className="px-5 pb-4">
-          <div className="rounded-lg bg-red-100 border border-red-200 p-3 text-sm text-red-800">
+          <div className="rounded-lg bg-status-error/10 border border-status-error/20 p-3 text-sm text-status-error">
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <p>{error}</p>
@@ -431,7 +441,7 @@ export function TranslationProgress({
               {/* 실패한 챕터 상세 정보 */}
               {failedCount > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-medium text-red-700 uppercase tracking-wide">
+                  <p className="text-xs font-medium text-status-error uppercase tracking-wide">
                     오류 상세
                   </p>
                   <div className="space-y-2">
@@ -440,21 +450,21 @@ export function TranslationProgress({
                       .map((chapter) => (
                         <div
                           key={chapter.number}
-                          className="rounded-lg bg-red-50 border border-red-100 p-3"
+                          className="rounded-lg bg-status-error/5 border border-status-error/20 p-3"
                         >
-                          <div className="flex items-center gap-2 text-sm font-medium text-red-800">
+                          <div className="flex items-center gap-2 text-sm font-medium text-status-error">
                             <XCircle className="h-4 w-4" />
                             {chapter.number}화
                             {chapter.status === "PARTIAL" && " (부분 번역)"}
                             {chapter.status === "FAILED" && " (실패)"}
                           </div>
                           {chapter.error && (
-                            <p className="mt-1 text-sm text-red-700 pl-6">
+                            <p className="mt-1 text-sm text-status-error/80 pl-6">
                               {chapter.error}
                             </p>
                           )}
                           {chapter.failedChunks && chapter.failedChunks.length > 0 && (
-                            <p className="mt-1 text-xs text-red-600 pl-6">
+                            <p className="mt-1 text-xs text-status-error/70 pl-6">
                               실패한 청크: {chapter.failedChunks.map((f) => `#${f.index + 1}`).join(", ")}
                             </p>
                           )}
@@ -469,11 +479,11 @@ export function TranslationProgress({
                       size="sm"
                       onClick={handleRetryFailed}
                       disabled={isRetrying}
-                      className="w-full mt-3 border-red-200 text-red-700 hover:bg-red-50"
+                      className="w-full mt-3 border-status-error/30 text-status-error hover:bg-status-error/10"
                     >
                       {isRetrying ? (
                         <>
-                          <ButtonSpinner className="text-red-600" />
+                          <ButtonSpinner className="text-status-error" />
                           재시도 중...
                         </>
                       ) : (

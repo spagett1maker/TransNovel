@@ -26,9 +26,43 @@ enum WorkStatus {
   ONGOING         // @deprecated - TRANSLATING으로 대체
   // 새 값
   REGISTERED      // 등록됨 (원문 등록 대기)
+  BIBLE_GENERATING // 설정집 생성중
+  BIBLE_DRAFT     // 설정집 검토대기
+  BIBLE_CONFIRMED // 설정집 확정 (번역 준비 완료)
   TRANSLATING     // 번역 진행중
   PROOFREADING    // 윤문 진행중
   COMPLETED       // 완료
+}
+
+enum BibleStatus {
+  GENERATING
+  DRAFT
+  CONFIRMED
+}
+
+enum CharacterRole {
+  PROTAGONIST
+  ANTAGONIST
+  SUPPORTING
+  MINOR
+}
+
+enum TermCategory {
+  CHARACTER       // 인명
+  PLACE           // 지명
+  ORGANIZATION    // 조직/문파
+  RANK_TITLE      // 관직/제도
+  SKILL_TECHNIQUE // 무공/스킬
+  ITEM            // 사물
+  OTHER           // 기타
+}
+
+enum EventType {
+  PLOT
+  CHARACTER_DEV
+  FORESHADOWING
+  REVEAL
+  WORLD_BUILDING
 }
 
 enum OriginalStatus {
@@ -144,6 +178,7 @@ model Work {
   chapters        Chapter[]
   glossary        GlossaryItem[]
   creators        Creator[]
+  settingBible    SettingBible?
 
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -342,4 +377,96 @@ model TranslationJobHistory {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ============================================
+// 설정집 (Setting Bible)
+// ============================================
+
+model SettingBible {
+  id                String       @id @default(cuid())
+  workId            String       @unique
+  work              Work         @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  status            BibleStatus  @default(DRAFT)
+  version           Int          @default(1)
+
+  translationGuide  String?      @db.Text  // 번역 가이드/복선 노트
+  analyzedChapters  Int          @default(0)
+
+  generatedAt       DateTime?
+  confirmedAt       DateTime?
+  confirmedBy       String?
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  characters        Character[]
+  terms             SettingTerm[]
+  events            TimelineEvent[]
+}
+
+model Character {
+  id              String        @id @default(cuid())
+  bibleId         String
+  bible           SettingBible  @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+
+  nameOriginal    String
+  nameKorean      String
+  nameHanja       String?
+  titles          String[]
+  aliases         String[]
+
+  personality     String?       @db.Text
+  speechStyle     String?       @db.Text
+  role            CharacterRole @default(SUPPORTING)
+  description     String?       @db.Text
+  relationships   Json?
+  firstAppearance Int?
+
+  sortOrder       Int           @default(0)
+  isConfirmed     Boolean       @default(false)
+
+  @@unique([bibleId, nameOriginal])
+  @@index([bibleId])
+}
+
+model SettingTerm {
+  id              String        @id @default(cuid())
+  bibleId         String
+  bible           SettingBible  @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+
+  original        String
+  translated      String
+  category        TermCategory
+  note            String?       @db.Text
+  context         String?       @db.Text
+  firstAppearance Int?
+  frequency       Int           @default(1)
+
+  isConfirmed     Boolean       @default(false)
+
+  @@unique([bibleId, original])
+  @@index([bibleId])
+  @@index([category])
+}
+
+model TimelineEvent {
+  id                   String       @id @default(cuid())
+  bibleId              String
+  bible                SettingBible @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+
+  title                String
+  description          String       @db.Text
+  chapterStart         Int
+  chapterEnd           Int?
+  eventType            EventType    @default(PLOT)
+  importance           Int          @default(1)
+
+  isForeshadowing      Boolean      @default(false)
+  foreshadowNote       String?      @db.Text
+  involvedCharacterIds String[]
+
+  @@index([bibleId])
+  @@index([chapterStart])
 }

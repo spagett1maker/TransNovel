@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Noto_Serif_KR } from "next/font/google";
 
 import { SessionProvider } from "@/components/providers/session-provider";
 import { TranslationProvider } from "@/contexts/translation-context";
+import { GlobalTranslationIndicator } from "@/components/layout/global-translation-indicator";
 import { Toaster } from "@/components/ui/sonner";
 
 import "./globals.css";
@@ -41,6 +42,7 @@ export default function RootLayout({
         <SessionProvider>
           <TranslationProvider>
             {children}
+            <GlobalTranslationIndicator />
             <Toaster />
           </TranslationProvider>
         </SessionProvider>

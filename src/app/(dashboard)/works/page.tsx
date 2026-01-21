@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WorkCardClient, TranslationStatusInline } from "@/components/works/work-card-client";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { AGE_RATINGS } from "@/lib/validations/work";
@@ -99,21 +100,23 @@ export default async function WorksPage({
               const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + index + 1;
 
               return (
-                <Link
+                <WorkCardClient
                   key={work.id}
+                  workId={work.id}
                   href={`/works/${work.id}`}
-                  className="project-card group"
                 >
                   {/* Card Header */}
                   <div className="flex items-start justify-between gap-3 mb-5">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className="text-xs text-muted-foreground tabular-nums">
                           #{String(globalIndex).padStart(2, '0')}
                         </span>
                         <Badge variant={statusConfig.variant} className="text-xs">
                           {statusConfig.label}
                         </Badge>
+                        {/* 번역 상태 배지 (클라이언트 측) */}
+                        <TranslationStatusInline workId={work.id} />
                       </div>
                       <h2 className="text-lg font-semibold truncate group-hover:text-muted-foreground transition-colors">
                         {work.titleKo}
@@ -159,7 +162,7 @@ export default async function WorksPage({
                       {AGE_RATINGS[work.ageRating as keyof typeof AGE_RATINGS]}
                     </span>
                   </div>
-                </Link>
+                </WorkCardClient>
               );
             })}
 

@@ -11,6 +11,9 @@ export const WORK_STATUS_CONFIG: Record<WorkStatus, WorkStatusConfig> = {
   PREPARING: { label: "등록중", variant: "pending" },      // @deprecated
   ONGOING: { label: "번역중", variant: "progress" },       // @deprecated
   REGISTERED: { label: "등록완료", variant: "info" },
+  BIBLE_GENERATING: { label: "설정집 생성중", variant: "progress" },
+  BIBLE_DRAFT: { label: "설정집 검토중", variant: "warning" },
+  BIBLE_CONFIRMED: { label: "번역 준비완료", variant: "info" },
   TRANSLATING: { label: "번역중", variant: "progress" },
   PROOFREADING: { label: "윤문중", variant: "warning" },
   COMPLETED: { label: "완료", variant: "success" },

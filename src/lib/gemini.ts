@@ -31,7 +31,9 @@ const logError = (...args: unknown[]) => {
 // API 타임아웃 및 Rate Limiter 설정
 // ============================================
 
-const API_TIMEOUT_MS = 90000; // 90초 타임아웃 (네트워크 불안정 대응)
+// Vercel Pro 플랜: 최대 300초 (5분) 함수 실행 시간
+// 챕터 전체 번역을 위해 타임아웃 대폭 증가
+const API_TIMEOUT_MS = 180000; // 180초 (3분) - 긴 챕터 대응
 const RATE_LIMIT_RPM = 10; // 분당 최대 요청 수 (안정성을 위해 10으로 제한)
 const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
 
@@ -187,12 +189,22 @@ export class TranslationError extends Error {
   }
 }
 
-interface TranslationContext {
+interface CharacterInfo {
+  nameOriginal: string;
+  nameKorean: string;
+  role: string;
+  speechStyle?: string;
+  personality?: string;
+}
+
+export interface TranslationContext {
   titleKo: string;
   genres: string[];
   ageRating: string;
   synopsis: string;
   glossary?: Array<{ original: string; translated: string; note?: string }>;
+  characters?: CharacterInfo[];
+  translationGuide?: string;
 }
 
 // 장르별 번역 스타일 가이드
@@ -245,7 +257,7 @@ function buildSystemPrompt(context: TranslationContext): string {
     .join("\n\n");
   const ageGuide = AGE_GUIDES[context.ageRating] || AGE_GUIDES["ALL"];
 
-  // 용어집 섹션 (캐릭터 톤&매너 포함 가능)
+  // 용어집 섹션
   let glossarySection = "";
   if (context.glossary && context.glossary.length > 0) {
     glossarySection = `
@@ -255,6 +267,39 @@ function buildSystemPrompt(context: TranslationContext): string {
 | 원문 | 번역 | 비고 |
 |------|------|------|
 ${context.glossary.map((g) => `| ${g.original} | ${g.translated} | ${g.note || ""} |`).join("\n")}
+`;
+  }
+
+  // 인물 정보 섹션
+  let characterSection = "";
+  if (context.characters && context.characters.length > 0) {
+    const mainCharacters = context.characters.filter(
+      (c) => c.role === "PROTAGONIST" || c.role === "ANTAGONIST"
+    );
+    const supportingCharacters = context.characters.filter(
+      (c) => c.role === "SUPPORTING"
+    );
+
+    characterSection = `
+[PART 5. 인물 정보 (Character Bible)]
+번역 시 각 인물의 말투와 성격을 일관되게 유지하십시오.
+
+## 주요 인물
+${mainCharacters.map((c) => `- **${c.nameOriginal}** → **${c.nameKorean}** (${c.role === "PROTAGONIST" ? "주인공" : "적대자"})
+  ${c.speechStyle ? `말투: ${c.speechStyle}` : ""}
+  ${c.personality ? `성격: ${c.personality}` : ""}`).join("\n\n")}
+
+${supportingCharacters.length > 0 ? `## 조연
+${supportingCharacters.slice(0, 10).map((c) => `- **${c.nameOriginal}** → **${c.nameKorean}**${c.speechStyle ? ` (${c.speechStyle})` : ""}`).join("\n")}` : ""}
+`;
+  }
+
+  // 번역 가이드 섹션
+  let translationGuideSection = "";
+  if (context.translationGuide) {
+    translationGuideSection = `
+[PART 6. 작품별 번역 가이드]
+${context.translationGuide}
 `;
   }
 
@@ -339,9 +384,11 @@ ${ageGuide}
 
 ═══════════════════════════════════════════════════════════════
 ${glossarySection}
+${characterSection}
+${translationGuideSection}
 ═══════════════════════════════════════════════════════════════
 
-[PART 5. 출력 형식]
+[PART 7. 출력 형식]
 
 1. **번역문만 출력** - 설명, 주석, 번역 노트 포함 금지
 2. **원문의 문단 구조 유지** - 단, 가독성을 위해 긴 문단은 분리 가능
@@ -566,6 +613,131 @@ ${content}
   logError("모든 재시도 실패");
   throw lastError || new TranslationError(
     "번역에 실패했습니다. 다시 시도해주세요.",
+    "MAX_RETRIES",
+    false
+  );
+}
+
+/**
+ * 챕터 전체를 한 번에 번역 (Vercel Pro 플랜용)
+ * 청크 분할 없이 전체 챕터를 번역하여 맥락 유지 및 품질 향상
+ */
+export async function translateChapter(
+  content: string,
+  context: TranslationContext,
+  maxRetries: number = 5
+): Promise<string> {
+  log("translateChapter 시작", {
+    contentLength: content.length,
+    title: context.titleKo,
+  });
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+  });
+
+  const systemPrompt = buildSystemPrompt(context);
+  log("시스템 프롬프트 생성 완료, 길이:", systemPrompt.length);
+
+  let lastError: TranslationError | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    log(`챕터 번역 시도 ${attempt + 1}/${maxRetries}`);
+    try {
+      // 1. Rate Limiter 토큰 획득
+      await rateLimiter.acquire();
+
+      const startTime = Date.now();
+
+      // 2. API 호출에 타임아웃 적용 (챕터 전체 번역이므로 긴 타임아웃)
+      const result = await withTimeout(
+        model.generateContent({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: systemPrompt },
+                {
+                  text: `
+═══════════════════════════════════════════════════════════════
+[원문 시작]
+═══════════════════════════════════════════════════════════════
+
+${content}
+
+═══════════════════════════════════════════════════════════════
+[원문 끝]
+═══════════════════════════════════════════════════════════════`,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.4,
+            topP: 0.85,
+            topK: 40,
+            maxOutputTokens: 65536, // 충분한 출력 토큰 (챕터 전체 대응)
+          },
+        }),
+        API_TIMEOUT_MS,
+        "챕터 번역 API 호출"
+      );
+
+      const elapsed = Date.now() - startTime;
+      log(`챕터 번역 API 응답 수신 (${elapsed}ms 소요)`);
+
+      const response = result.response;
+      const text = response.text();
+
+      if (!text || text.trim().length === 0) {
+        logError("챕터 번역 빈 응답 수신됨");
+        throw new TranslationError(
+          "AI가 빈 응답을 반환했습니다.",
+          "EMPTY_RESPONSE",
+          true
+        );
+      }
+
+      log("챕터 번역 성공, 결과 길이:", text.length);
+      return text;
+    } catch (error) {
+      lastError = error instanceof TranslationError ? error : analyzeError(error);
+
+      logError(`챕터 번역 시도 ${attempt + 1} 실패:`, {
+        code: lastError.code,
+        message: lastError.message,
+        retryable: lastError.retryable,
+      });
+
+      // Rate limit 에러 시 rate limiter에 알림
+      if (lastError.code === "RATE_LIMIT") {
+        rateLimiter.onRateLimitError();
+      }
+
+      // 재시도 불가능한 오류는 즉시 실패
+      if (!lastError.retryable) {
+        throw lastError;
+      }
+
+      // 마지막 시도가 아니면 지수 백오프로 대기 (jitter 포함)
+      if (attempt < maxRetries - 1) {
+        const baseDelay =
+          lastError.code === "RATE_LIMIT" ? 30000 :  // 30초
+          lastError.code === "TIMEOUT" ? 15000 :     // 15초 (챕터 번역은 더 긴 대기)
+          5000;                                       // 5초
+
+        const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
+        const waitMs = addJitter(backoffMs);
+        log(`${Math.round(waitMs)}ms 후 재시도... (attempt ${attempt + 1})`);
+        await delay(waitMs);
+      }
+    }
+  }
+
+  // 모든 재시도 실패
+  logError("챕터 번역 모든 재시도 실패");
+  throw lastError || new TranslationError(
+    "챕터 번역에 실패했습니다. 다시 시도해주세요.",
     "MAX_RETRIES",
     false
   );

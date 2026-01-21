@@ -31,11 +31,6 @@ function JobCard({
       ? (job.completedChapters / job.totalChapters) * 100
       : 0;
 
-  const chunkProgress =
-    job.currentChapter && job.currentChapter.totalChunks > 0
-      ? (job.currentChapter.currentChunk / job.currentChapter.totalChunks) * 100
-      : 0;
-
   const isCompleted = job.status === "COMPLETED";
   const isFailed = job.status === "FAILED";
   const isPaused = job.status === "PAUSED";
@@ -64,12 +59,12 @@ function JobCard({
       className={cn(
         "rounded-xl border transition-all overflow-hidden",
         isCompleted
-          ? "bg-green-50 border-green-200"
+          ? "bg-status-success/5 border-status-success/30"
           : isFailed
-            ? "bg-red-50 border-red-200"
+            ? "bg-status-error/5 border-status-error/30"
             : isPaused
-              ? "bg-yellow-50 border-yellow-200"
-              : "bg-blue-50 border-blue-200"
+              ? "bg-status-warning/5 border-status-warning/30"
+              : "bg-status-progress/5 border-status-progress/30 translation-progress-card active"
       )}
     >
       {/* Header */}
@@ -79,24 +74,24 @@ function JobCard({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {isCompleted ? (
-            <CheckCircle className="h-4 w-4 text-green-600 shrink-0" aria-label="완료" />
+            <CheckCircle className="h-4 w-4 text-status-success shrink-0" aria-label="완료" />
           ) : isFailed ? (
-            <XCircle className="h-4 w-4 text-red-600 shrink-0" aria-label="실패" />
+            <XCircle className="h-4 w-4 text-status-error shrink-0" aria-label="실패" />
           ) : isPaused ? (
-            <Pause className="h-4 w-4 text-yellow-600 shrink-0" aria-label="일시정지" />
+            <Pause className="h-4 w-4 text-status-warning shrink-0" aria-label="일시정지" />
           ) : (
-            <Spinner size="md" label="번역 진행 중..." className="text-blue-600 shrink-0" />
+            <Spinner size="md" label="번역 진행 중..." className="text-status-progress shrink-0" />
           )}
           <span
             className={cn(
               "text-xs font-medium truncate",
               isCompleted
-                ? "text-green-800"
+                ? "text-status-success"
                 : isFailed
-                  ? "text-red-800"
+                  ? "text-status-error"
                   : isPaused
-                    ? "text-yellow-800"
-                    : "text-blue-800"
+                    ? "text-status-warning"
+                    : "text-status-progress"
             )}
           >
             {isCompleted
@@ -114,7 +109,7 @@ function JobCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5 hover:bg-yellow-100"
+              className="h-5 w-5 hover:bg-status-warning/20"
               disabled={isPausing}
               onClick={(e) => {
                 e.stopPropagation();
@@ -123,9 +118,9 @@ function JobCard({
               title="일시정지"
             >
               {isPausing ? (
-                <Spinner size="sm" label="일시정지 중" className="text-yellow-600" />
+                <Spinner size="sm" label="일시정지 중" className="text-status-warning" />
               ) : (
-                <Pause className="h-3 w-3 text-yellow-600" />
+                <Pause className="h-3 w-3 text-status-warning" />
               )}
             </Button>
           )}
@@ -160,12 +155,12 @@ function JobCard({
             className={cn(
               "block text-xs truncate hover:underline",
               isCompleted
-                ? "text-green-700"
+                ? "text-status-success"
                 : isFailed
-                  ? "text-red-700"
+                  ? "text-status-error"
                   : isPaused
-                    ? "text-yellow-700"
-                    : "text-blue-700"
+                    ? "text-status-warning"
+                    : "text-status-progress"
             )}
           >
             {job.workTitle}
@@ -178,12 +173,12 @@ function JobCard({
                 className={cn(
                   "font-medium",
                   isCompleted
-                    ? "text-green-700"
+                    ? "text-status-success"
                     : isFailed
-                      ? "text-red-700"
+                      ? "text-status-error"
                       : isPaused
-                        ? "text-yellow-700"
-                        : "text-blue-700"
+                        ? "text-status-warning"
+                        : "text-status-progress"
                 )}
               >
                 전체 진행률
@@ -192,12 +187,12 @@ function JobCard({
                 className={cn(
                   "tabular-nums",
                   isCompleted
-                    ? "text-green-600"
+                    ? "text-status-success/80"
                     : isFailed
-                      ? "text-red-600"
+                      ? "text-status-error/80"
                       : isPaused
-                        ? "text-yellow-600"
-                        : "text-blue-600"
+                        ? "text-status-warning/80"
+                        : "text-status-progress/80"
                 )}
               >
                 {job.completedChapters}/{job.totalChapters}
@@ -208,37 +203,26 @@ function JobCard({
               className={cn(
                 "h-1.5",
                 isCompleted
-                  ? "[&>div]:bg-green-500"
+                  ? "[&>div]:bg-status-success"
                   : isFailed
-                    ? "[&>div]:bg-red-500"
+                    ? "[&>div]:bg-status-error"
                     : isPaused
-                      ? "[&>div]:bg-yellow-500"
-                      : "[&>div]:bg-blue-500"
+                      ? "[&>div]:bg-status-warning"
+                      : "[&>div]:bg-status-progress"
               )}
             />
           </div>
 
-          {/* Current Chapter Progress */}
+          {/* Current Chapter Info */}
           {isActive && job.currentChapter && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-blue-600">
-                  {job.currentChapter.number}화 번역 중
-                </span>
-                <span className="text-blue-500 tabular-nums">
-                  {job.currentChapter.currentChunk}/{job.currentChapter.totalChunks}
-                </span>
-              </div>
-              <Progress
-                value={chunkProgress}
-                className="h-1 [&>div]:bg-blue-400"
-              />
+            <div className="text-[10px] text-status-progress">
+              {job.currentChapter.number}화 번역 중
             </div>
           )}
 
           {/* Error Message */}
           {isFailed && job.error && (
-            <p className="text-[10px] text-red-600 line-clamp-2">
+            <p className="text-[10px] text-status-error line-clamp-2">
               {job.error}
             </p>
           )}
@@ -247,7 +231,7 @@ function JobCard({
           {isCompleted && (
             <Link
               href={`/works/${job.workId}`}
-              className="block text-center text-[10px] text-green-700 font-medium hover:underline pt-1"
+              className="block text-center text-[10px] text-status-success font-medium hover:underline pt-1"
             >
               프로젝트 보기 →
             </Link>
@@ -260,11 +244,11 @@ function JobCard({
               size="sm"
               onClick={handleResume}
               disabled={isResuming}
-              className="w-full h-7 text-[10px] border-yellow-300 text-yellow-700 hover:bg-yellow-50"
+              className="w-full h-7 text-[10px] border-status-warning/30 text-status-warning hover:bg-status-warning/10"
             >
               {isResuming ? (
                 <>
-                  <ButtonSpinner className="text-yellow-600" />
+                  <ButtonSpinner className="text-status-warning" />
                   재개 중...
                 </>
               ) : (

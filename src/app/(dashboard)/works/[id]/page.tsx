@@ -6,7 +6,9 @@ import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
 import { ChapterList } from "@/components/chapters/chapter-list";
 import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { QuickActions } from "@/components/works/quick-actions";
+import { TranslationActionButton } from "@/components/works/translation-action-button";
+import { WorkPageRefresher } from "@/components/works/work-page-refresher";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { canAccessWork } from "@/lib/permissions";
@@ -46,6 +48,20 @@ export default async function WorkDetailPage({
       },
       editor: {
         select: { id: true, name: true, email: true },
+      },
+      settingBible: {
+        select: {
+          id: true,
+          status: true,
+          analyzedChapters: true,
+          _count: {
+            select: {
+              characters: true,
+              terms: true,
+              events: true,
+            },
+          },
+        },
       },
       _count: {
         select: { chapters: true, glossary: true },
@@ -92,6 +108,9 @@ export default async function WorkDetailPage({
         </Link>
       </nav>
 
+      {/* 번역 완료 시 페이지 자동 갱신 */}
+      <WorkPageRefresher workId={id} />
+
       {/* Page Header */}
       <header className="pb-10 border-b border-border mb-10">
         <div className="flex items-start justify-between gap-6">
@@ -116,9 +135,10 @@ export default async function WorkDetailPage({
           </div>
           <div className="flex gap-2 shrink-0">
             <BulkUploadDialog workId={id} />
-            <Button variant="outline" asChild>
-              <Link href={`/works/${id}/translate`}>번역 시작</Link>
-            </Button>
+            <TranslationActionButton
+              workId={id}
+              settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
+            />
           </div>
         </div>
       </header>
@@ -276,29 +296,14 @@ export default async function WorkDetailPage({
             <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
               빠른 작업
             </h3>
-            <div className="space-y-2">
-              <Link
-                href={`/works/${id}/translate`}
-                className="flex items-center justify-between w-full px-4 py-3 bg-foreground text-background rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                <span>AI 번역 시작</span>
-                <span>→</span>
-              </Link>
-              <Link
-                href={`/works/${id}/glossary`}
-                className="flex items-center justify-between w-full px-4 py-3 bg-muted rounded-lg text-sm hover:bg-muted/80 transition-colors"
-              >
-                <span>용어집 관리</span>
-                <span className="text-muted-foreground">{work._count.glossary}개</span>
-              </Link>
-              <Link
-                href={`/works/${id}/chapters`}
-                className="flex items-center justify-between w-full px-4 py-3 bg-muted rounded-lg text-sm hover:bg-muted/80 transition-colors"
-              >
-                <span>회차 일괄 업로드</span>
-                <span className="text-muted-foreground">→</span>
-              </Link>
-            </div>
+            <QuickActions
+              workId={id}
+              settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
+              settingBibleExists={!!work.settingBible}
+              characterCount={work.settingBible?._count.characters ?? 0}
+              termCount={work.settingBible?._count.terms ?? 0}
+              glossaryCount={work._count.glossary}
+            />
           </div>
 
           {/* Editor Assignment */}

@@ -3,41 +3,41 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ChevronUp,
   Clock,
   HelpCircle,
   Languages,
   Loader2,
   Pause,
-  RefreshCw,
   Sparkles,
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { ButtonSpinner, Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  translateChaptersClient,
-  createCancelToken,
-  type CancelToken,
-} from "@/lib/client-translation";
+import { ErrorRecovery } from "@/components/translation/error-recovery";
+import { useTranslation } from "@/contexts/translation-context";
+import { cn } from "@/lib/utils";
 
 interface Chapter {
   id: string;
@@ -47,21 +47,10 @@ interface Chapter {
   wordCount: number;
 }
 
-interface TranslationProgress {
-  currentChapter: number;
-  totalChapters: number;
-  currentChunk: number;
-  totalChunks: number;
-  completedChapters: number;
-  failedChapters: number;
-  status: "idle" | "translating" | "completed" | "failed" | "cancelled";
-  error?: string;
-}
-
-// 상태별 설정
+// 상태별 설정 (디자인 시스템 기반)
 const STATUS_CONFIG: Record<
   string,
-  { variant: "outline" | "pending" | "progress" | "success" | "warning"; label: string; icon?: React.ReactNode }
+  { variant: "outline" | "pending" | "progress" | "success" | "warning" | "destructive"; label: string; icon?: React.ReactNode }
 > = {
   PENDING: { variant: "pending", label: "대기", icon: <Clock className="h-3 w-3" /> },
   TRANSLATING: { variant: "progress", label: "번역중", icon: <Loader2 className="h-3 w-3 animate-spin" /> },
@@ -69,16 +58,20 @@ const STATUS_CONFIG: Record<
   REVIEWING: { variant: "warning", label: "검토중" },
   EDITED: { variant: "success", label: "윤문완료", icon: <CheckCircle2 className="h-3 w-3" /> },
   APPROVED: { variant: "success", label: "승인", icon: <CheckCircle2 className="h-3 w-3" /> },
+  FAILED: { variant: "destructive", label: "실패", icon: <XCircle className="h-3 w-3" /> },
+  PARTIAL: { variant: "warning", label: "부분완료", icon: <AlertTriangle className="h-3 w-3" /> },
 };
 
-// 상태별 색상 (체크박스, 하이라이트용)
+// 상태별 색상 (디자인 시스템 통일)
 const STATUS_COLORS: Record<string, string> = {
-  PENDING: "border-gray-200 bg-gray-50/50",
-  TRANSLATING: "border-blue-200 bg-blue-50/50",
-  TRANSLATED: "border-green-200 bg-green-50/50",
-  REVIEWING: "border-purple-200 bg-purple-50/50",
-  EDITED: "border-emerald-200 bg-emerald-50/50",
-  APPROVED: "border-emerald-200 bg-emerald-50/50",
+  PENDING: "border-status-pending/30 bg-status-pending/5",
+  TRANSLATING: "border-status-progress/30 bg-status-progress/5",
+  TRANSLATED: "border-status-success/30 bg-status-success/5",
+  REVIEWING: "border-status-warning/30 bg-status-warning/5",
+  EDITED: "border-status-success/30 bg-status-success/5",
+  APPROVED: "border-status-success/30 bg-status-success/5",
+  FAILED: "border-status-error/30 bg-status-error/5",
+  PARTIAL: "border-status-warning/30 bg-status-warning/5",
 };
 
 // 메모이제이션된 회차 아이템 컴포넌트
@@ -86,53 +79,90 @@ const ChapterItem = memo(function ChapterItem({
   chapter,
   isSelected,
   onToggle,
+  isTranslating,
+  isCurrentlyTranslating,
 }: {
   chapter: Chapter;
   isSelected: boolean;
   onToggle: (number: number) => void;
+  isTranslating?: boolean;
+  isCurrentlyTranslating?: boolean;
 }) {
   const isPending = chapter.status === "PENDING";
+  const canSelect = isPending && !isTranslating;
   const config = STATUS_CONFIG[chapter.status] || STATUS_CONFIG.PENDING;
   const colors = STATUS_COLORS[chapter.status] || STATUS_COLORS.PENDING;
 
+  // 현재 번역 중인 챕터는 특별한 스타일
+  const currentlyTranslatingColors = "border-status-progress bg-status-progress/10";
+
   return (
     <div
-      className={`group flex items-center gap-4 rounded-xl border p-4 transition-all duration-200 ${colors} ${
-        isPending
+      className={cn(
+        "chapter-item group flex items-center gap-4 rounded-xl border p-4 transition-all duration-200",
+        isCurrentlyTranslating ? currentlyTranslatingColors : colors,
+        canSelect
           ? "cursor-pointer hover:border-foreground/30 hover:shadow-sm"
-          : "cursor-not-allowed opacity-60"
-      } ${isSelected ? "ring-2 ring-primary/20 border-primary/40" : ""}`}
-      onClick={() => isPending && onToggle(chapter.number)}
+          : "cursor-not-allowed opacity-60",
+        isSelected && "ring-2 ring-primary/20 border-primary/40 chapter-selected",
+        isCurrentlyTranslating && "translation-active opacity-100"
+      )}
+      onClick={() => canSelect && onToggle(chapter.number)}
     >
-      <Checkbox
-        checked={isSelected}
-        disabled={!isPending}
-        onCheckedChange={() => isPending && onToggle(chapter.number)}
-        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-      />
+      {!isTranslating && (
+        <Checkbox
+          checked={isSelected}
+          disabled={!canSelect}
+          onCheckedChange={() => canSelect && onToggle(chapter.number)}
+          className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+        />
+      )}
 
-      {/* 회차 번호 */}
-      <div className="flex h-8 w-12 items-center justify-center rounded-lg bg-background border text-sm font-medium tabular-nums">
-        {chapter.number}
+      {/* 회차 번호 - 번역 중이면 번개 아이콘 */}
+      <div className={cn(
+        "flex h-8 w-12 items-center justify-center rounded-lg bg-background border text-sm font-medium tabular-nums",
+        isCurrentlyTranslating && "border-status-progress text-status-progress"
+      )}>
+        {isCurrentlyTranslating ? (
+          <Sparkles className="h-4 w-4 text-status-progress animate-pulse" />
+        ) : (
+          chapter.number
+        )}
       </div>
 
       {/* 제목 */}
       <div className="flex-1 min-w-0">
-        <span className="font-medium truncate block">
+        <span className={cn(
+          "font-medium truncate block",
+          isCurrentlyTranslating && "text-status-progress"
+        )}>
           {chapter.title || `${chapter.number}화`}
         </span>
+        {isCurrentlyTranslating && (
+          <span className="text-xs text-status-progress">번역 중...</span>
+        )}
       </div>
 
       {/* 글자수 */}
-      <span className="text-sm text-muted-foreground tabular-nums hidden sm:block">
-        {chapter.wordCount.toLocaleString()}자
+      <span className={cn(
+        "text-sm tabular-nums hidden sm:block",
+        isCurrentlyTranslating ? "text-status-progress" : "text-muted-foreground"
+      )}>
+        {`${chapter.wordCount.toLocaleString()}자`}
       </span>
 
       {/* 상태 배지 */}
-      <Badge variant={config.variant} className="gap-1 shrink-0">
-        {config.icon}
-        {config.label}
-      </Badge>
+      {isCurrentlyTranslating ? (
+        <Badge variant="progress" className="gap-1 shrink-0">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          번역중
+        </Badge>
+      ) : (
+        <Badge variant={config.variant} className="gap-1 shrink-0">
+          {config.icon}
+          {config.label}
+        </Badge>
+      )}
     </div>
   );
 });
@@ -173,111 +203,216 @@ function StatusLegend() {
   );
 }
 
-// 실시간 번역 진행률 모니터
-function ClientTranslationProgress({
-  progress,
-  onCancel,
+// 서버 측 번역 진행률 모니터
+function ServerTranslationProgress({
+  job,
+  onPause,
   onComplete,
   onRetry,
-  failedChapters,
 }: {
-  progress: TranslationProgress;
-  onCancel: () => void;
+  job: {
+    jobId: string;
+    status: string;
+    totalChapters: number;
+    completedChapters: number;
+    failedChapters: number;
+    currentChapter?: { number: number };
+    error?: string;
+  };
+  onPause: () => void;
   onComplete: () => void;
   onRetry: (chapterNumbers: number[]) => void;
-  failedChapters: number[];
 }) {
-  const totalProgress = progress.totalChapters > 0
-    ? Math.round(((progress.completedChapters + progress.failedChapters) / progress.totalChapters) * 100)
-    : 0;
+  const [showDetails, setShowDetails] = useState(false);
+  const [failedChapterNumbers, setFailedChapterNumbers] = useState<number[]>([]);
 
-  const chunkProgress = progress.totalChunks > 0
-    ? Math.round((progress.currentChunk / progress.totalChunks) * 100)
+  const totalProgress = job.totalChapters > 0
+    ? Math.round((job.completedChapters / job.totalChapters) * 100)
     : 0;
 
   useEffect(() => {
-    if (progress.status === "completed") {
+    if (job.status === "COMPLETED") {
       onComplete();
     }
-  }, [progress.status, onComplete]);
+  }, [job.status, onComplete]);
 
-  if (progress.status === "idle") {
-    return null;
-  }
+  // 상태별 스타일
+  const statusStyles: Record<string, {
+    container: string;
+    icon: React.ReactNode;
+    iconBg: string;
+    title: string;
+    progressBarClass: string;
+  }> = {
+    PENDING: {
+      container: "border-status-pending/30 bg-status-pending/5",
+      icon: <Clock className="h-5 w-5 text-status-pending" />,
+      iconBg: "bg-status-pending/10",
+      title: "번역 대기 중",
+      progressBarClass: "[&>div]:bg-status-pending",
+    },
+    IN_PROGRESS: {
+      container: "border-status-progress/30 bg-status-progress/5 translation-progress-card active",
+      icon: <Loader2 className="h-5 w-5 animate-spin text-status-progress" />,
+      iconBg: "bg-status-progress/10",
+      title: "번역 진행 중",
+      progressBarClass: "[&>div]:bg-status-progress",
+    },
+    COMPLETED: {
+      container: "border-status-success/30 bg-status-success/5",
+      icon: <CheckCircle2 className="h-5 w-5 text-status-success" />,
+      iconBg: "bg-status-success/10",
+      title: "번역 완료!",
+      progressBarClass: "[&>div]:bg-status-success",
+    },
+    PAUSED: {
+      container: "border-status-warning/30 bg-status-warning/5",
+      icon: <Pause className="h-5 w-5 text-status-warning" />,
+      iconBg: "bg-status-warning/10",
+      title: "번역 일시정지됨",
+      progressBarClass: "[&>div]:bg-status-warning",
+    },
+    FAILED: {
+      container: "border-status-error/30 bg-status-error/5",
+      icon: <XCircle className="h-5 w-5 text-status-error" />,
+      iconBg: "bg-status-error/10",
+      title: "번역 실패",
+      progressBarClass: "[&>div]:bg-status-error",
+    },
+  };
+
+  const styles = statusStyles[job.status] || statusStyles.PENDING;
+  const isActive = job.status === "PENDING" || job.status === "IN_PROGRESS";
 
   return (
-    <div className="section-surface p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          {progress.status === "translating" ? (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-          ) : progress.status === "completed" ? (
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
-          ) : progress.status === "cancelled" ? (
-            <XCircle className="h-5 w-5 text-orange-600" />
-          ) : (
-            <XCircle className="h-5 w-5 text-red-600" />
+    <div className={cn("section-surface overflow-hidden", styles.container)}>
+      {/* 헤더 */}
+      <div className="p-5">
+        <div className="flex items-start gap-4">
+          <div className={cn("flex h-10 w-10 items-center justify-center rounded-full shrink-0", styles.iconBg)}>
+            {styles.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="font-semibold">{styles.title}</h3>
+              {isActive && (
+                <Button variant="outline" size="sm" onClick={onPause} className="gap-2 shrink-0">
+                  <Pause className="h-4 w-4" />
+                  일시정지
+                </Button>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {job.status === "PENDING" && "번역이 곧 시작됩니다..."}
+              {job.status === "IN_PROGRESS" && (
+                job.currentChapter
+                  ? `${job.currentChapter.number}화 번역 중...`
+                  : "AI가 번역하고 있습니다..."
+              )}
+              {job.status === "COMPLETED" && "모든 회차의 번역이 완료되었습니다."}
+              {job.status === "PAUSED" && "번역이 일시정지되었습니다. 재개하려면 다시 번역을 시작하세요."}
+              {job.status === "FAILED" && (job.error || "번역 중 오류가 발생했습니다.")}
+            </p>
+          </div>
+          {job.totalChapters > 0 && (
+            <div className="text-right shrink-0">
+              <div className="text-2xl font-bold tabular-nums">{totalProgress}%</div>
+              <div className="text-xs text-muted-foreground">
+                {job.completedChapters}/{job.totalChapters}화
+              </div>
+            </div>
           )}
-          <span className="font-medium">
-            {progress.status === "translating" && "번역 진행 중..."}
-            {progress.status === "completed" && "번역 완료!"}
-            {progress.status === "cancelled" && "번역 취소됨"}
-            {progress.status === "failed" && "번역 실패"}
-          </span>
         </div>
 
-        {progress.status === "translating" && (
-          <Button variant="outline" size="sm" onClick={onCancel} className="gap-2">
-            <Pause className="h-4 w-4" />
-            중지
-          </Button>
+        {/* 전체 진행률 바 */}
+        <div className="mt-4 relative">
+          <Progress value={totalProgress} className={cn("h-2", styles.progressBarClass)} />
+          {isActive && (
+            <div className="absolute inset-0 overflow-hidden rounded-full">
+              <div className="progress-shimmer h-full w-full" />
+            </div>
+          )}
+        </div>
+
+        {/* 현재 챕터 표시 (번역 중일 때만) */}
+        {job.status === "IN_PROGRESS" && job.currentChapter && (
+          <div className="mt-4 p-3 rounded-lg bg-background/50 border">
+            <div className="flex items-center gap-2 text-sm">
+              <Spinner size="sm" className="text-status-progress" />
+              <span className="font-medium">{job.currentChapter.number}화 번역 중</span>
+            </div>
+          </div>
         )}
       </div>
 
-      {/* 전체 진행률 */}
-      <div className="space-y-2 mb-4">
-        <div className="flex justify-between text-sm">
-          <span>전체 진행률</span>
-          <span className="tabular-nums">
-            {progress.completedChapters}/{progress.totalChapters}화 ({totalProgress}%)
-          </span>
-        </div>
-        <Progress value={totalProgress} className="h-2" />
-      </div>
-
-      {/* 현재 챕터 진행률 */}
-      {progress.status === "translating" && progress.totalChunks > 0 && (
-        <div className="space-y-2 mb-4">
-          <div className="flex justify-between text-sm text-muted-foreground">
-            <span>{progress.currentChapter}화 번역 중</span>
-            <span className="tabular-nums">
-              {progress.currentChunk}/{progress.totalChunks} 청크 ({chunkProgress}%)
-            </span>
-          </div>
-          <Progress value={chunkProgress} className="h-1.5" />
+      {/* 실패한 회차가 있을 경우 에러 복구 UI */}
+      {job.failedChapters > 0 && (job.status === "COMPLETED" || job.status === "FAILED") && (
+        <div className="border-t border-border/50 p-4">
+          <ErrorRecovery
+            failedChapters={failedChapterNumbers}
+            onRetry={onRetry}
+            className="border-none bg-transparent p-0"
+          />
         </div>
       )}
 
-      {/* 실패 통계 */}
-      {progress.failedChapters > 0 && (
-        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg mt-4">
-          <div className="flex items-center gap-2 text-red-700">
-            <AlertTriangle className="h-4 w-4" />
-            <span className="text-sm">
-              {progress.failedChapters}개 회차 실패
-              {failedChapters.length > 0 && ` (${failedChapters.slice(0, 5).join(", ")}${failedChapters.length > 5 ? "..." : ""}화)`}
-            </span>
-          </div>
-          {(progress.status === "completed" || progress.status === "failed") && failedChapters.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRetry(failedChapters)}
-              className="gap-2 text-red-700 border-red-300 hover:bg-red-100"
-            >
-              <RefreshCw className="h-4 w-4" />
-              재시도
-            </Button>
+      {/* 회차별 상태 (접을 수 있음) */}
+      {job.totalChapters > 0 && (
+        <div className="border-t border-border/50">
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="w-full px-5 py-3 flex items-center justify-between text-sm hover:bg-background/30 transition-colors"
+          >
+            <span className="font-medium">회차별 상태</span>
+            <div className="flex items-center gap-2">
+              {job.failedChapters > 0 && isActive && (
+                <Badge variant="destructive" className="text-xs">
+                  {job.failedChapters}개 오류
+                </Badge>
+              )}
+              {showDetails ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
+          </button>
+
+          {showDetails && (
+            <div className="px-5 pb-5">
+              <div className="grid grid-cols-10 gap-1">
+                {Array.from({ length: job.totalChapters }, (_, i) => {
+                  const chapterNum = i + 1;
+                  const isCompleted = i < job.completedChapters;
+                  const isFailed = failedChapterNumbers.includes(chapterNum);
+                  const isCurrent = job.currentChapter?.number === chapterNum && job.status === "IN_PROGRESS";
+
+                  return (
+                    <div
+                      key={chapterNum}
+                      className={cn(
+                        "h-6 rounded flex items-center justify-center text-[10px] font-medium transition-all",
+                        isCompleted && "bg-status-success/20 text-status-success",
+                        isFailed && "bg-status-error/20 text-status-error",
+                        isCurrent && "bg-status-progress/20 text-status-progress translation-active",
+                        !isCompleted && !isFailed && !isCurrent && "bg-muted text-muted-foreground"
+                      )}
+                      title={
+                        isCompleted
+                          ? `${chapterNum}화 완료`
+                          : isFailed
+                          ? `${chapterNum}화 실패`
+                          : isCurrent
+                          ? `${chapterNum}화 번역 중`
+                          : `${chapterNum}화 대기`
+                      }
+                    >
+                      {chapterNum}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -291,32 +426,27 @@ export default function TranslatePage() {
   const params = useParams();
   const workId = params.id as string;
 
+  // Global translation context for tracking server-side translation
+  const { getJobByWorkId, startTracking, pauseJob, refreshJobs } = useTranslation();
+
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [workTitle, setWorkTitle] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [bibleStatus, setBibleStatus] = useState<string | null>(null);
+  const [isStartingTranslation, setIsStartingTranslation] = useState(false);
 
-  // 클라이언트 번역 상태
-  const [translationProgress, setTranslationProgress] = useState<TranslationProgress>({
-    currentChapter: 0,
-    totalChapters: 0,
-    currentChunk: 0,
-    totalChunks: 0,
-    completedChapters: 0,
-    failedChapters: 0,
-    status: "idle",
-  });
-  const [failedChapterNumbers, setFailedChapterNumbers] = useState<number[]>([]);
-  const cancelTokenRef = useRef<CancelToken | null>(null);
-
-  const isTranslating = translationProgress.status === "translating";
+  // 서버 측 번역 작업 상태 (TranslationContext에서 가져옴)
+  const job = getJobByWorkId(workId);
+  const isTranslating = job && (job.status === "PENDING" || job.status === "IN_PROGRESS");
 
   const fetchChapters = useCallback(async () => {
     try {
-      const [chaptersRes, workRes] = await Promise.all([
+      const [chaptersRes, workRes, bibleRes] = await Promise.all([
         fetch(`/api/works/${workId}/chapters?all=true&limit=2000`),
         fetch(`/api/works/${workId}`),
+        fetch(`/api/works/${workId}/setting-bible/status`),
       ]);
 
       if (chaptersRes.ok) {
@@ -327,6 +457,11 @@ export default function TranslatePage() {
       if (workRes.ok) {
         const workData = await workRes.json();
         setWorkTitle(workData.titleKo || "");
+      }
+
+      if (bibleRes.ok) {
+        const bibleData = await bibleRes.json();
+        setBibleStatus(bibleData.bibleStatus || null);
       }
     } catch (error) {
       console.error("Failed to fetch chapters:", error);
@@ -406,7 +541,7 @@ export default function TranslatePage() {
     });
   }, [pendingChapters]);
 
-  // 클라이언트 측 번역 시작
+  // 서버 측 번역 시작 (API 호출)
   const handleTranslate = async () => {
     if (selectedChapters.size === 0) {
       toast.error("번역할 회차를 선택해주세요.");
@@ -415,67 +550,49 @@ export default function TranslatePage() {
 
     const sortedChapterNumbers = Array.from(selectedChapters).sort((a, b) => a - b);
 
-    // 챕터 ID와 번호만 전달 (원문은 번역할 때 가져옴)
-    const chaptersToTranslate: { id: string; number: number }[] = [];
-
-    for (const chapterNum of sortedChapterNumbers) {
-      const chapter = chapters.find((c) => c.number === chapterNum);
-      if (!chapter) continue;
-      chaptersToTranslate.push({
-        id: chapter.id,
-        number: chapter.number,
-      });
-    }
-
     try {
-      toast.info(`${chaptersToTranslate.length}개 회차 번역을 시작합니다.`);
+      setIsStartingTranslation(true);
 
-      // 취소 토큰 생성
-      cancelTokenRef.current = createCancelToken();
-
-      // 진행 상태 초기화
-      setTranslationProgress({
-        currentChapter: 0,
-        totalChapters: chaptersToTranslate.length,
-        currentChunk: 0,
-        totalChunks: 0,
-        completedChapters: 0,
-        failedChapters: 0,
-        status: "translating",
+      const response = await fetch("/api/translation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workId,
+          chapterNumbers: sortedChapterNumbers,
+        }),
       });
-      setFailedChapterNumbers([]);
 
-      // 클라이언트 측 번역 실행
-      const result = await translateChaptersClient(
-        workId,
-        chaptersToTranslate,
-        (progress) => setTranslationProgress(progress),
-        cancelTokenRef.current
-      );
-
-      setFailedChapterNumbers(result.failedChapters);
-
-      if (result.failedChapters.length === 0) {
-        toast.success("모든 번역이 완료되었습니다!");
-      } else if (result.completedChapters > 0) {
-        toast.warning(`${result.completedChapters}개 완료, ${result.failedChapters.length}개 실패`);
-      } else {
-        toast.error("번역에 실패했습니다.");
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "번역 시작에 실패했습니다.");
       }
+
+      const { jobId, totalChapters } = await response.json();
+
+      // 글로벌 컨텍스트에서 추적 시작 (SSE 연결)
+      startTracking(jobId, workId, workTitle, totalChapters);
+
+      toast.success(`${totalChapters}개 회차 번역을 시작했습니다.`);
+      setSelectedChapters(new Set());
     } catch (error) {
       console.error("Translation error:", error);
       toast.error(error instanceof Error ? error.message : "번역 시작에 실패했습니다.");
-      setTranslationProgress((prev) => ({ ...prev, status: "failed" }));
+    } finally {
+      setIsStartingTranslation(false);
     }
   };
 
-  // 번역 취소
-  const handleCancel = useCallback(() => {
-    if (cancelTokenRef.current) {
-      cancelTokenRef.current.cancel();
-      toast.info("번역을 중지하고 있습니다...");
+  // 번역 일시정지
+  const handlePause = useCallback(async () => {
+    if (job) {
+      const success = await pauseJob(job.jobId);
+      if (success) {
+        toast.info("번역을 일시정지하고 있습니다...");
+      } else {
+        toast.error("일시정지에 실패했습니다.");
+      }
     }
-  }, []);
+  }, [job, pauseJob]);
 
   // 번역 완료 처리
   const handleTranslationComplete = useCallback(() => {
@@ -560,21 +677,20 @@ export default function TranslatePage() {
         </div>
       )}
 
-      {/* 클라이언트 번역 진행 모니터 */}
-      {translationProgress.status !== "idle" && (
-        <div className="mb-6">
-          <ClientTranslationProgress
-            progress={translationProgress}
-            onCancel={handleCancel}
+      {/* 서버 측 번역 진행 모니터 - Sticky */}
+      {job && (
+        <div className="sticky top-0 z-40 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border mb-6">
+          <ServerTranslationProgress
+            job={job}
+            onPause={handlePause}
             onComplete={handleTranslationComplete}
             onRetry={handleRetryFailed}
-            failedChapters={failedChapterNumbers}
           />
         </div>
       )}
 
       {/* 용어집 안내 */}
-      {!isTranslating && !isLoading && pendingChapters.length > 0 && translationProgress.status === "idle" && (
+      {!isTranslating && !isLoading && pendingChapters.length > 0 && !job && (
         <div className="section-surface border-blue-200 bg-blue-50/50 p-4 mb-6">
           <p className="text-sm text-blue-800">
             <strong className="font-medium">팁:</strong> 번역 전에{" "}
@@ -589,12 +705,36 @@ export default function TranslatePage() {
         </div>
       )}
 
+      {/* 설정집 미확정 경고 */}
+      {!isLoading && bibleStatus !== "CONFIRMED" && (
+        <div className="section-surface border-amber-200 bg-amber-50/50 p-6 mb-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 mx-auto mb-4">
+            <BookOpen className="h-6 w-6 text-amber-600" />
+          </div>
+          <h3 className="text-lg font-semibold mb-2">설정집 확정이 필요합니다</h3>
+          <p className="text-muted-foreground mb-4">
+            번역을 시작하려면 먼저 설정집을 생성하고 확정해야 합니다.
+            <br />
+            설정집에는 인물 정보, 용어집, 번역 가이드가 포함됩니다.
+          </p>
+          <Button asChild>
+            <Link href={`/works/${workId}/setting-bible`}>
+              <BookOpen className="mr-2 h-4 w-4" />
+              설정집 {bibleStatus ? "확정하기" : "생성하기"}
+            </Link>
+          </Button>
+        </div>
+      )}
+
       {/* 로딩 상태 */}
       {isLoading ? (
         <div className="section-surface p-12 text-center">
           <Spinner size="lg" className="mx-auto text-primary" />
           <p className="mt-4 text-muted-foreground">회차 목록을 불러오는 중...</p>
         </div>
+      ) : bibleStatus !== "CONFIRMED" ? (
+        // 설정집 미확정이면 회차 선택 UI를 숨김
+        null
       ) : chapters.length === 0 ? (
         /* 회차 없음 */
         <div className="section-surface p-16 text-center">
@@ -609,7 +749,7 @@ export default function TranslatePage() {
             <Link href={`/works/${workId}/chapters`}>회차 업로드하기</Link>
           </Button>
         </div>
-      ) : pendingChapters.length === 0 && !isTranslating && translationProgress.status === "idle" ? (
+      ) : pendingChapters.length === 0 && !isTranslating && !job ? (
         /* 번역 대기 없음 */
         <div className="section-surface p-16 text-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mx-auto mb-4">
@@ -628,51 +768,62 @@ export default function TranslatePage() {
             </Button>
           </div>
         </div>
-      ) : !isTranslating && translationProgress.status !== "translating" && (
-        /* 회차 선택 */
+      ) : (
+        /* 회차 선택 - 번역 중에도 표시 (읽기 전용) */
         <div className="section-surface">
           {/* 헤더 */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 border-b border-border">
             <div>
-              <h2 className="text-lg font-semibold">회차 선택</h2>
+              <h2 className="text-lg font-semibold">
+                {isTranslating ? "회차 목록" : "회차 선택"}
+              </h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                번역할 회차를 선택하세요 (대기 상태만 선택 가능)
+                {isTranslating
+                  ? "번역이 진행 중입니다. 실시간 상태를 확인하세요."
+                  : "번역할 회차를 선택하세요 (대기 상태만 선택 가능)"}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={selectCurrentPage}
-                disabled={currentPagePendingChapters.length === 0}
-              >
-                {currentPagePendingChapters.every((c) => selectedChapters.has(c.number)) && currentPagePendingChapters.length > 0
-                  ? "페이지 해제"
-                  : `페이지 선택`}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={selectAll}
-                disabled={pendingChapters.length === 0}
-              >
-                {selectedChapters.size === pendingChapters.length && pendingChapters.length > 0
-                  ? "전체 해제"
-                  : `전체 선택 (${pendingChapters.length})`}
-              </Button>
-            </div>
+            {!isTranslating && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={selectCurrentPage}
+                  disabled={currentPagePendingChapters.length === 0}
+                >
+                  {currentPagePendingChapters.every((c) => selectedChapters.has(c.number)) && currentPagePendingChapters.length > 0
+                    ? "페이지 해제"
+                    : `페이지 선택`}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={selectAll}
+                  disabled={pendingChapters.length === 0}
+                >
+                  {selectedChapters.size === pendingChapters.length && pendingChapters.length > 0
+                    ? "전체 해제"
+                    : `전체 선택 (${pendingChapters.length})`}
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* 회차 목록 */}
           <div className="p-3 space-y-2">
-            {paginatedChapters.map((chapter) => (
-              <ChapterItem
-                key={chapter.id}
-                chapter={chapter}
-                isSelected={selectedChapters.has(chapter.number)}
-                onToggle={toggleChapter}
-              />
-            ))}
+            {paginatedChapters.map((chapter) => {
+              const isCurrentlyTranslating = isTranslating && job?.currentChapter?.number === chapter.number;
+              return (
+                <ChapterItem
+                  key={chapter.id}
+                  chapter={chapter}
+                  isSelected={selectedChapters.has(chapter.number)}
+                  onToggle={toggleChapter}
+                  isTranslating={!!isTranslating}
+                  isCurrentlyTranslating={isCurrentlyTranslating}
+                />
+              );
+            })}
           </div>
 
           {/* 페이지네이션 */}
@@ -764,23 +915,34 @@ export default function TranslatePage() {
             </div>
           )}
 
-          {/* 액션 */}
-          <div className="flex flex-col gap-4 p-5 border-t border-border bg-muted/30">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground tabular-nums">{selectedChapters.size}</span>개 회차 선택됨
-              </p>
-              <Button
-                size="lg"
-                onClick={handleTranslate}
-                disabled={selectedChapters.size === 0}
-                className="w-full sm:w-auto gap-2"
-              >
-                <Languages className="h-4 w-4" />
-                {`${selectedChapters.size}개 회차 번역 시작`}
-              </Button>
+          {/* 액션 - 번역 중이 아닐 때만 표시 */}
+          {!isTranslating && (
+            <div className="flex flex-col gap-4 p-5 border-t border-border bg-muted/30">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground tabular-nums">{selectedChapters.size}</span>개 회차 선택됨
+                </p>
+                <Button
+                  size="lg"
+                  onClick={handleTranslate}
+                  disabled={selectedChapters.size === 0 || isStartingTranslation}
+                  className="w-full sm:w-auto gap-2"
+                >
+                  {isStartingTranslation ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      번역 시작 중...
+                    </>
+                  ) : (
+                    <>
+                      <Languages className="h-4 w-4" />
+                      {`${selectedChapters.size}개 회차 번역 시작`}
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

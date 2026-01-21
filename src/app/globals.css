@@ -307,3 +307,109 @@
   background: var(--foreground);
   border-radius: 2px;
 }
+
+/*
+ * Translation Progress Animations
+ * 번역 진행 상태를 시각적으로 표현하는 애니메이션
+ */
+
+/* 번역 진행 중 펄스 효과 */
+@keyframes translation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* 프로그레스 바 쉬머 효과 */
+@keyframes progress-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* 챕터 아이템 페이드인 */
+@keyframes chapter-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 상태 변경 색상 전환 */
+@keyframes status-transition {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+
+/* 번역 활성화 컨테이너 */
+.translation-active {
+  animation: translation-pulse 2s ease-in-out infinite;
+}
+
+/* 프로그레스 바 쉬머 */
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--status-progress),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 2s ease-in-out infinite;
+  opacity: 0.15;
+}
+
+/* 챕터 아이템 스태거드 애니메이션 */
+.chapter-item {
+  animation: chapter-fade-in 0.3s ease-out forwards;
+  opacity: 0;
+}
+
+.chapter-item:nth-child(1) { animation-delay: 0.02s; }
+.chapter-item:nth-child(2) { animation-delay: 0.04s; }
+.chapter-item:nth-child(3) { animation-delay: 0.06s; }
+.chapter-item:nth-child(4) { animation-delay: 0.08s; }
+.chapter-item:nth-child(5) { animation-delay: 0.1s; }
+.chapter-item:nth-child(6) { animation-delay: 0.12s; }
+.chapter-item:nth-child(7) { animation-delay: 0.14s; }
+.chapter-item:nth-child(8) { animation-delay: 0.16s; }
+.chapter-item:nth-child(9) { animation-delay: 0.18s; }
+.chapter-item:nth-child(10) { animation-delay: 0.2s; }
+.chapter-item:nth-child(n+11) { animation-delay: 0.22s; }
+
+/* 상태 변경 시 부드러운 전환 */
+.status-change {
+  animation: status-transition 0.3s ease-out;
+}
+
+/* 선택 시 스케일 효과 */
+.chapter-selected {
+  transition: all 0.15s ease-out;
+}
+
+.chapter-selected:hover {
+  transform: translateY(-1px);
+}
+
+/* 번역 프로그레스 카드 */
+.translation-progress-card {
+  transition: all 0.2s ease-out;
+}
+
+.translation-progress-card.active {
+  border-color: var(--status-progress);
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+}
+
+/* 다크모드 쉬머 색상 */
+.dark .progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--status-progress),
+    transparent
+  );
+}

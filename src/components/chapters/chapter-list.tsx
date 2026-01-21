@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -13,7 +14,10 @@ import { ChapterStatus } from "@prisma/client";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { useTranslation } from "@/contexts/translation-context";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
+import { cn } from "@/lib/utils";
 
 interface Chapter {
   id: string;
@@ -31,6 +35,12 @@ interface ChapterListProps {
 
 export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterListProps) {
   const [currentPage, setCurrentPage] = useState(1);
+  const { getJobByWorkId } = useTranslation();
+
+  // 현재 작품의 번역 작업 확인
+  const job = getJobByWorkId(workId);
+  const isTranslating = job && (job.status === "PENDING" || job.status === "IN_PROGRESS");
+  const currentTranslatingChapter = isTranslating ? job.currentChapter?.number : null;
 
   const totalPages = Math.ceil(chapters.length / itemsPerPage);
 
@@ -50,20 +60,35 @@ export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterList
         {paginatedChapters.map((chapter) => {
           const chapterStatus = getChapterStatusConfig(chapter.status as ChapterStatus);
           const hasTranslation = ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status as string);
+          const isCurrentlyTranslating = currentTranslatingChapter === chapter.number;
 
           return (
             <Link
               key={chapter.id}
               href={`/works/${workId}/chapters/${chapter.number}`}
-              className="list-item group"
+              className={cn(
+                "list-item group",
+                isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5 translation-active"
+              )}
             >
               <div className="flex items-center gap-4 min-w-0 flex-1">
-                <span className="text-xs text-muted-foreground tabular-nums w-8">
-                  {String(chapter.number).padStart(3, "0")}
+                {/* 챕터 번호 - 번역 중이면 아이콘 표시 */}
+                <span className={cn(
+                  "text-xs tabular-nums w-8 flex items-center justify-center",
+                  isCurrentlyTranslating ? "text-status-progress font-medium" : "text-muted-foreground"
+                )}>
+                  {isCurrentlyTranslating ? (
+                    <Zap className="h-4 w-4 text-status-progress" />
+                  ) : (
+                    String(chapter.number).padStart(3, "0")
+                  )}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium group-hover:text-muted-foreground transition-colors">
+                    <span className={cn(
+                      "font-medium group-hover:text-muted-foreground transition-colors",
+                      isCurrentlyTranslating && "text-status-progress"
+                    )}>
                       {chapter.number}화
                     </span>
                     {chapter.title && (
@@ -72,16 +97,31 @@ export function ChapterList({ workId, chapters, itemsPerPage = 30 }: ChapterList
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {chapter.wordCount.toLocaleString()}자
-                    {hasTranslation && " · 번역 완료"}
-                  </p>
+                  {/* 번역 중인 챕터는 상태 표시 */}
+                  {isCurrentlyTranslating ? (
+                    <div className="flex items-center gap-2 text-xs text-status-progress mt-0.5">
+                      <Spinner size="sm" className="text-status-progress" />
+                      <span>번역 중</span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {chapter.wordCount.toLocaleString()}자
+                      {hasTranslation && " · 번역 완료"}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <Badge variant={chapterStatus.variant} className="text-xs">
-                  {chapterStatus.label}
-                </Badge>
+                {isCurrentlyTranslating ? (
+                  <Badge variant="progress" className="text-xs gap-1">
+                    <Spinner size="sm" className="text-white" />
+                    번역중
+                  </Badge>
+                ) : (
+                  <Badge variant={chapterStatus.variant} className="text-xs">
+                    {chapterStatus.label}
+                  </Badge>
+                )}
                 <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
                   보기 →
                 </span>
