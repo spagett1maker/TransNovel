@@ -210,14 +210,20 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // jobs Map을 배열로 변환
-  const jobsArray = useMemo(
-    () =>
-      Array.from(jobs.values()).sort(
-        (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
-      ),
-    [jobs]
-  );
+  // jobs Map을 배열로 변환 (안전하게)
+  const jobsArray = useMemo(() => {
+    try {
+      const arr = Array.from(jobs.values());
+      return arr.sort((a, b) => {
+        const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime();
+        const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime();
+        return aTime - bTime;
+      });
+    } catch (e) {
+      console.error("[BibleGeneration] jobsArray 정렬 오류:", e);
+      return Array.from(jobs.values());
+    }
+  }, [jobs]);
 
   // 진행 중인 작업 수
   const activeJobsCount = useMemo(

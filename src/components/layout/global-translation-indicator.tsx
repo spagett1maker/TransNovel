@@ -422,9 +422,19 @@ export function GlobalTranslationIndicator() {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
 
-  // 통합 작업 목록 생성
+  // 통합 작업 목록 생성 (안전하게)
   const unifiedJobs = useMemo((): UnifiedJob[] => {
     const jobs: UnifiedJob[] = [];
+
+    // 안전 체크
+    if (!translationJobs || !Array.isArray(translationJobs)) {
+      console.warn("[GlobalIndicator] translationJobs가 배열이 아님:", translationJobs);
+      return jobs;
+    }
+    if (!bibleJobs || !Array.isArray(bibleJobs)) {
+      console.warn("[GlobalIndicator] bibleJobs가 배열이 아님:", bibleJobs);
+      return jobs;
+    }
 
     // 번역 작업 추가
     translationJobs.forEach((job) => {
@@ -470,36 +480,47 @@ export function GlobalTranslationIndicator() {
       });
     });
 
-    // 생성 시간순 정렬
-    return jobs.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    // 생성 시간순 정렬 (안전하게)
+    try {
+      return jobs.sort((a, b) => {
+        const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime();
+        const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime();
+        return aTime - bTime;
+      });
+    } catch (e) {
+      console.error("[GlobalIndicator] 정렬 오류:", e);
+      return jobs;
+    }
   }, [translationJobs, bibleJobs]);
 
-  // 활성 작업 수
+  // 활성 작업 수 (안전하게)
   const activeJobsCount = useMemo(
     () =>
-      unifiedJobs.filter(
+      (unifiedJobs || []).filter(
         (job) => job.status === "pending" || job.status === "in_progress"
       ).length,
     [unifiedJobs]
   );
 
-  // 번역 활성 작업 수
+  // 번역 활성 작업 수 (안전하게)
   const activeTranslationCount = useMemo(
     () =>
-      translationJobs.filter(
+      (translationJobs || []).filter(
         (job) => job.status === "PENDING" || job.status === "IN_PROGRESS"
       ).length,
     [translationJobs]
   );
 
-  // 설정집 활성 작업 수
+  // 설정집 활성 작업 수 (안전하게)
   const activeBibleCount = useMemo(
-    () => bibleJobs.filter((job) => job.status === "generating").length,
+    () => (bibleJobs || []).filter((job) => job.status === "generating").length,
     [bibleJobs]
   );
 
   // 완료/실패된 번역 작업 자동 제거 (5초 후)
   useEffect(() => {
+    if (!translationJobs || !Array.isArray(translationJobs)) return;
+
     const completedOrFailedJobs = translationJobs.filter(
       (job) => job.status === "COMPLETED" || job.status === "FAILED"
     );
@@ -519,6 +540,8 @@ export function GlobalTranslationIndicator() {
 
   // 완료/실패된 설정집 작업 자동 제거 (5초 후)
   useEffect(() => {
+    if (!bibleJobs || !Array.isArray(bibleJobs)) return;
+
     const completedOrFailedJobs = bibleJobs.filter(
       (job) => job.status === "completed" || job.status === "failed"
     );
@@ -578,7 +601,7 @@ export function GlobalTranslationIndicator() {
   );
 
   // 표시할 작업이 없으면 렌더링하지 않음
-  if (unifiedJobs.length === 0) {
+  if (!unifiedJobs || unifiedJobs.length === 0) {
     return null;
   }
 
