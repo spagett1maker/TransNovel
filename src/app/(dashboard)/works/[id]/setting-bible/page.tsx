@@ -15,6 +15,7 @@ import {
   Users,
   FileText,
   Clock,
+  StopCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -46,6 +47,8 @@ import { TermEditDialog } from "@/components/setting-bible/term-edit-dialog";
 import { TimelineView } from "@/components/setting-bible/timeline-view";
 import { GenerationProgress } from "@/components/setting-bible/generation-progress";
 import { ConfirmDialog } from "@/components/setting-bible/confirm-dialog";
+import { useBibleGeneration } from "@/contexts/bible-generation-context";
+import { Progress } from "@/components/ui/progress";
 
 import type { BibleStatus, CharacterRole, TermCategory, EventType } from "@prisma/client";
 
@@ -133,6 +136,7 @@ export default function SettingBiblePage() {
 
   const [bible, setBible] = useState<SettingBible | null>(null);
   const [totalChapters, setTotalChapters] = useState(0);
+  const [workTitle, setWorkTitle] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
   // UI 상태
@@ -148,12 +152,18 @@ export default function SettingBiblePage() {
   const [showGenerationProgress, setShowGenerationProgress] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
+  // 전역 설정집 생성 상태
+  const { getJobByWorkId, cancelGeneration } = useBibleGeneration();
+  const activeGenerationJob = getJobByWorkId(workId);
+  const isGenerating = activeGenerationJob?.status === "generating";
+
   // 데이터 로드
   const fetchBible = useCallback(async () => {
     try {
-      const [bibleRes, statusRes] = await Promise.all([
+      const [bibleRes, statusRes, workRes] = await Promise.all([
         fetch(`/api/works/${workId}/setting-bible`),
         fetch(`/api/works/${workId}/setting-bible/status`),
+        fetch(`/api/works/${workId}`),
       ]);
 
       if (bibleRes.ok) {
@@ -164,6 +174,11 @@ export default function SettingBiblePage() {
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         setTotalChapters(statusData.totalChapters || 0);
+      }
+
+      if (workRes.ok) {
+        const workData = await workRes.json();
+        setWorkTitle(workData.titleKo || workData.titleOriginal || "");
       }
     } catch (error) {
       console.error("Failed to fetch bible:", error);
@@ -277,15 +292,50 @@ export default function SettingBiblePage() {
           </p>
 
           {totalChapters > 0 ? (
-            <>
-              <p className="text-sm text-muted-foreground mb-4">
-                총 {totalChapters}개 회차가 분석됩니다
-              </p>
-              <Button size="lg" onClick={() => setShowGenerationProgress(true)}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                설정집 생성 시작
-              </Button>
-            </>
+            isGenerating && activeGenerationJob ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Spinner size="sm" className="text-violet-600" />
+                    <span className="font-medium text-violet-700 dark:text-violet-300">
+                      설정집 생성 중...
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-violet-600 dark:text-violet-400">
+                      <span>
+                        {activeGenerationJob.currentBatch}/{activeGenerationJob.totalBatches} 배치 분석 중
+                      </span>
+                      <span>{activeGenerationJob.progress}%</span>
+                    </div>
+                    <Progress
+                      value={activeGenerationJob.progress}
+                      className="h-2 [&>div]:bg-violet-500"
+                    />
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    cancelGeneration(workId);
+                    toast.info("설정집 생성이 취소되었습니다.");
+                  }}
+                >
+                  <StopCircle className="mr-2 h-4 w-4" />
+                  생성 취소
+                </Button>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground mb-4">
+                  총 {totalChapters}개 회차가 분석됩니다
+                </p>
+                <Button size="lg" onClick={() => setShowGenerationProgress(true)}>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  설정집 생성 시작
+                </Button>
+              </>
+            )
           ) : (
             <div className="space-y-4">
               <p className="text-sm text-amber-600">
@@ -300,6 +350,7 @@ export default function SettingBiblePage() {
 
         <GenerationProgress
           workId={workId}
+          workTitle={workTitle}
           totalChapters={totalChapters}
           open={showGenerationProgress}
           onOpenChange={setShowGenerationProgress}
@@ -338,6 +389,24 @@ export default function SettingBiblePage() {
                 </span>
               )}
             </p>
+            {/* 생성 중 상태 표시 */}
+            {isGenerating && activeGenerationJob && (
+              <div className="mt-3 flex items-center gap-3">
+                <Spinner size="sm" className="text-violet-600" />
+                <div className="flex-1 max-w-xs">
+                  <div className="flex justify-between text-xs text-violet-600 dark:text-violet-400 mb-1">
+                    <span>
+                      {activeGenerationJob.currentBatch}/{activeGenerationJob.totalBatches} 배치 분석 중
+                    </span>
+                    <span>{activeGenerationJob.progress}%</span>
+                  </div>
+                  <Progress
+                    value={activeGenerationJob.progress}
+                    className="h-1.5 [&>div]:bg-violet-500"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -368,19 +437,32 @@ export default function SettingBiblePage() {
             </DropdownMenu>
 
             {bible.status !== "CONFIRMED" && (
-              <>
+              isGenerating ? (
                 <Button
                   variant="outline"
-                  onClick={() => setShowGenerationProgress(true)}
+                  onClick={() => {
+                    cancelGeneration(workId);
+                    toast.info("설정집 생성이 취소되었습니다.");
+                  }}
                 >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  재분석
+                  <StopCircle className="mr-2 h-4 w-4" />
+                  생성 취소
                 </Button>
-                <Button onClick={() => setShowConfirmDialog(true)}>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  설정집 확정
-                </Button>
-              </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowGenerationProgress(true)}
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    재분석
+                  </Button>
+                  <Button onClick={() => setShowConfirmDialog(true)}>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    설정집 확정
+                  </Button>
+                </>
+              )
             )}
             {bible.status === "CONFIRMED" && (
               <Button asChild>
@@ -574,6 +656,7 @@ export default function SettingBiblePage() {
 
       <GenerationProgress
         workId={workId}
+        workTitle={workTitle}
         totalChapters={totalChapters}
         open={showGenerationProgress}
         onOpenChange={setShowGenerationProgress}

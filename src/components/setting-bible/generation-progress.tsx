@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,9 +14,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { useBibleGeneration } from "@/contexts/bible-generation-context";
 
 interface GenerationProgressProps {
   workId: string;
+  workTitle: string;
   totalChapters: number;
   batchSize?: number;
   open: boolean;
@@ -38,10 +40,10 @@ interface GenerationState {
   };
 }
 
-// 배치 재시도 설정
+// 배치 재시도 설정 (Vercel Pro 최적화)
 const BATCH_MAX_RETRIES = 3;
-const BATCH_RETRY_DELAY_MS = 30000; // 30초
-const BATCH_INTERVAL_DELAY_MS = 5000; // 배치 간 5초 대기
+const BATCH_RETRY_DELAY_MS = 15000; // 15초 (빠른 재시도)
+const BATCH_INTERVAL_DELAY_MS = 1000; // 배치 간 1초 대기 (Gemini 자체 rate limit 활용)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,8 +51,9 @@ function sleep(ms: number): Promise<void> {
 
 export function GenerationProgress({
   workId,
+  workTitle,
   totalChapters,
-  batchSize = 5,
+  batchSize = 10, // 10개씩 (Vercel Pro 타임아웃 확장)
   open,
   onOpenChange,
   onComplete,
@@ -63,12 +66,39 @@ export function GenerationProgress({
   });
 
   const [shouldCancel, setShouldCancel] = useState(false);
+  const shouldCancelRef = useRef(false);
+
+  // 전역 상태 관리
+  const {
+    startGeneration,
+    updateProgress,
+    completeGeneration,
+    failGeneration,
+    cancelGeneration,
+    isCancelRequested,
+    clearCancelRequest,
+  } = useBibleGeneration();
+
+  // 외부 취소 요청 감시
+  useEffect(() => {
+    if (isCancelRequested(workId)) {
+      console.log("[GenerationProgress] 외부 취소 요청 감지");
+      shouldCancelRef.current = true;
+      setShouldCancel(true);
+      clearCancelRequest(workId);
+    }
+  }, [workId, isCancelRequested, clearCancelRequest]);
 
   const generateBible = useCallback(async () => {
     setState((prev) => ({ ...prev, status: "generating", error: undefined }));
     setShouldCancel(false);
+    shouldCancelRef.current = false;
+    clearCancelRequest(workId); // 시작할 때 기존 취소 요청 클리어
 
     const totalBatches = Math.ceil(totalChapters / batchSize);
+
+    // 전역 상태에 작업 시작 알림
+    startGeneration(workId, workTitle, totalChapters, batchSize);
 
     try {
       // 먼저 설정집 초기화
@@ -86,12 +116,13 @@ export function GenerationProgress({
 
       // 배치별로 분석 실행
       for (let batch = 0; batch < totalBatches; batch++) {
-        if (shouldCancel) {
+        if (shouldCancelRef.current) {
           setState((prev) => ({
             ...prev,
             status: "idle",
             error: "취소됨",
           }));
+          cancelGeneration(workId);
           return;
         }
 
@@ -108,16 +139,23 @@ export function GenerationProgress({
           retryCount: 0,
         }));
 
+        // 전역 상태 업데이트
+        updateProgress(workId, {
+          currentBatch: batch + 1,
+          retryCount: 0,
+        });
+
         // 배치 재시도 로직
         let batchSuccess = false;
         let lastError: Error | null = null;
 
         for (let retry = 0; retry < BATCH_MAX_RETRIES; retry++) {
-          if (shouldCancel) break;
+          if (shouldCancelRef.current) break;
 
           try {
             if (retry > 0) {
               setState((prev) => ({ ...prev, retryCount: retry }));
+              updateProgress(workId, { retryCount: retry });
               console.log(`[GenerationProgress] 배치 ${batch + 1} 재시도 ${retry}/${BATCH_MAX_RETRIES}, ${BATCH_RETRY_DELAY_MS / 1000}초 대기...`);
               await sleep(BATCH_RETRY_DELAY_MS);
             }
@@ -145,6 +183,13 @@ export function GenerationProgress({
               retryCount: 0,
             }));
 
+            // 전역 상태 업데이트
+            updateProgress(workId, {
+              analyzedChapters: result.analyzedChapters,
+              stats: result.stats,
+              retryCount: 0,
+            });
+
             batchSuccess = true;
             break; // 성공하면 재시도 루프 종료
           } catch (error) {
@@ -169,18 +214,26 @@ export function GenerationProgress({
         status: "completed",
       }));
 
+      // 전역 상태에 완료 알림
+      completeGeneration(workId, state.stats);
+
       toast.success("설정집 생성이 완료되었습니다!");
       onComplete();
     } catch (error) {
       console.error("Bible generation error:", error);
+      const errorMessage = error instanceof Error ? error.message : "알 수 없는 오류";
       setState((prev) => ({
         ...prev,
         status: "failed",
-        error: error instanceof Error ? error.message : "알 수 없는 오류",
+        error: errorMessage,
       }));
+
+      // 전역 상태에 실패 알림
+      failGeneration(workId, errorMessage);
+
       toast.error(error instanceof Error ? error.message : "설정집 생성 실패");
     }
-  }, [workId, totalChapters, batchSize, shouldCancel, onComplete]);
+  }, [workId, workTitle, totalChapters, batchSize, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest, state.stats]);
 
   // 다이얼로그가 열리면 자동 시작
   useEffect(() => {
@@ -208,6 +261,7 @@ export function GenerationProgress({
 
   const handleCancel = () => {
     setShouldCancel(true);
+    shouldCancelRef.current = true;
   };
 
   return (

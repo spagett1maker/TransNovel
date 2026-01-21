@@ -18,7 +18,7 @@ const logError = (...args: unknown[]) => {
 
 // 재시도 설정
 const MAX_RETRIES = 3; // 모델당 3회 재시도
-const BASE_DELAY_MS = 10000; // 10초
+const BASE_DELAY_MS = 5000; // 5초 (Vercel Pro에서 더 빠른 재시도)
 
 // 모델 우선순위 (fallback)
 const MODEL_PRIORITY = [
@@ -434,10 +434,10 @@ async function tryAnalyzeWithModel(
             temperature: 0.3,
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 16384,
+            maxOutputTokens: 32768, // 더 긴 응답 허용
           },
         }),
-        120000, // 2분 타임아웃
+        180000, // 3분 타임아웃 (Vercel Pro)
         "설정집 분석"
       );
 
