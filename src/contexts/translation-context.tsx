@@ -79,8 +79,14 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<Map<string, TranslationJobSummary>>(
     new Map()
   );
+  const jobsRef = useRef<Map<string, TranslationJobSummary>>(jobs);
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
   const isInitializedRef = useRef(false);
+
+  // jobs 상태가 변경될 때마다 ref 업데이트
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   // SSE 연결 종료 함수 (먼저 선언)
   const disconnectSSE = useCallback((jobId: string) => {
@@ -92,14 +98,26 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // SSE 재연결 시도 횟수 추적
+  const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const RECONNECT_DELAY = 3000; // 3초
+
   // SSE 연결 함수
-  const connectSSE = useCallback((jobId: string) => {
+  const connectSSE = useCallback((jobId: string, isReconnect: boolean = false) => {
     if (eventSourcesRef.current.has(jobId)) {
       console.log("[TranslationContext] SSE 이미 연결됨:", jobId);
       return;
     }
 
-    console.log("[TranslationContext] SSE 연결 시작:", jobId);
+    const attempts = reconnectAttemptsRef.current.get(jobId) || 0;
+    if (isReconnect) {
+      console.log(`[TranslationContext] SSE 재연결 시도 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS}):`, jobId);
+    } else {
+      console.log("[TranslationContext] SSE 연결 시작:", jobId);
+      reconnectAttemptsRef.current.set(jobId, 0); // 새 연결 시 카운터 리셋
+    }
+
     const es = new EventSource(`/api/translation/stream?jobId=${jobId}`);
     eventSourcesRef.current.set(jobId, es);
 
@@ -220,28 +238,95 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    es.onopen = () => {
+      // 연결 성공 시 재연결 카운터 리셋
+      console.log("[TranslationContext] SSE 연결 성공:", jobId);
+      reconnectAttemptsRef.current.set(jobId, 0);
+    };
+
     es.onerror = (err) => {
       console.error("[TranslationContext] SSE 에러:", jobId, err);
-      // 연결 실패 시 정리
+
+      // 연결 정리
       const currentEs = eventSourcesRef.current.get(jobId);
       if (currentEs) {
         currentEs.close();
         eventSourcesRef.current.delete(jobId);
       }
 
-      // 작업 상태를 FAILED로 업데이트 (서버에서 찾을 수 없는 경우)
-      setJobs((prev) => {
-        const newJobs = new Map(prev);
-        const job = newJobs.get(jobId);
-        if (job && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
-          newJobs.set(jobId, {
-            ...job,
-            status: "FAILED",
-            error: "연결 끊김 - 페이지를 새로고침하고 다시 시도해주세요",
+      // 현재 작업 상태 확인 (ref 사용)
+      const currentJob = jobsRef.current.get(jobId);
+
+      // 이미 완료/실패/일시정지 상태면 재연결 안함
+      if (!currentJob || currentJob.status === "COMPLETED" || currentJob.status === "FAILED" || currentJob.status === "PAUSED") {
+        return;
+      }
+
+      // 재연결 시도
+      const attempts = reconnectAttemptsRef.current.get(jobId) || 0;
+      if (attempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttemptsRef.current.set(jobId, attempts + 1);
+        console.log(`[TranslationContext] ${RECONNECT_DELAY}ms 후 재연결 예정 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+
+        setTimeout(() => {
+          // 재연결 전 상태 다시 확인 (ref 사용)
+          const job = jobsRef.current.get(jobId);
+          if (job && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
+            connectSSE(jobId, true);
+          }
+        }, RECONNECT_DELAY);
+      } else {
+        // 최대 재연결 시도 초과 - 서버에서 상태 확인 후 처리
+        console.error("[TranslationContext] 최대 재연결 시도 초과, 서버 상태 확인:", jobId);
+        reconnectAttemptsRef.current.delete(jobId);
+
+        // 서버에서 실제 상태 확인
+        fetch(`/api/translation/active`)
+          .then(res => res.json())
+          .then(data => {
+            const serverJob = data.jobs?.find((j: { jobId: string }) => j.jobId === jobId);
+            if (serverJob) {
+              // 서버에 작업이 있으면 상태 동기화
+              setJobs((prev) => {
+                const newJobs = new Map(prev);
+                newJobs.set(jobId, {
+                  ...serverJob,
+                  currentChapter: serverJob.currentChapter
+                    ? { number: serverJob.currentChapter.number }
+                    : undefined,
+                  createdAt: new Date(serverJob.createdAt),
+                  updatedAt: serverJob.updatedAt ? new Date(serverJob.updatedAt) : undefined,
+                  progress: calculateProgress(serverJob.completedChapters, serverJob.totalChapters),
+                });
+                return newJobs;
+              });
+
+              // 진행 중이면 다시 연결 시도
+              if (serverJob.status === "IN_PROGRESS" || serverJob.status === "PENDING") {
+                reconnectAttemptsRef.current.set(jobId, 0);
+                setTimeout(() => connectSSE(jobId, true), RECONNECT_DELAY);
+              }
+            } else {
+              // 서버에 작업이 없으면 실패 처리
+              setJobs((prev) => {
+                const newJobs = new Map(prev);
+                const job = newJobs.get(jobId);
+                if (job) {
+                  newJobs.set(jobId, {
+                    ...job,
+                    status: "FAILED",
+                    error: "연결 끊김 - 작업을 찾을 수 없습니다",
+                  });
+                }
+                return newJobs;
+              });
+            }
+          })
+          .catch(() => {
+            // 네트워크 오류 시 일단 유지 (다음 refreshJobs에서 복구)
+            console.error("[TranslationContext] 서버 상태 확인 실패");
           });
-        }
-        return newJobs;
-      });
+      }
     };
   }, []);
 
