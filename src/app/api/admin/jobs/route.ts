@@ -27,15 +27,21 @@ export async function GET(req: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "20", 10);
 
-    const result = await translationLogger.getJobHistory({
-      workId: workId || undefined,
-      userId: userId || undefined,
-      status: status || undefined,
-      page,
-      limit,
-    });
+    try {
+      const result = await translationLogger.getJobHistory({
+        workId: workId || undefined,
+        userId: userId || undefined,
+        status: status || undefined,
+        page,
+        limit,
+      });
 
-    return NextResponse.json(result);
+      return NextResponse.json(result);
+    } catch (dbError) {
+      // 테이블이 없거나 DB 에러 시 빈 결과 반환
+      console.error("DB error in getJobHistory:", dbError);
+      return NextResponse.json({ jobs: [], total: 0 });
+    }
   } catch (error) {
     console.error("Failed to fetch job history:", error);
     return NextResponse.json(

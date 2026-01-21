@@ -32,20 +32,26 @@ export async function GET(req: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
-    const result = await translationLogger.getLogs({
-      level: level || undefined,
-      category: category || undefined,
-      jobId: jobId || undefined,
-      workId: workId || undefined,
-      userId: userId || undefined,
-      errorCode: errorCode || undefined,
-      startDate: startDate ? new Date(startDate) : undefined,
-      endDate: endDate ? new Date(endDate) : undefined,
-      page,
-      limit,
-    });
+    try {
+      const result = await translationLogger.getLogs({
+        level: level || undefined,
+        category: category || undefined,
+        jobId: jobId || undefined,
+        workId: workId || undefined,
+        userId: userId || undefined,
+        errorCode: errorCode || undefined,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        page,
+        limit,
+      });
 
-    return NextResponse.json(result);
+      return NextResponse.json(result);
+    } catch (dbError) {
+      // 테이블이 없거나 DB 에러 시 빈 결과 반환
+      console.error("DB error in getLogs:", dbError);
+      return NextResponse.json({ logs: [], total: 0, page: 1, totalPages: 0 });
+    }
   } catch (error) {
     console.error("Failed to fetch logs:", error);
     return NextResponse.json(
