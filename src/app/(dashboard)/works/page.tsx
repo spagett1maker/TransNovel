@@ -19,16 +19,25 @@ export default async function WorksPage({
   const { page: pageParam } = await searchParams;
   const currentPage = Math.max(1, parseInt(pageParam || "1", 10) || 1);
 
+  // 세션이 없으면 빈 목록 반환 (미들웨어에서 리다이렉트되지만 방어적 코딩)
+  if (!session?.user?.id) {
+    return (
+      <div className="max-w-6xl">
+        <p className="text-muted-foreground">로그인이 필요합니다.</p>
+      </div>
+    );
+  }
+
   // 총 작품 수 조회
   const totalWorks = await db.work.count({
-    where: { authorId: session?.user.id },
+    where: { authorId: session.user.id },
   });
 
   const totalPages = Math.ceil(totalWorks / ITEMS_PER_PAGE);
 
   // 페이지네이션된 작품 목록 조회
   const works = await db.work.findMany({
-    where: { authorId: session?.user.id },
+    where: { authorId: session.user.id },
     orderBy: { updatedAt: "desc" },
     skip: (currentPage - 1) * ITEMS_PER_PAGE,
     take: ITEMS_PER_PAGE,

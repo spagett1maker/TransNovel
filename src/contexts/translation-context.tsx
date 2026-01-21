@@ -100,6 +100,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 
   // SSE 재연결 시도 횟수 추적
   const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
+  const reconnectTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_DELAY = 3000; // 3초
 
@@ -268,13 +269,21 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         reconnectAttemptsRef.current.set(jobId, attempts + 1);
         console.log(`[TranslationContext] ${RECONNECT_DELAY}ms 후 재연결 예정 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
 
-        setTimeout(() => {
+        // 기존 타임아웃이 있으면 정리
+        const existingTimeout = reconnectTimeoutsRef.current.get(jobId);
+        if (existingTimeout) {
+          clearTimeout(existingTimeout);
+        }
+
+        const timeoutId = setTimeout(() => {
+          reconnectTimeoutsRef.current.delete(jobId);
           // 재연결 전 상태 다시 확인 (ref 사용)
           const job = jobsRef.current.get(jobId);
           if (job && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
             connectSSE(jobId, true);
           }
         }, RECONNECT_DELAY);
+        reconnectTimeoutsRef.current.set(jobId, timeoutId);
       } else {
         // 최대 재연결 시도 초과 - 서버에서 상태 확인 후 처리
         console.error("[TranslationContext] 최대 재연결 시도 초과, 서버 상태 확인:", jobId);
@@ -304,7 +313,15 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
               // 진행 중이면 다시 연결 시도
               if (serverJob.status === "IN_PROGRESS" || serverJob.status === "PENDING") {
                 reconnectAttemptsRef.current.set(jobId, 0);
-                setTimeout(() => connectSSE(jobId, true), RECONNECT_DELAY);
+                const existingTimeout = reconnectTimeoutsRef.current.get(jobId);
+                if (existingTimeout) {
+                  clearTimeout(existingTimeout);
+                }
+                const timeoutId = setTimeout(() => {
+                  reconnectTimeoutsRef.current.delete(jobId);
+                  connectSSE(jobId, true);
+                }, RECONNECT_DELAY);
+                reconnectTimeoutsRef.current.set(jobId, timeoutId);
               }
             } else {
               // 서버에 작업이 없으면 실패 처리
@@ -406,11 +423,14 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       return () => clearTimeout(timeoutId);
     }
 
-    // 컴포넌트 언마운트 시 모든 SSE 연결 정리
+    // 컴포넌트 언마운트 시 모든 SSE 연결 및 타임아웃 정리
     const currentEventSources = eventSourcesRef.current;
+    const currentTimeouts = reconnectTimeoutsRef.current;
     return () => {
       currentEventSources.forEach((es) => es.close());
       currentEventSources.clear();
+      currentTimeouts.forEach((timeout) => clearTimeout(timeout));
+      currentTimeouts.clear();
     };
   }, [refreshJobs]);
 

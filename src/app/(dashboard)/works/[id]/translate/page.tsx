@@ -143,7 +143,12 @@ function ServerTranslationProgress({
   onRetry: (chapterNumbers: number[]) => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
-  const [failedChapterNumbers] = useState<number[]>([]);
+  // 실패한 챕터 번호 목록 (실제 데이터가 없으면 빈 배열)
+  const failedChapterNumbers = useMemo((): number[] => {
+    // 실제 구현에서는 서버에서 실패한 챕터 목록을 받아와야 함
+    // 현재는 빈 배열 반환 (UI에서 failedChapters > 0일 때 "재시도" 버튼 표시용)
+    return [];
+  }, []);
 
   const totalProgress = job.totalChapters > 0
     ? Math.round((job.completedChapters / job.totalChapters) * 100)
@@ -447,11 +452,10 @@ export default function TranslatePage() {
     fetchChapters();
   }, [fetchChapters]);
 
-  const handleRetryFailed = useCallback(async (chapterNumbers: number[]) => {
+  const handleRetryFailed = useCallback((chapterNumbers: number[]) => {
+    // 실패한 챕터들을 선택 상태로 설정 - 사용자가 수동으로 번역 시작 버튼 클릭
     setSelectedChapters(new Set(chapterNumbers));
-    setTimeout(() => {
-      handleTranslate();
-    }, 100);
+    toast.info(`${chapterNumbers.length}개 실패 회차가 선택되었습니다. 번역 시작 버튼을 클릭해주세요.`);
   }, []);
 
   return (
