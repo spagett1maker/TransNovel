@@ -624,23 +624,32 @@ export default function TranslatePage() {
                   {chapters.length}개
                 </Badge>
               </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant={viewMode === "grid" ? "secondary" : "ghost"}
-                  size="sm"
+              {/* 뷰 전환 - 세그먼트 컨트롤 스타일 */}
+              <div className="flex items-center bg-muted rounded-lg p-1">
+                <button
                   onClick={() => setViewMode("grid")}
-                  className="h-8 w-8 p-0"
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    viewMode === "grid"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
                   <Grid3X3 className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "secondary" : "ghost"}
-                  size="sm"
+                  <span>그리드</span>
+                </button>
+                <button
                   onClick={() => setViewMode("list")}
-                  className="h-8 w-8 p-0"
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    viewMode === "list"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
                   <List className="h-4 w-4" />
-                </Button>
+                  <span>리스트</span>
+                </button>
               </div>
             </div>
 
