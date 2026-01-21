@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  // directUrl = env("DIRECT_URL") // Prisma Accelerate 사용 시 활성화
+  directUrl = env("DIRECT_URL") // 마이그레이션용 직접 연결
 }
 
 enum UserRole {
