@@ -107,7 +107,7 @@ export async function PATCH(
     console.error("Failed to update term:", error);
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: "잘못된 데이터입니다.", details: error.errors },
+        { error: "잘못된 데이터입니다.", details: error.issues },
         { status: 400 }
       );
     }

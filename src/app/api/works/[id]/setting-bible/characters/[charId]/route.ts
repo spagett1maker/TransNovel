@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -14,7 +15,7 @@ const updateCharacterSchema = z.object({
   speechStyle: z.string().nullable().optional(),
   role: z.enum(["PROTAGONIST", "ANTAGONIST", "SUPPORTING", "MINOR"]).optional(),
   description: z.string().nullable().optional(),
-  relationships: z.record(z.string()).nullable().optional(),
+  relationships: z.record(z.string(), z.unknown()).nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
 
@@ -103,9 +104,17 @@ export async function PATCH(
     const body = await req.json();
     const validatedData = updateCharacterSchema.parse(body);
 
+    // Prisma JSON 필드 처리: null을 명시적으로 처리하고 타입 캐스팅
+    const dataToUpdate: Prisma.CharacterUpdateInput = {
+      ...validatedData,
+      relationships: validatedData.relationships === null
+        ? undefined  // null은 업데이트하지 않음
+        : validatedData.relationships as Prisma.InputJsonValue,
+    };
+
     const updated = await db.character.update({
       where: { id: charId },
-      data: validatedData,
+      data: dataToUpdate,
     });
 
     return NextResponse.json({ character: updated });
@@ -113,7 +122,7 @@ export async function PATCH(
     console.error("Failed to update character:", error);
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: "잘못된 데이터입니다.", details: error.errors },
+        { error: "잘못된 데이터입니다.", details: error.issues },
         { status: 400 }
       );
     }
