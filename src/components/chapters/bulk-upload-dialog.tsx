@@ -208,7 +208,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
           </p>
         </div>
 
-        {preview.length > 0 && (
+        {preview && preview.length > 0 && (
           <div className="space-y-2">
             <Label>감지된 챕터</Label>
             <div className="max-h-[150px] overflow-y-auto rounded-md border p-2">
