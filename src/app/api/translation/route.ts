@@ -320,7 +320,7 @@ export async function POST(req: Request) {
     }
 
     const invalidChapters = chapterNumbers.filter(
-      (n) => !Number.isInteger(n) || n <= 0 || n > MAX_CHAPTER_NUMBER
+      (n) => !Number.isInteger(n) || n < 0 || n > MAX_CHAPTER_NUMBER
     );
     if (invalidChapters.length > 0) {
       return NextResponse.json(
