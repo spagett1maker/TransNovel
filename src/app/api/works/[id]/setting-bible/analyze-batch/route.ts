@@ -11,6 +11,9 @@ import {
   type BibleAnalysisResult,
 } from "@/lib/bible-generator";
 
+// Vercel 서버리스 함수 타임아웃 확장 (Pro: 최대 300초)
+export const maxDuration = 300;
+
 const requestSchema = z.object({
   chapterNumbers: z.array(z.number().int().nonnegative()),
 });
@@ -28,16 +31,11 @@ export async function POST(
       return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
+    // 작품 메타 + 설정집만 조회 (챕터 본문은 별도 조회)
     const work = await db.work.findUnique({
       where: { id },
       include: {
         settingBible: true,
-        chapters: {
-          select: {
-            number: true,
-            originalContent: true,
-          },
-        },
       },
     });
 
@@ -62,10 +60,18 @@ export async function POST(
     const body = await req.json();
     const { chapterNumbers } = requestSchema.parse(body);
 
-    // 요청된 챕터 가져오기
-    const chaptersToAnalyze = work.chapters
-      .filter((ch) => chapterNumbers.includes(ch.number))
-      .sort((a, b) => a.number - b.number);
+    // 필요한 챕터만 조회 (전체 챕터 로딩 방지)
+    const chaptersToAnalyze = await db.chapter.findMany({
+      where: {
+        workId: id,
+        number: { in: chapterNumbers },
+      },
+      select: {
+        number: true,
+        originalContent: true,
+      },
+      orderBy: { number: "asc" },
+    });
 
     if (chaptersToAnalyze.length === 0) {
       return NextResponse.json(

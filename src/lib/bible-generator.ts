@@ -44,10 +44,12 @@ function estimateTokens(text: string): number {
 // 토큰 기반 최적 배치 계획
 // Gemini 2.5 Flash 입력 한도: 1M 토큰
 // 설정집은 입력 토큰이 병목 (출력은 압축된 JSON)
-// 타임아웃(180초) 고려하여 입력 토큰 한도의 90% = 900K 타겟
+// Vercel 서버리스 타임아웃(Pro: 300초) 내에 Gemini 응답이 완료되어야 함
+// 토큰이 많을수록 Gemini 처리 시간이 길어지므로, 안전한 범위로 제한
 const BIBLE_INPUT_TOKEN_LIMIT = 1_000_000;
-const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.9); // 900K
+const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.3); // 300K (Vercel 타임아웃 고려)
 const PROMPT_OVERHEAD_TOKENS = 2000; // 프롬프트 오버헤드
+const MAX_CHAPTERS_PER_BATCH = 100; // 배치당 최대 챕터 수 (Vercel 타임아웃 방지)
 
 /**
  * 챕터 목록을 토큰 예산에 맞게 최적 배치로 분할
@@ -65,7 +67,7 @@ export function getOptimalBatchPlan(
     // contentLength 기반으로 토큰 추정 (CJK 가정 → 1.5 토큰/글자)
     const chTokens = Math.ceil(ch.contentLength * 1.5);
 
-    if (currentBatch.length > 0 && currentTokens + chTokens > budgetPerBatch) {
+    if (currentBatch.length > 0 && (currentTokens + chTokens > budgetPerBatch || currentBatch.length >= MAX_CHAPTERS_PER_BATCH)) {
       batches.push(currentBatch);
       currentBatch = [ch.number];
       currentTokens = chTokens;
