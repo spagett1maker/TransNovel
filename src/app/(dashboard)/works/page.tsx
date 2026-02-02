@@ -118,9 +118,23 @@ export default async function WorksPage({
     include: {
       creators: true,
       _count: { select: { chapters: true } },
-      chapters: { select: { status: true } },
     },
   });
+
+  // 에디터만: 검토 대기 챕터 수를 groupBy로 효율적으로 조회 (N×M행 → N행)
+  const pendingReviewCounts = new Map<string, number>();
+  if (isEditor && works.length > 0) {
+    const workIds = works.map((w) => w.id);
+    const counts = await db.chapter.groupBy({
+      by: ["workId"],
+      where: {
+        workId: { in: workIds },
+        status: "TRANSLATED",
+      },
+      _count: { _all: true },
+    });
+    counts.forEach((c) => pendingReviewCounts.set(c.workId, c._count._all));
+  }
 
   // 페이지 번호 배열 생성
   const getPageNumbers = (): (number | "ellipsis")[] => {
@@ -258,7 +272,7 @@ export default async function WorksPage({
                   const statusConfig = getWorkStatusConfig(work.status);
                   const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + index + 1;
                   const pendingReviewCount = isEditor
-                    ? work.chapters.filter((c) => c.status === "TRANSLATED").length
+                    ? (pendingReviewCounts.get(work.id) || 0)
                     : 0;
 
                   return (

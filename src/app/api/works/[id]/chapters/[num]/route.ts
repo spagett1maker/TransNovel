@@ -1,4 +1,5 @@
 import { ChapterStatus, SnapshotType, UserRole } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
@@ -315,6 +316,16 @@ export async function PATCH(
       return updated;
     });
 
+    // 상태 변경 시 캐시 무효화
+    if (isStatusChange) {
+      revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });
+      // 작가/에디터 양쪽 모두 무효화
+      if (work.authorId) revalidateTag(`user-${work.authorId}-stats`, { expire: 0 });
+      if (work.editorId && work.editorId !== session.user.id) {
+        revalidateTag(`user-${work.editorId}-stats`, { expire: 0 });
+      }
+    }
+
     return NextResponse.json(chapter);
   } catch (error) {
     console.error("Failed to update chapter:", error);
@@ -372,6 +383,7 @@ export async function DELETE(
       });
     });
 
+    revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Failed to delete chapter:", error);

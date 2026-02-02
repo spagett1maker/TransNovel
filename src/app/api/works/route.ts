@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
@@ -141,6 +142,7 @@ export async function POST(req: Request) {
       },
     });
 
+    revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });
     return NextResponse.json(work, { status: 201 });
   } catch (error) {
     console.error("Failed to create work:", error);

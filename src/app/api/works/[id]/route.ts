@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import { revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
@@ -240,6 +241,7 @@ export async function DELETE(
 
     await db.work.delete({ where: { id } });
 
+    revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Failed to delete work:", error);

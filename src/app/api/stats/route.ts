@@ -1,4 +1,4 @@
-import { UserRole } from "@prisma/client";
+import { ChapterStatus, UserRole } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
@@ -42,36 +42,49 @@ export async function GET(req: Request) {
       ? { editorId: session.user.id }
       : { authorId: session.user.id };
 
-    // 1. 상태별 챕터 분포
-    const statusBreakdown = await db.chapter.groupBy({
-      by: ["status"],
-      where: {
-        work: workWhereClause,
-      },
-      _count: true,
-    });
+    // 모든 독립 쿼리를 병렬 실행
+    const completedStatuses: ChapterStatus[] = [ChapterStatus.TRANSLATED, ChapterStatus.EDITED, ChapterStatus.APPROVED];
 
-    // 2. 작품별 완료율
-    const works = await db.work.findMany({
-      where: workWhereClause,
-      select: {
-        id: true,
-        titleKo: true,
-        _count: {
-          select: { chapters: true },
+    const [statusBreakdown, works, chapterCompletions, chapters] = await Promise.all([
+      // 1. 상태별 챕터 분포
+      db.chapter.groupBy({
+        by: ["status"],
+        where: { work: workWhereClause },
+        _count: true,
+      }),
+      // 2. 작품 목록 (챕터 개수만, 챕터 행 제거)
+      db.work.findMany({
+        where: workWhereClause,
+        select: {
+          id: true,
+          titleKo: true,
+          _count: { select: { chapters: true } },
         },
-        chapters: {
-          select: { status: true },
+      }),
+      // 2b. 작품별 완료 챕터 수 (groupBy로 N+1 제거)
+      db.chapter.groupBy({
+        by: ["workId"],
+        where: {
+          work: workWhereClause,
+          status: { in: completedStatuses },
         },
-      },
-    });
+        _count: { _all: true },
+      }),
+      // 3. 기간별 번역 추이용 챕터
+      db.chapter.findMany({
+        where: {
+          work: workWhereClause,
+          updatedAt: { gte: startDate },
+          status: { in: completedStatuses },
+        },
+        select: { status: true, updatedAt: true },
+      }),
+    ]);
 
+    // 작품별 완료율 계산 (인메모리 조인)
+    const completionMap = new Map(chapterCompletions.map((c) => [c.workId, c._count._all]));
     const workStats = works.map((work) => {
-      const completedStatuses = ["TRANSLATED", "EDITED", "APPROVED"];
-      const completedCount = work.chapters.filter((ch) =>
-        completedStatuses.includes(ch.status)
-      ).length;
-
+      const completedCount = completionMap.get(work.id) || 0;
       return {
         id: work.id,
         title:
@@ -87,26 +100,12 @@ export async function GET(req: Request) {
       };
     });
 
-    // 3. 기간별 번역 추이 (일별)
-    const chapters = await db.chapter.findMany({
-      where: {
-        work: workWhereClause,
-        updatedAt: { gte: startDate },
-        status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
-      },
-      select: {
-        status: true,
-        updatedAt: true,
-      },
-    });
-
     // 날짜별 그룹화
     const dailyData: Record<
       string,
       { translated: number; edited: number; approved: number }
     > = {};
 
-    // 기간 내 모든 날짜 초기화
     const days = Math.ceil(
       (now.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)
     );
@@ -116,7 +115,6 @@ export async function GET(req: Request) {
       dailyData[dateStr] = { translated: 0, edited: 0, approved: 0 };
     }
 
-    // 챕터 데이터 집계
     chapters.forEach((ch) => {
       const dateStr = ch.updatedAt.toISOString().split("T")[0];
       if (dailyData[dateStr]) {
@@ -130,27 +128,19 @@ export async function GET(req: Request) {
       }
     });
 
-    // 시계열 데이터로 변환 (최근 날짜 기준 정렬)
     const timeSeries = Object.entries(dailyData)
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, counts]) => ({
-        date: date.substring(5), // MM-DD 형식
+        date: date.substring(5),
         ...counts,
         total: counts.translated + counts.edited + counts.approved,
       }));
 
-    // 4. 요약 통계
-    const totalChapters = await db.chapter.count({
-      where: { work: workWhereClause },
-    });
-
-    const translatedChapters = await db.chapter.count({
-      where: {
-        work: workWhereClause,
-        status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
-      },
-    });
-
+    // 요약 통계 — statusBreakdown에서 파생 (별도 count 쿼리 제거)
+    const totalChapters = statusBreakdown.reduce((sum, s) => sum + s._count, 0);
+    const translatedChapters = statusBreakdown
+      .filter((s) => completedStatuses.includes(s.status))
+      .reduce((sum, s) => sum + s._count, 0);
     const recentActivity = chapters.length;
 
     // 상태 레이블 매핑

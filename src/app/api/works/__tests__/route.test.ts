@@ -10,6 +10,7 @@ vi.mock("next-auth", () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
 }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
+vi.mock("next/cache", () => ({ revalidateTag: vi.fn() }));
 vi.mock("@prisma/client", () => ({
   UserRole: { AUTHOR: "AUTHOR", EDITOR: "EDITOR", ADMIN: "ADMIN" },
 }));

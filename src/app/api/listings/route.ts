@@ -59,7 +59,6 @@ export async function GET(request: NextRequest) {
             select: {
               id: true,
               titleKo: true,
-              coverImage: true,
               genres: true,
               sourceLanguage: true,
               totalChapters: true,

@@ -24,14 +24,15 @@ export async function GET(req: Request) {
     const endDate = searchParams.get("endDate");
 
     try {
-      // 에러 통계
-      const errorStats = await translationLogger.getErrorStats(
-        startDate ? new Date(startDate) : undefined,
-        endDate ? new Date(endDate) : undefined
-      );
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-      // 작업 히스토리 통계
-      const [totalJobs, completedJobs, failedJobs, recentJobs] = await Promise.all([
+      // 모든 독립 쿼리를 병렬 실행
+      const [errorStats, totalJobs, completedJobs, failedJobs, recentJobs, userStats, todayStats] = await Promise.all([
+        translationLogger.getErrorStats(
+          startDate ? new Date(startDate) : undefined,
+          endDate ? new Date(endDate) : undefined
+        ),
         db.translationJobHistory.count(),
         db.translationJobHistory.count({ where: { status: "COMPLETED" } }),
         db.translationJobHistory.count({ where: { status: "FAILED" } }),
@@ -39,40 +40,34 @@ export async function GET(req: Request) {
           orderBy: { createdAt: "desc" },
           take: 10,
         }),
-      ]);
-
-      // 사용자별 통계
-      const userStats = await db.translationJobHistory.groupBy({
-        by: ["userId", "userEmail"],
-        _count: true,
-        _sum: {
-          completedChapters: true,
-          failedChapters: true,
-          totalChapters: true,
-        },
-        orderBy: {
-          _count: {
-            userId: "desc",
+        db.translationJobHistory.groupBy({
+          by: ["userId", "userEmail"],
+          _count: true,
+          _sum: {
+            completedChapters: true,
+            failedChapters: true,
+            totalChapters: true,
           },
-        },
-        take: 10,
-      });
-
-      // 오늘 통계
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStats = await db.translationJobHistory.aggregate({
-        where: {
-          createdAt: { gte: today },
-        },
-        _count: true,
-        _sum: {
-          completedChapters: true,
-          failedChapters: true,
-          totalChapters: true,
-          durationMs: true,
-        },
-      });
+          orderBy: {
+            _count: {
+              userId: "desc",
+            },
+          },
+          take: 10,
+        }),
+        db.translationJobHistory.aggregate({
+          where: {
+            createdAt: { gte: today },
+          },
+          _count: true,
+          _sum: {
+            completedChapters: true,
+            failedChapters: true,
+            totalChapters: true,
+            durationMs: true,
+          },
+        }),
+      ]);
 
       return NextResponse.json({
         errors: errorStats,

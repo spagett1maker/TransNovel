@@ -1,3 +1,4 @@
+import { revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
@@ -156,6 +157,7 @@ export async function POST(
       });
     });
 
+    revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });
     return NextResponse.json({
       success: true,
       created: createdCount,

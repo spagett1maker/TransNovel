@@ -11,9 +11,31 @@ vi.mock("next-auth", () => ({
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("@prisma/client", () => ({
   UserRole: { AUTHOR: "AUTHOR", EDITOR: "EDITOR", ADMIN: "ADMIN" },
+  ChapterStatus: {
+    PENDING: "PENDING",
+    TRANSLATING: "TRANSLATING",
+    TRANSLATED: "TRANSLATED",
+    REVIEWING: "REVIEWING",
+    EDITED: "EDITED",
+    APPROVED: "APPROVED",
+  },
 }));
 
 import { GET } from "../route";
+
+/** groupBy가 2회 호출됨: statusBreakdown(by:status) + chapterCompletions(by:workId) */
+function setupDefaultMocks(overrides?: {
+  statusBreakdown?: unknown[];
+  chapterCompletions?: unknown[];
+  works?: unknown[];
+  chapters?: unknown[];
+}) {
+  mockDb.chapter.groupBy
+    .mockResolvedValueOnce(overrides?.statusBreakdown ?? [])
+    .mockResolvedValueOnce(overrides?.chapterCompletions ?? []);
+  mockDb.work.findMany.mockResolvedValue(overrides?.works ?? []);
+  mockDb.chapter.findMany.mockResolvedValue(overrides?.chapters ?? []);
+}
 
 describe("GET /api/stats", () => {
   beforeEach(() => {
@@ -34,28 +56,21 @@ describe("GET /api/stats", () => {
   it("AUTHOR 필터로 통계를 조회한다 (200)", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
 
-    mockDb.chapter.groupBy.mockResolvedValue([
-      { status: "PENDING", _count: 5 },
-      { status: "TRANSLATED", _count: 3 },
-    ]);
-    mockDb.work.findMany.mockResolvedValue([
-      {
-        id: "w1",
-        titleKo: "작품1",
-        _count: { chapters: 10 },
-        chapters: [
-          { status: "PENDING" },
-          { status: "TRANSLATED" },
-          { status: "EDITED" },
-        ],
-      },
-    ]);
-    mockDb.chapter.findMany.mockResolvedValue([
-      { status: "TRANSLATED", updatedAt: new Date() },
-    ]);
-    mockDb.chapter.count
-      .mockResolvedValueOnce(10) // totalChapters
-      .mockResolvedValueOnce(3); // translatedChapters
+    setupDefaultMocks({
+      statusBreakdown: [
+        { status: "PENDING", _count: 5 },
+        { status: "TRANSLATED", _count: 3 },
+      ],
+      chapterCompletions: [
+        { workId: "w1", _count: { _all: 2 } },
+      ],
+      works: [
+        { id: "w1", titleKo: "작품1", _count: { chapters: 10 } },
+      ],
+      chapters: [
+        { status: "TRANSLATED", updatedAt: new Date() },
+      ],
+    });
 
     const req = createRequest("http://localhost:3000/api/stats?period=30d");
     const res = await GET(req);
@@ -67,8 +82,10 @@ describe("GET /api/stats", () => {
     expect(body.timeSeries).toBeDefined();
     expect(body.summary).toBeDefined();
 
+    // totalChapters = sum of statusBreakdown._count = 5 + 3 = 8
+    // translatedChapters = TRANSLATED _count = 3
     const summary = body.summary as Record<string, unknown>;
-    expect(summary.totalChapters).toBe(10);
+    expect(summary.totalChapters).toBe(8);
     expect(summary.translatedChapters).toBe(3);
 
     // AUTHOR는 authorId 필터 사용
@@ -81,11 +98,7 @@ describe("GET /api/stats", () => {
 
   it("EDITOR 필터로 통계를 조회한다 (200)", async () => {
     mockGetServerSession.mockResolvedValue(sessions.editor);
-
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats");
     const res = await GET(req);
@@ -103,11 +116,7 @@ describe("GET /api/stats", () => {
 
   it("기간 파라미터를 처리한다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats?period=7d");
     const res = await GET(req);
@@ -118,10 +127,7 @@ describe("GET /api/stats", () => {
 
   it("90d 기간 파라미터를 처리한다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats?period=90d");
     const res = await GET(req);
@@ -132,10 +138,7 @@ describe("GET /api/stats", () => {
 
   it("1y 기간 파라미터를 처리한다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats?period=1y");
     const res = await GET(req);
@@ -146,10 +149,7 @@ describe("GET /api/stats", () => {
 
   it("잘못된 기간 시 기본값 30d로 처리한다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats?period=invalid");
     const res = await GET(req);
@@ -160,17 +160,17 @@ describe("GET /api/stats", () => {
 
   it("긴 작품명을 20자로 잘라낸다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([
-      {
-        id: "w1",
-        titleKo: "이것은매우길고긴작품제목입니다스물자이상입니다반드시잘려야합니다",
-        _count: { chapters: 5 },
-        chapters: [{ status: "TRANSLATED" }],
-      },
-    ]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+
+    setupDefaultMocks({
+      chapterCompletions: [{ workId: "w1", _count: { _all: 1 } }],
+      works: [
+        {
+          id: "w1",
+          titleKo: "이것은매우길고긴작품제목입니다스물자이상입니다반드시잘려야합니다",
+          _count: { chapters: 5 },
+        },
+      ],
+    });
 
     const req = createRequest("http://localhost:3000/api/stats");
     const res = await GET(req);
@@ -183,17 +183,12 @@ describe("GET /api/stats", () => {
 
   it("챕터가 0개인 작품의 completionRate는 0이다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([
-      {
-        id: "w1",
-        titleKo: "빈 작품",
-        _count: { chapters: 0 },
-        chapters: [],
-      },
-    ]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+
+    setupDefaultMocks({
+      works: [
+        { id: "w1", titleKo: "빈 작품", _count: { chapters: 0 } },
+      ],
+    });
 
     const req = createRequest("http://localhost:3000/api/stats");
     const res = await GET(req);
@@ -205,10 +200,7 @@ describe("GET /api/stats", () => {
 
   it("totalChapters가 0이면 summary.completionRate는 0이다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
-    mockDb.chapter.groupBy.mockResolvedValue([]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks();
 
     const req = createRequest("http://localhost:3000/api/stats");
     const res = await GET(req);
@@ -221,12 +213,9 @@ describe("GET /api/stats", () => {
   it("응답 구조를 검증한다", async () => {
     mockGetServerSession.mockResolvedValue(sessions.author);
 
-    mockDb.chapter.groupBy.mockResolvedValue([
-      { status: "PENDING", _count: 2 },
-    ]);
-    mockDb.work.findMany.mockResolvedValue([]);
-    mockDb.chapter.findMany.mockResolvedValue([]);
-    mockDb.chapter.count.mockResolvedValue(0);
+    setupDefaultMocks({
+      statusBreakdown: [{ status: "PENDING", _count: 2 }],
+    });
 
     const req = createRequest("http://localhost:3000/api/stats");
     const res = await GET(req);

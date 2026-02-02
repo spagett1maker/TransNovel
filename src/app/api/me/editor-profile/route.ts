@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 import { z } from "zod";
 import { UserRole, EditorAvailability } from "@prisma/client";
@@ -108,6 +109,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    revalidateTag(`editor-profile-${session.user.id}`, { expire: 0 });
     return NextResponse.json({ profile }, { status: 201 });
   } catch (error) {
     console.error("Error creating editor profile:", error);
@@ -178,6 +180,7 @@ export async function PATCH(request: NextRequest) {
       },
     });
 
+    revalidateTag(`editor-profile-${session.user.id}`, { expire: 0 });
     return NextResponse.json({ profile });
   } catch (error) {
     console.error("Error updating editor profile:", error);

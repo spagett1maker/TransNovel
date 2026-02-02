@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { OnboardingChecklist } from "@/components/dashboard/onboarding-checklist";
 import { StatsCharts } from "@/components/dashboard/stats-charts";
 import { getSession } from "@/lib/auth";
+import { getCachedDashboardStats, getCachedEditorProfile } from "@/lib/cache";
 import { db } from "@/lib/db";
 import { getWorkStatusConfig } from "@/lib/work-status";
 
@@ -19,22 +20,24 @@ export default async function DashboardPage() {
     ? { editorId: session?.user.id }
     : { authorId: session?.user.id };
 
-  // Base queries for both roles
-  const [worksCount, chaptersCount, translatedCount, reviewPendingCount] = await Promise.all([
-    db.work.count({ where: whereClause }),
-    db.chapter.count({ where: { work: whereClause } }),
-    db.chapter.count({
-      where: {
-        work: whereClause,
-        status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
+  // Phase 1: 캐싱된 통계 + recentWorks 병렬 실행
+  const [stats, recentWorks] = await Promise.all([
+    getCachedDashboardStats(session!.user.id, isEditor),
+    db.work.findMany({
+      where: whereClause,
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      include: {
+        author: { select: { name: true } },
+        _count: { select: { chapters: true } },
+        chapters: {
+          where: isEditor ? { status: "TRANSLATED" } : {},
+          select: { status: true },
+        },
       },
     }),
-    isEditor
-      ? db.chapter.count({
-          where: { work: { editorId: session?.user.id }, status: "TRANSLATED" },
-        })
-      : Promise.resolve(0),
   ]);
+  const { worksCount, chaptersCount, translatedCount, reviewPendingCount } = stats;
 
   // Editor-specific data
   let editorProfile: {
@@ -68,68 +71,58 @@ export default async function DashboardPage() {
   }[] = [];
 
   if (isEditor && session?.user.id) {
-    // Fetch editor profile
-    editorProfile = await db.editorProfile.findUnique({
-      where: { userId: session.user.id },
-      select: {
-        id: true,
-        displayName: true,
-        bio: true,
-        availability: true,
-        averageRating: true,
-        totalReviews: true,
-      },
-    });
+    // 캐싱된 에디터 프로필 조회
+    editorProfile = await getCachedEditorProfile(session.user.id);
 
     if (editorProfile) {
-      // Fetch active contracts
-      activeContracts = await db.projectContract.findMany({
-        where: { editorId: session.user.id, isActive: true },
-        include: {
-          work: {
-            select: { id: true, titleKo: true, coverImage: true, totalChapters: true },
+      // Phase 2: 에디터 프로필 의존 쿼리 3개를 병렬 실행
+      const [contracts, countsByStatus, applications] = await Promise.all([
+        db.projectContract.findMany({
+          where: { editorId: session.user.id, isActive: true },
+          include: {
+            work: {
+              select: { id: true, titleKo: true, coverImage: true, totalChapters: true },
+            },
+            author: {
+              select: { id: true, name: true, image: true },
+            },
+            _count: {
+              select: { revisionRequests: true },
+            },
           },
-          author: {
-            select: { id: true, name: true, image: true },
+          orderBy: { startDate: "desc" },
+          take: 3,
+        }),
+        db.projectApplication.groupBy({
+          by: ["status"],
+          where: { editorProfileId: editorProfile.id },
+          _count: { status: true },
+        }),
+        db.projectApplication.findMany({
+          where: { editorProfileId: editorProfile.id },
+          include: {
+            listing: {
+              select: {
+                id: true,
+                title: true,
+                work: { select: { titleKo: true } },
+                author: { select: { name: true } },
+              },
+            },
           },
-          _count: {
-            select: { revisionRequests: true },
-          },
-        },
-        orderBy: { startDate: "desc" },
-        take: 3,
-      });
+          orderBy: { submittedAt: "desc" },
+          take: 5,
+        }),
+      ]);
 
-      // Fetch application counts
-      const countsByStatus = await db.projectApplication.groupBy({
-        by: ["status"],
-        where: { editorProfileId: editorProfile.id },
-        _count: { status: true },
-      });
-
+      activeContracts = contracts;
       countsByStatus.forEach((item) => {
         const key = item.status.toLowerCase() as keyof typeof applicationCounts;
         if (key in applicationCounts) {
           applicationCounts[key] = item._count.status;
         }
       });
-
-      // Fetch recent applications
-      recentApplications = await db.projectApplication.findMany({
-        where: { editorProfileId: editorProfile.id },
-        include: {
-          listing: {
-            select: {
-              id: true,
-              title: true,
-              work: { select: { titleKo: true } },
-              author: { select: { name: true } },
-            },
-          },
-        },
-        orderBy: { submittedAt: "desc" },
-        take: 5,
-      });
+      recentApplications = applications;
     }
   }
 
@@ -186,20 +179,6 @@ export default async function DashboardPage() {
     authorPendingApplications = pendingApps;
     authorPendingCount = pendingTotal;
   }
-
-  const recentWorks = await db.work.findMany({
-    where: whereClause,
-    orderBy: { updatedAt: "desc" },
-    take: 5,
-    include: {
-      author: { select: { name: true } },
-      _count: { select: { chapters: true } },
-      chapters: {
-        where: isEditor ? { status: "TRANSLATED" } : {},
-        select: { status: true },
-      },
-    },
-  });
 
   const progressPercent = chaptersCount > 0
     ? Math.round((translatedCount / chaptersCount) * 100)

@@ -64,14 +64,6 @@ export async function GET(request: NextRequest) {
           user: {
             select: { id: true, name: true, image: true },
           },
-          portfolioItems: {
-            take: 3,
-            orderBy: { sortOrder: "asc" },
-            select: { id: true, title: true, genre: true },
-          },
-          _count: {
-            select: { reviews: true },
-          },
         },
         orderBy,
         skip: (page - 1) * limit,
