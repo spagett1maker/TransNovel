@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { EditorAvailability } from "@prisma/client";
@@ -182,9 +183,11 @@ export default function EditorDetailPage({
       {/* Profile Header */}
       <div className="flex items-start gap-6 pb-8 border-b border-border mb-8">
         {profile.user.image ? (
-          <img
+          <Image
             src={profile.user.image}
             alt=""
+            width={96}
+            height={96}
             className="h-24 w-24 rounded-full object-cover"
           />
         ) : (
@@ -329,9 +332,11 @@ export default function EditorDetailPage({
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-3">
                         {review.author.image ? (
-                          <img
+                          <Image
                             src={review.author.image}
                             alt=""
+                            width={32}
+                            height={32}
                             className="h-8 w-8 rounded-full object-cover"
                           />
                         ) : (

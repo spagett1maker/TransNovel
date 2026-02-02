@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
+import Image from "next/image";
 import Link from "next/link";
 import { Briefcase, Calendar, User, X, Loader2 } from "lucide-react";
 
@@ -293,10 +294,12 @@ export default function MyApplicationsPage() {
                       {/* Author */}
                       <div className="flex items-center gap-2">
                         {app.listing.author.image ? (
-                          <img
+                          <Image
                             src={app.listing.author.image}
                             alt={`${app.listing.author.name || "작가"} 프로필`}
-                            className="w-5 h-5 rounded-full object-cover"
+                            width={20}
+                            height={20}
+                            className="rounded-full object-cover"
                           />
                         ) : (
                           <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center">

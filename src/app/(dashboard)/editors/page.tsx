@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { EditorAvailability } from "@prisma/client";
 import { Search, Star, Briefcase, Filter, Users } from "lucide-react";
@@ -261,10 +262,12 @@ export default function EditorsPage() {
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-4">
                   {editor.user.image ? (
-                    <img
+                    <Image
                       src={editor.user.image}
                       alt=""
-                      className="h-12 w-12 rounded-full object-cover"
+                      width={48}
+                      height={48}
+                      className="rounded-full object-cover"
                     />
                   ) : (
                     <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">

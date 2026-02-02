@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import Image from "next/image";
 import { Briefcase, Calendar, CheckCircle, Clock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -206,10 +207,12 @@ export default function ContractsPage() {
                     {/* Partner */}
                     <div className="flex items-center gap-2">
                       {(isAuthor ? contract.editor : contract.author).image ? (
-                        <img
+                        <Image
                           src={(isAuthor ? contract.editor : contract.author).image!}
                           alt=""
-                          className="w-5 h-5 rounded-full"
+                          width={20}
+                          height={20}
+                          className="w-5 h-5 rounded-full object-cover"
                         />
                       ) : (
                         <div className="w-5 h-5 rounded-full bg-muted" />

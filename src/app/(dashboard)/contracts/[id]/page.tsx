@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Calendar,
   User,
@@ -472,10 +473,12 @@ export default function ContractDetailPage() {
             </h3>
             <div className="flex items-center gap-3">
               {contract.author.image ? (
-                <img
+                <Image
                   src={contract.author.image}
                   alt=""
-                  className="w-10 h-10 rounded-full"
+                  width={40}
+                  height={40}
+                  className="w-10 h-10 rounded-full object-cover"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
@@ -498,10 +501,12 @@ export default function ContractDetailPage() {
             </h3>
             <div className="flex items-center gap-3">
               {contract.editor.image ? (
-                <img
+                <Image
                   src={contract.editor.image}
                   alt=""
-                  className="w-10 h-10 rounded-full"
+                  width={40}
+                  height={40}
+                  className="w-10 h-10 rounded-full object-cover"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">

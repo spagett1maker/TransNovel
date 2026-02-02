@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import {
@@ -308,10 +309,12 @@ export default function ListingDetailPage({
             <p className="text-sm text-muted-foreground mb-3">작가</p>
             <div className="flex items-center gap-3">
               {listing.author.image ? (
-                <img
+                <Image
                   src={listing.author.image}
                   alt=""
-                  className="w-10 h-10 rounded-full"
+                  width={40}
+                  height={40}
+                  className="w-10 h-10 rounded-full object-cover"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">

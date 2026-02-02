@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   User,
   Clock,
@@ -426,10 +427,12 @@ export default function WorkListingsPage() {
                           <div className="flex items-start justify-between gap-4 mb-4">
                             <div className="flex items-center gap-3">
                               {app.editorProfile.user.image ? (
-                                <img
+                                <Image
                                   src={app.editorProfile.user.image}
                                   alt=""
-                                  className="w-10 h-10 rounded-full"
+                                  width={40}
+                                  height={40}
+                                  className="w-10 h-10 rounded-full object-cover"
                                 />
                               ) : (
                                 <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">

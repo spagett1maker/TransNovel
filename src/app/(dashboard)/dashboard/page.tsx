@@ -1,11 +1,17 @@
 import { UserRole, ApplicationStatus } from "@prisma/client";
+import Image from "next/image";
 import Link from "next/link";
 import { Star, FileText, Briefcase, Clock, CheckCircle, BookOpen, Calendar, FolderOpen, Layers, Languages, TrendingUp } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OnboardingChecklist } from "@/components/dashboard/onboarding-checklist";
-import { StatsCharts } from "@/components/dashboard/stats-charts";
+import dynamic from "next/dynamic";
+
+const StatsCharts = dynamic(
+  () => import("@/components/dashboard/stats-charts").then((m) => ({ default: m.StatsCharts })),
+  { loading: () => <div className="h-64 flex items-center justify-center"><div className="h-8 w-8 border-2 border-foreground border-t-transparent rounded-full animate-spin" /></div> }
+);
 import { getSession } from "@/lib/auth";
 import { getCachedDashboardStats, getCachedEditorProfile } from "@/lib/cache";
 import { db } from "@/lib/db";
@@ -384,10 +390,12 @@ export default async function DashboardPage() {
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     {app.editorProfile.user.image ? (
-                      <img
+                      <Image
                         src={app.editorProfile.user.image}
                         alt={`${app.editorProfile.displayName || app.editorProfile.user.name || "윤문가"} 프로필`}
-                        className="w-8 h-8 rounded-full shrink-0 object-cover"
+                        width={32}
+                        height={32}
+                        className="rounded-full shrink-0 object-cover"
                       />
                     ) : (
                       <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
@@ -445,10 +453,12 @@ export default async function DashboardPage() {
               >
                 <div className="flex gap-4">
                   {contract.work.coverImage ? (
-                    <img
+                    <Image
                       src={contract.work.coverImage}
                       alt={`${contract.work.titleKo} 표지`}
-                      className="w-12 h-16 object-cover rounded-lg shrink-0"
+                      width={48}
+                      height={64}
+                      className="object-cover rounded-lg shrink-0"
                     />
                   ) : (
                     <div className="w-12 h-16 bg-muted rounded-lg shrink-0 flex items-center justify-center">
