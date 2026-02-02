@@ -41,51 +41,28 @@ function estimateTokens(text: string): number {
   return Math.ceil(cjkCount * 1.5 + nonCjkCount * 0.25);
 }
 
-// 토큰 기반 최적 배치 계획
-// Gemini 2.5 Flash 입력 한도: 1M 토큰
-// 설정집은 입력 토큰이 병목 (출력은 압축된 JSON)
-// Vercel 서버리스 타임아웃(Pro: 300초) 내에 Gemini 응답이 완료되어야 함
-// 토큰이 많을수록 Gemini 처리 시간이 길어지므로, 안전한 범위로 제한
-const BIBLE_INPUT_TOKEN_LIMIT = 1_000_000;
-const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.1); // 100K (Vercel 타임아웃 내 Gemini 응답 보장)
-const PROMPT_OVERHEAD_TOKENS = 2000; // 프롬프트 오버헤드
-const MAX_CHAPTERS_PER_BATCH = 30; // 배치당 최대 챕터 수 (Vercel 타임아웃 방지)
+// 배치당 고정 챕터 수 (10챕터 × ~3000자 = ~30,000자, Gemini 20~30초 처리)
+const CHAPTERS_PER_BATCH = 10;
 
 /**
- * 챕터 목록을 토큰 예산에 맞게 최적 배치로 분할
+ * 챕터 목록을 고정 크기 배치로 분할
  * @returns 각 배치에 포함될 챕터 번호 배열의 배열
  */
 export function getOptimalBatchPlan(
   chapters: { number: number; contentLength: number }[]
 ): number[][] {
-  const budgetPerBatch = BIBLE_TARGET_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS;
   const batches: number[][] = [];
-  let currentBatch: number[] = [];
-  let currentTokens = 0;
 
-  for (const ch of chapters) {
-    // contentLength 기반으로 토큰 추정 (CJK 가정 → 1.5 토큰/글자)
-    const chTokens = Math.ceil(ch.contentLength * 1.5);
-
-    if (currentBatch.length > 0 && (currentTokens + chTokens > budgetPerBatch || currentBatch.length >= MAX_CHAPTERS_PER_BATCH)) {
-      batches.push(currentBatch);
-      currentBatch = [ch.number];
-      currentTokens = chTokens;
-    } else {
-      currentBatch.push(ch.number);
-      currentTokens += chTokens;
-    }
-  }
-
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
+  for (let i = 0; i < chapters.length; i += CHAPTERS_PER_BATCH) {
+    batches.push(
+      chapters.slice(i, i + CHAPTERS_PER_BATCH).map((ch) => ch.number)
+    );
   }
 
   log("getOptimalBatchPlan", {
     totalChapters: chapters.length,
     totalBatches: batches.length,
-    batchSizes: batches.map((b) => b.length),
-    tokenBudget: budgetPerBatch,
+    chaptersPerBatch: CHAPTERS_PER_BATCH,
   });
 
   return batches;
