@@ -103,6 +103,7 @@ export interface TranslationJobSummary {
   totalChapters: number;
   completedChapters: number;
   failedChapters: number;
+  failedChapterNums: number[]; // 실패한 챕터 번호 목록
   currentChapter?: {
     number: number;
     currentChunk: number;
@@ -118,10 +119,8 @@ export interface ProgressEvent {
   type:
     | "job_started"
     | "job_paused"
-    | "job_resumed"
     | "chapter_started"
     | "chunk_progress"
-    | "chunk_error"
     | "chapter_completed"
     | "chapter_partial"
     | "chapter_failed"
@@ -134,6 +133,7 @@ export interface ProgressEvent {
     error?: string;
     chunkIndex?: number;
     failedChunks?: number[];
+    failedChapterNums?: number[];
     currentChapter?: {
       number: number;
       currentChunk: number;
@@ -280,35 +280,6 @@ class TranslationManager {
     });
   }
 
-  // 청크 에러 보고
-  async reportChunkError(
-    jobId: string,
-    chapterNumber: number,
-    chunkIndex: number,
-    error: string
-  ): Promise<void> {
-    const dbJob = await prisma.activeTranslationJob.findUnique({
-      where: { jobId },
-    });
-    if (!dbJob) return;
-
-    const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
-    const chapterIndex = chapters.findIndex((ch) => ch.number === chapterNumber);
-    if (chapterIndex === -1) return;
-
-    if (!chapters[chapterIndex].failedChunks) {
-      chapters[chapterIndex].failedChunks = [];
-    }
-    chapters[chapterIndex].failedChunks!.push({ index: chunkIndex, error });
-
-    await prisma.activeTranslationJob.update({
-      where: { jobId },
-      data: {
-        chaptersProgress: chapters as unknown as object,
-      },
-    });
-  }
-
   // 챕터 완료
   async completeChapter(jobId: string, chapterNumber: number): Promise<void> {
     const dbJob = await prisma.activeTranslationJob.findUnique({
@@ -373,10 +344,19 @@ class TranslationManager {
 
   // 작업 완료
   async completeJob(jobId: string): Promise<void> {
-    await prisma.activeTranslationJob.update({
-      where: { jobId },
-      data: { status: "COMPLETED" },
-    });
+    try {
+      await prisma.activeTranslationJob.update({
+        where: { jobId },
+        data: { status: "COMPLETED" },
+      });
+    } catch (error) {
+      // 레코드가 이미 삭제된 경우 (P2025) 무시 - SSE가 먼저 실패 처리 후 삭제되었을 수 있음
+      if (error instanceof Error && 'code' in error && (error as { code: string }).code === 'P2025') {
+        log("completeJob: 레코드를 찾을 수 없음 (이미 삭제됨):", jobId);
+        return;
+      }
+      throw error;
+    }
 
     // 히스토리에 저장
     const dbJob = await prisma.activeTranslationJob.findUnique({
@@ -389,13 +369,22 @@ class TranslationManager {
 
   // 작업 실패
   async failJob(jobId: string, error: string): Promise<void> {
-    await prisma.activeTranslationJob.update({
-      where: { jobId },
-      data: {
-        status: "FAILED",
-        errorMessage: error,
-      },
-    });
+    try {
+      await prisma.activeTranslationJob.update({
+        where: { jobId },
+        data: {
+          status: "FAILED",
+          errorMessage: error,
+        },
+      });
+    } catch (updateError) {
+      // 레코드가 이미 삭제된 경우 (P2025) 무시
+      if (updateError instanceof Error && 'code' in updateError && (updateError as { code: string }).code === 'P2025') {
+        log("failJob: 레코드를 찾을 수 없음 (이미 삭제됨):", jobId);
+        return;
+      }
+      throw updateError;
+    }
 
     // 히스토리에 저장
     const dbJob = await prisma.activeTranslationJob.findUnique({
@@ -415,6 +404,9 @@ class TranslationManager {
 
     const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
     const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+    const failedChapterNums = chapters
+      .filter((ch) => ch.status === "FAILED")
+      .map((ch) => ch.number);
 
     return {
       jobId: dbJob.jobId,
@@ -424,6 +416,7 @@ class TranslationManager {
       totalChapters: dbJob.totalChapters,
       completedChapters: dbJob.completedChapters,
       failedChapters: dbJob.failedChapters,
+      failedChapterNums,
       currentChapter: translatingChapter
         ? {
             number: translatingChapter.number,
@@ -449,6 +442,9 @@ class TranslationManager {
     return dbJobs.map((dbJob) => {
       const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
       const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+      const failedChapterNums = chapters
+        .filter((ch) => ch.status === "FAILED")
+        .map((ch) => ch.number);
 
       return {
         jobId: dbJob.jobId,
@@ -458,6 +454,7 @@ class TranslationManager {
         totalChapters: dbJob.totalChapters,
         completedChapters: dbJob.completedChapters,
         failedChapters: dbJob.failedChapters,
+        failedChapterNums,
         currentChapter: translatingChapter
           ? {
               number: translatingChapter.number,
@@ -498,6 +495,9 @@ class TranslationManager {
     return dbJobs.map((dbJob) => {
       const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
       const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+      const failedChapterNums = chapters
+        .filter((ch) => ch.status === "FAILED")
+        .map((ch) => ch.number);
 
       return {
         jobId: dbJob.jobId,
@@ -507,6 +507,7 @@ class TranslationManager {
         totalChapters: dbJob.totalChapters,
         completedChapters: dbJob.completedChapters,
         failedChapters: dbJob.failedChapters,
+        failedChapterNums,
         currentChapter: translatingChapter
           ? {
               number: translatingChapter.number,
@@ -531,6 +532,9 @@ class TranslationManager {
     return dbJobs.map((dbJob) => {
       const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
       const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
+      const failedChapterNums = chapters
+        .filter((ch) => ch.status === "FAILED")
+        .map((ch) => ch.number);
 
       return {
         jobId: dbJob.jobId,
@@ -540,6 +544,7 @@ class TranslationManager {
         totalChapters: dbJob.totalChapters,
         completedChapters: dbJob.completedChapters,
         failedChapters: dbJob.failedChapters,
+        failedChapterNums,
         currentChapter: translatingChapter
           ? {
               number: translatingChapter.number,

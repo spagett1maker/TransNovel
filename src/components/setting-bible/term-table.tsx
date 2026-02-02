@@ -83,7 +83,7 @@ export function TermTable({ terms, onEdit, onDelete, readOnly = false }: TermTab
                   {term.note || "-"}
                 </TableCell>
                 <TableCell className="text-center text-sm text-muted-foreground hidden sm:table-cell">
-                  {term.firstAppearance ? `${term.firstAppearance}화` : "-"}
+                  {term.firstAppearance != null ? `${term.firstAppearance}화` : "-"}
                 </TableCell>
                 {!readOnly && (
                   <TableCell>
@@ -94,6 +94,7 @@ export function TermTable({ terms, onEdit, onDelete, readOnly = false }: TermTab
                           size="icon"
                           className="h-8 w-8"
                           onClick={() => onEdit(term)}
+                          aria-label="용어 수정"
                         >
                           <Edit2 className="h-4 w-4" />
                         </Button>
@@ -102,8 +103,9 @@ export function TermTable({ terms, onEdit, onDelete, readOnly = false }: TermTab
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-red-500 hover:text-red-600"
+                          className="h-8 w-8 text-destructive hover:text-destructive/80"
                           onClick={() => onDelete(term.id)}
+                          aria-label="용어 삭제"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

@@ -32,6 +32,63 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 토큰 추정 (CJK 문자는 대략 1.5 토큰, 영문은 4자당 1토큰)
+function estimateTokens(text: string): number {
+  const cjkPattern = /[\u4e00-\u9fff\u3400-\u4dbf\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]/g;
+  const cjkMatches = text.match(cjkPattern);
+  const cjkCount = cjkMatches?.length ?? 0;
+  const nonCjkCount = text.length - cjkCount;
+  return Math.ceil(cjkCount * 1.5 + nonCjkCount * 0.25);
+}
+
+// 토큰 기반 최적 배치 계획
+// Gemini 2.5 Flash 입력 한도: 1M 토큰
+// 설정집은 입력 토큰이 병목 (출력은 압축된 JSON)
+// 타임아웃(180초) 고려하여 입력 토큰 한도의 90% = 900K 타겟
+const BIBLE_INPUT_TOKEN_LIMIT = 1_000_000;
+const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.9); // 900K
+const PROMPT_OVERHEAD_TOKENS = 2000; // 프롬프트 오버헤드
+
+/**
+ * 챕터 목록을 토큰 예산에 맞게 최적 배치로 분할
+ * @returns 각 배치에 포함될 챕터 번호 배열의 배열
+ */
+export function getOptimalBatchPlan(
+  chapters: { number: number; contentLength: number }[]
+): number[][] {
+  const budgetPerBatch = BIBLE_TARGET_INPUT_TOKENS - PROMPT_OVERHEAD_TOKENS;
+  const batches: number[][] = [];
+  let currentBatch: number[] = [];
+  let currentTokens = 0;
+
+  for (const ch of chapters) {
+    // contentLength 기반으로 토큰 추정 (CJK 가정 → 1.5 토큰/글자)
+    const chTokens = Math.ceil(ch.contentLength * 1.5);
+
+    if (currentBatch.length > 0 && currentTokens + chTokens > budgetPerBatch) {
+      batches.push(currentBatch);
+      currentBatch = [ch.number];
+      currentTokens = chTokens;
+    } else {
+      currentBatch.push(ch.number);
+      currentTokens += chTokens;
+    }
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  log("getOptimalBatchPlan", {
+    totalChapters: chapters.length,
+    totalBatches: batches.length,
+    batchSizes: batches.map((b) => b.length),
+    tokenBudget: budgetPerBatch,
+  });
+
+  return batches;
+}
+
 // Jitter 추가 (thundering herd 방지)
 function addJitter(baseMs: number, jitterFraction: number = 0.2): number {
   const jitter = baseMs * jitterFraction * (Math.random() - 0.5) * 2;
@@ -434,7 +491,7 @@ async function tryAnalyzeWithModel(
             temperature: 0.3,
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 32768, // 더 긴 응답 허용
+            maxOutputTokens: 65536, // Gemini 2.5 Flash 최대 출력
           },
         }),
         180000, // 3분 타임아웃 (Vercel Pro)

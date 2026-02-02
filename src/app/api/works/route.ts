@@ -11,7 +11,7 @@ export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const userRole = session.user.role as UserRole;
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const userRole = session.user.role as UserRole;

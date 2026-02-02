@@ -14,7 +14,7 @@ export async function GET(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);

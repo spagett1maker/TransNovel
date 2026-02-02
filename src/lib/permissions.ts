@@ -9,12 +9,12 @@ const STATUS_TRANSITIONS: Record<
   }
 > = {
   AUTHOR: {
-    from: [ChapterStatus.PENDING],
-    to: [ChapterStatus.TRANSLATING, ChapterStatus.TRANSLATED],
+    from: [ChapterStatus.PENDING, ChapterStatus.EDITED],
+    to: [ChapterStatus.TRANSLATING, ChapterStatus.TRANSLATED, ChapterStatus.APPROVED, ChapterStatus.REVIEWING],
   },
   EDITOR: {
-    from: [ChapterStatus.TRANSLATED, ChapterStatus.REVIEWING, ChapterStatus.EDITED],
-    to: [ChapterStatus.REVIEWING, ChapterStatus.EDITED, ChapterStatus.APPROVED],
+    from: [ChapterStatus.TRANSLATED, ChapterStatus.REVIEWING],
+    to: [ChapterStatus.REVIEWING, ChapterStatus.EDITED],
   },
   ADMIN: {
     from: Object.values(ChapterStatus),
@@ -26,7 +26,7 @@ const STATUS_TRANSITIONS: Record<
 const VALID_TRANSITIONS: Record<ChapterStatus, ChapterStatus[]> = {
   [ChapterStatus.PENDING]: [ChapterStatus.TRANSLATING],
   [ChapterStatus.TRANSLATING]: [ChapterStatus.TRANSLATED, ChapterStatus.PENDING],
-  [ChapterStatus.TRANSLATED]: [ChapterStatus.REVIEWING],
+  [ChapterStatus.TRANSLATED]: [ChapterStatus.REVIEWING, ChapterStatus.EDITED],
   [ChapterStatus.REVIEWING]: [ChapterStatus.EDITED, ChapterStatus.TRANSLATED],
   [ChapterStatus.EDITED]: [ChapterStatus.APPROVED, ChapterStatus.REVIEWING],
   [ChapterStatus.APPROVED]: [],
@@ -169,6 +169,48 @@ export function canAssignEditor(
 }
 
 /**
+ * 사용자가 챕터 콘텐츠(editedContent)를 편집할 수 있는지 확인
+ * AUTHOR는 윤문 진행 중/완료/승인 상태에서 편집 불가 (읽기 전용)
+ */
+export function canEditChapterContent(
+  role: UserRole,
+  chapterStatus: ChapterStatus
+): boolean {
+  if (role === UserRole.ADMIN || role === UserRole.EDITOR) {
+    return true;
+  }
+
+  // AUTHOR: 번역 완료 이후 모든 상태에서 읽기 전용 (댓글/승인만 가능)
+  if (role === UserRole.AUTHOR) {
+    const readOnlyStatuses: ChapterStatus[] = [
+      ChapterStatus.TRANSLATED,
+      ChapterStatus.REVIEWING,
+      ChapterStatus.EDITED,
+      ChapterStatus.APPROVED,
+    ];
+    return !readOnlyStatuses.includes(chapterStatus);
+  }
+
+  return false;
+}
+
+/**
+ * 작가가 수정 추적에서 수락/거절 결과를 적용할 수 있는지 확인
+ * EDITED/REVIEWING 상태에서만 가능
+ */
+export function canApplyTrackChanges(
+  role: UserRole,
+  chapterStatus: ChapterStatus
+): boolean {
+  if (role === UserRole.ADMIN) return true;
+  if (role === UserRole.AUTHOR) {
+    const reviewableStatuses: ChapterStatus[] = [ChapterStatus.EDITED, ChapterStatus.REVIEWING];
+    return reviewableStatuses.includes(chapterStatus);
+  }
+  return false;
+}
+
+/**
  * 역할별 사용 가능한 다음 상태 목록 반환
  */
 export function getAvailableNextStatuses(
@@ -210,11 +252,11 @@ export function getRoleDisplayName(role: UserRole): string {
 export function getStatusDisplayName(status: ChapterStatus): string {
   const names: Record<ChapterStatus, string> = {
     PENDING: "대기",
-    TRANSLATING: "번역 중",
-    TRANSLATED: "번역 완료",
-    REVIEWING: "검토 중",
-    EDITED: "수정 완료",
-    APPROVED: "승인됨",
+    TRANSLATING: "번역중",
+    TRANSLATED: "번역완료",
+    REVIEWING: "윤문중",
+    EDITED: "윤문완료",
+    APPROVED: "작가승인",
   };
   return names[status] || status;
 }

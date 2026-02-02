@@ -5,29 +5,29 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1.5 [&>svg]:pointer-events-none transition-all duration-200 overflow-hidden",
+  "inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1.5 [&>svg]:pointer-events-none transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] overflow-hidden",
   {
     variants: {
       variant: {
         default:
           "border-transparent bg-primary text-primary-foreground shadow-sm [a&]:hover:bg-primary/90",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/80",
+          "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/70",
         destructive:
-          "border-transparent bg-status-error/15 text-status-error [a&]:hover:bg-status-error/25",
+          "border-transparent bg-status-error/12 text-status-error [a&]:hover:bg-status-error/20",
         outline:
-          "border-current/20 text-foreground bg-transparent [a&]:hover:bg-accent",
-        // Status variants with colors
+          "border-border text-foreground bg-transparent [a&]:hover:bg-muted",
+        // Status variants — dot + tinted bg
         success:
-          "border-transparent bg-status-success/15 text-status-success [a&]:hover:bg-status-success/25",
+          "border-transparent bg-status-success/10 text-status-success before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-status-success before:shrink-0 [a&]:hover:bg-status-success/18",
         warning:
-          "border-transparent bg-status-warning/15 text-status-warning [a&]:hover:bg-status-warning/25",
+          "border-transparent bg-status-warning/10 text-status-warning before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-status-warning before:shrink-0 [a&]:hover:bg-status-warning/18",
         info:
-          "border-transparent bg-status-info/15 text-status-info [a&]:hover:bg-status-info/25",
+          "border-transparent bg-status-info/10 text-status-info before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-status-info before:shrink-0 [a&]:hover:bg-status-info/18",
         pending:
-          "border-transparent bg-status-pending/15 text-status-pending [a&]:hover:bg-status-pending/25",
+          "border-transparent bg-status-pending/10 text-status-pending before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-status-pending before:shrink-0 [a&]:hover:bg-status-pending/18",
         progress:
-          "border-transparent bg-status-progress/15 text-status-progress [a&]:hover:bg-status-progress/25",
+          "border-transparent bg-status-progress/10 text-status-progress before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-status-progress before:shrink-0 [a&]:hover:bg-status-progress/18",
       },
     },
     defaultVariants: {

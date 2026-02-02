@@ -32,6 +32,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
+  const registered = searchParams.get("registered");
   const verified = searchParams.get("verified");
   const reset = searchParams.get("reset");
   const urlError = searchParams.get("error");
@@ -88,14 +89,23 @@ function LoginForm() {
   return (
     <Card className="border-border/60 shadow-lg">
       <CardHeader className="text-center pb-2">
-        <CardTitle className="text-2xl font-semibold tracking-tight">TransNovel</CardTitle>
+        <CardTitle className="text-2xl font-semibold tracking-tight">
+          <span className="lg:hidden">TransNovel</span>
+          <span className="hidden lg:inline">로그인</span>
+        </CardTitle>
         <CardDescription className="text-muted-foreground">
-          문학 번역 플랫폼에 로그인하세요
+          <span className="lg:hidden">문학 번역 플랫폼에 로그인하세요</span>
+          <span className="hidden lg:inline">계정에 로그인하세요</span>
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {registered && (
+              <div className="rounded-md bg-accent/30 border border-accent/50 p-3 text-sm text-accent-foreground">
+                회원가입이 완료되었습니다. 로그인해주세요.
+              </div>
+            )}
             {verified && (
               <div className="rounded-md bg-accent/30 border border-accent/50 p-3 text-sm text-accent-foreground">
                 이메일이 인증되었습니다. 로그인해주세요.
@@ -211,7 +221,13 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-[300px]">
+          <div className="h-6 w-6 border-2 border-foreground border-t-transparent rounded-full animate-spin" />
+        </div>
+      }
+    >
       <LoginForm />
     </Suspense>
   );

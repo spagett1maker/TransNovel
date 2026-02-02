@@ -49,9 +49,9 @@ const STATUS_STYLES: Record<string, { bg: string; border: string; text: string }
   PENDING: { bg: "bg-muted", border: "border-border", text: "text-muted-foreground" },
   TRANSLATING: { bg: "bg-status-progress/20", border: "border-status-progress", text: "text-status-progress" },
   TRANSLATED: { bg: "bg-status-success/20", border: "border-status-success/50", text: "text-status-success" },
+  REVIEWING: { bg: "bg-status-warning/20", border: "border-status-warning", text: "text-status-warning" },
   EDITED: { bg: "bg-status-success/30", border: "border-status-success", text: "text-status-success" },
   APPROVED: { bg: "bg-status-success/30", border: "border-status-success", text: "text-status-success" },
-  FAILED: { bg: "bg-status-error/20", border: "border-status-error", text: "text-status-error" },
 };
 
 // 컴팩트 회차 셀 (그리드용)
@@ -69,8 +69,11 @@ const ChapterCell = memo(function ChapterCell({
   isCurrentlyTranslating?: boolean;
 }) {
   const isPending = chapter.status === "PENDING";
-  const canSelect = isPending && !isTranslating;
+  // 활성 작업이 없을 때 TRANSLATING(멈춘) 챕터도 선택 가능
+  const isStuckTranslating = chapter.status === "TRANSLATING" && !isTranslating;
+  const canSelect = (isPending || isStuckTranslating) && !isTranslating;
   const styles = STATUS_STYLES[chapter.status] || STATUS_STYLES.PENDING;
+  const isCompleted = ["TRANSLATED", "EDITED", "APPROVED"].includes(chapter.status);
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -80,7 +83,7 @@ const ChapterCell = memo(function ChapterCell({
             onClick={() => canSelect && onToggle(chapter.number)}
             disabled={!canSelect}
             className={cn(
-              "relative h-10 w-full rounded-lg border text-sm font-medium tabular-nums transition-all",
+              "relative h-10 w-full rounded-lg border text-sm font-medium tabular-nums transition-all focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2",
               styles.bg,
               styles.border,
               canSelect && "hover:border-primary hover:bg-primary/5 cursor-pointer",
@@ -96,7 +99,8 @@ const ChapterCell = memo(function ChapterCell({
                 isSelected ? "text-primary" : styles.text,
                 chapter.status === "TRANSLATED" && "text-status-success"
               )}>
-                {chapter.number}
+                {isCompleted && <span className="sr-only">완료 </span>}
+                {isCompleted ? `✓${chapter.number}` : chapter.number}
               </span>
             )}
             {isSelected && (
@@ -135,7 +139,8 @@ function ServerTranslationProgress({
     totalChapters: number;
     completedChapters: number;
     failedChapters: number;
-    currentChapter?: { number: number };
+    failedChapterNums: number[];
+    currentChapter?: { number: number; currentChunk?: number; totalChunks?: number };
     error?: string;
   };
   onPause: () => void;
@@ -143,31 +148,29 @@ function ServerTranslationProgress({
   onRetry: (chapterNumbers: number[]) => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
-  // 실패한 챕터 번호 목록 (실제 데이터가 없으면 빈 배열)
-  const failedChapterNumbers = useMemo((): number[] => {
-    // 실제 구현에서는 서버에서 실패한 챕터 목록을 받아와야 함
-    // 현재는 빈 배열 반환 (UI에서 failedChapters > 0일 때 "재시도" 버튼 표시용)
-    return [];
-  }, []);
 
   const totalProgress = job.totalChapters > 0
     ? Math.round((job.completedChapters / job.totalChapters) * 100)
     : 0;
 
   useEffect(() => {
-    if (job.status === "COMPLETED") {
+    // 완료 또는 실패(부분 완료 포함) 시 챕터 목록 새로고침
+    if (job.status === "COMPLETED" || job.status === "FAILED") {
       onComplete();
     }
   }, [job.status, onComplete]);
 
   const isActive = job.status === "PENDING" || job.status === "IN_PROGRESS";
 
+  // 부분 완료 여부 (일부 성공, 일부 실패)
+  const isPartialFailure = job.status === "FAILED" && job.completedChapters > 0;
+
   const statusConfig: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
     PENDING: { icon: <Clock className="h-4 w-4" />, label: "대기 중", color: "text-status-pending" },
     IN_PROGRESS: { icon: <Loader2 className="h-4 w-4 animate-spin" />, label: "번역 중", color: "text-status-progress" },
     COMPLETED: { icon: <CheckCircle2 className="h-4 w-4" />, label: "완료", color: "text-status-success" },
     PAUSED: { icon: <Pause className="h-4 w-4" />, label: "일시정지", color: "text-status-warning" },
-    FAILED: { icon: <XCircle className="h-4 w-4" />, label: "실패", color: "text-status-error" },
+    FAILED: { icon: <XCircle className="h-4 w-4" />, label: isPartialFailure ? "부분 완료" : "실패", color: isPartialFailure ? "text-status-warning" : "text-status-error" },
   };
 
   const config = statusConfig[job.status] || statusConfig.PENDING;
@@ -184,6 +187,11 @@ function ServerTranslationProgress({
             {job.status === "IN_PROGRESS" && job.currentChapter && (
               <span className="text-sm text-muted-foreground">
                 {job.currentChapter.number}화 번역 중
+                {job.currentChapter.totalChunks && job.currentChapter.totalChunks > 1 && (
+                  <span className="ml-1 text-xs">
+                    ({job.currentChapter.currentChunk || 0}/{job.currentChapter.totalChunks} 청크)
+                  </span>
+                )}
               </span>
             )}
           </div>
@@ -206,7 +214,8 @@ function ServerTranslationProgress({
           <Progress value={totalProgress} className={cn(
             "h-2",
             job.status === "COMPLETED" && "[&>div]:bg-status-success",
-            job.status === "FAILED" && "[&>div]:bg-status-error",
+            job.status === "FAILED" && isPartialFailure && "[&>div]:bg-status-warning",
+            job.status === "FAILED" && !isPartialFailure && "[&>div]:bg-status-error",
             isActive && "[&>div]:bg-status-progress"
           )} />
           {isActive && (
@@ -216,16 +225,20 @@ function ServerTranslationProgress({
           )}
         </div>
 
-        {job.status === "FAILED" && job.error && (
-          <p className="mt-2 text-sm text-status-error">{job.error}</p>
+        {job.status === "FAILED" && (
+          <p className="mt-2 text-sm text-status-error">
+            {isPartialFailure
+              ? `${job.failedChapterNums.length}개 회차 번역 실패 (${job.failedChapterNums.slice(0, 10).join(", ")}${job.failedChapterNums.length > 10 ? `... 외 ${job.failedChapterNums.length - 10}개` : ""}화). 아래에서 실패한 회차를 재시도할 수 있습니다.`
+              : job.error || "번역에 실패했습니다."}
+          </p>
         )}
       </div>
 
       {/* 실패한 회차 복구 */}
-      {job.failedChapters > 0 && (job.status === "COMPLETED" || job.status === "FAILED") && (
+      {job.failedChapterNums.length > 0 && (job.status === "COMPLETED" || job.status === "FAILED") && (
         <div className="border-t p-4">
           <ErrorRecovery
-            failedChapters={failedChapterNumbers}
+            failedChapters={job.failedChapterNums}
             onRetry={onRetry}
             className="border-none bg-transparent p-0"
           />
@@ -248,7 +261,7 @@ function ServerTranslationProgress({
           {Array.from({ length: job.totalChapters }, (_, i) => {
             const chapterNum = i + 1;
             const isCompleted = i < job.completedChapters;
-            const isFailed = failedChapterNumbers.includes(chapterNum);
+            const isFailed = job.failedChapterNums.includes(chapterNum);
             const isCurrent = job.currentChapter?.number === chapterNum;
 
             return (
@@ -272,11 +285,14 @@ function ServerTranslationProgress({
   );
 }
 
+// 그리드 초기 표시 개수
+const GRID_INITIAL_COUNT = 200;
+
 export default function TranslatePage() {
   const params = useParams();
   const workId = params.id as string;
 
-  const { getJobByWorkId, startTracking, pauseJob } = useTranslation();
+  const { getJobByWorkId, startTracking, pauseJob, removeJob } = useTranslation();
 
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
@@ -285,7 +301,8 @@ export default function TranslatePage() {
   const [bibleStatus, setBibleStatus] = useState<string | null>(null);
   const [isStartingTranslation, setIsStartingTranslation] = useState(false);
   const [rangeInput, setRangeInput] = useState("");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
+  const [showAllGrid, setShowAllGrid] = useState(false);
 
   const job = getJobByWorkId(workId);
   const isTranslating = job && (job.status === "PENDING" || job.status === "IN_PROGRESS");
@@ -301,6 +318,8 @@ export default function TranslatePage() {
       if (chaptersRes.ok) {
         const data = await chaptersRes.json();
         setChapters(data.chapters || data);
+      } else {
+        toast.error("챕터 목록을 불러오지 못했습니다");
       }
 
       if (workRes.ok) {
@@ -314,6 +333,7 @@ export default function TranslatePage() {
       }
     } catch (error) {
       console.error("Failed to fetch chapters:", error);
+      toast.error("챕터 목록을 불러오지 못했습니다");
     } finally {
       setIsLoading(false);
     }
@@ -323,9 +343,12 @@ export default function TranslatePage() {
     fetchChapters();
   }, [fetchChapters]);
 
+  // 번역 가능한 챕터: PENDING + (활성 작업이 없을 때) 멈춘 TRANSLATING 챕터
   const pendingChapters = useMemo(
-    () => chapters.filter((c) => c.status === "PENDING"),
-    [chapters]
+    () => chapters.filter((c) =>
+      c.status === "PENDING" || (c.status === "TRANSLATING" && !isTranslating)
+    ),
+    [chapters, isTranslating]
   );
 
   const translatedCount = useMemo(
@@ -336,6 +359,12 @@ export default function TranslatePage() {
   const progressPercent = chapters.length > 0
     ? Math.round((translatedCount / chapters.length) * 100)
     : 0;
+
+  // 그리드에서 표시할 챕터 (200개 이상일 때 점진적 렌더링)
+  const visibleGridChapters = useMemo(() => {
+    if (showAllGrid || chapters.length <= GRID_INITIAL_COUNT) return chapters;
+    return chapters.slice(0, GRID_INITIAL_COUNT);
+  }, [chapters, showAllGrid]);
 
   const toggleChapter = useCallback((number: number) => {
     setSelectedChapters((prev) => {
@@ -400,6 +429,7 @@ export default function TranslatePage() {
   }, [rangeInput, parseRange, pendingChapters]);
 
   const handleTranslate = async () => {
+    if (isStartingTranslation) return;
     if (selectedChapters.size === 0) {
       toast.error("번역할 회차를 선택해주세요.");
       return;
@@ -409,6 +439,11 @@ export default function TranslatePage() {
 
     try {
       setIsStartingTranslation(true);
+
+      // 기존 완료/실패 작업이 있으면 정리
+      if (job && (job.status === "COMPLETED" || job.status === "FAILED")) {
+        removeJob(job.jobId);
+      }
 
       const response = await fetch("/api/translation", {
         method: "POST",
@@ -459,7 +494,7 @@ export default function TranslatePage() {
   }, []);
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-6xl">
       {/* Breadcrumb */}
       <nav className="mb-6">
         <Link
@@ -497,8 +532,8 @@ export default function TranslatePage() {
       ) : bibleStatus !== "CONFIRMED" ? (
         /* 설정집 미확정 */
         <div className="section-surface p-8 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 mx-auto mb-4">
-            <BookOpen className="h-7 w-7 text-amber-600" />
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 mx-auto mb-4">
+            <BookOpen className="h-7 w-7 text-amber-600 dark:text-amber-400" />
           </div>
           <h3 className="text-xl font-semibold mb-2">설정집 확정이 필요합니다</h3>
           <p className="text-muted-foreground mb-6 max-w-md mx-auto">
@@ -628,12 +663,14 @@ export default function TranslatePage() {
                   {chapters.length}개
                 </Badge>
               </div>
-              {/* 뷰 전환 - 세그먼트 컨트롤 스타일 */}
-              <div className="flex items-center bg-muted rounded-lg p-1">
+              {/* 뷰 전환 - 세그먼트 컨트롤 스타일 (Issue 12: ARIA radiogroup) */}
+              <div className="flex items-center bg-muted rounded-lg p-1" role="radiogroup" aria-label="뷰 모드 선택">
                 <button
                   onClick={() => setViewMode("grid")}
+                  role="radio"
+                  aria-checked={viewMode === "grid"}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2",
                     viewMode === "grid"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -644,8 +681,10 @@ export default function TranslatePage() {
                 </button>
                 <button
                   onClick={() => setViewMode("list")}
+                  role="radio"
+                  aria-checked={viewMode === "list"}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2",
                     viewMode === "list"
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -680,26 +719,43 @@ export default function TranslatePage() {
             {/* 콘텐츠 */}
             <div className="p-4">
               {viewMode === "grid" ? (
-                <div className="grid grid-cols-10 sm:grid-cols-15 md:grid-cols-20 gap-1.5">
-                  {chapters.map((chapter) => {
-                    const isCurrentlyTranslating = isTranslating && job?.currentChapter?.number === chapter.number;
-                    return (
-                      <ChapterCell
-                        key={chapter.id}
-                        chapter={chapter}
-                        isSelected={selectedChapters.has(chapter.number)}
-                        onToggle={toggleChapter}
-                        isTranslating={!!isTranslating}
-                        isCurrentlyTranslating={isCurrentlyTranslating}
-                      />
-                    );
-                  })}
-                </div>
+                <>
+                  <div className="overflow-x-auto">
+                    <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-15 xl:grid-cols-20 gap-1.5">
+                      {visibleGridChapters.map((chapter) => {
+                        const isCurrentlyTranslating = isTranslating && job?.currentChapter?.number === chapter.number;
+                        return (
+                          <ChapterCell
+                            key={chapter.id}
+                            chapter={chapter}
+                            isSelected={selectedChapters.has(chapter.number)}
+                            onToggle={toggleChapter}
+                            isTranslating={!!isTranslating}
+                            isCurrentlyTranslating={isCurrentlyTranslating}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* 더 보기 버튼 (Issue 6: 200개 이상일 때) */}
+                  {chapters.length > GRID_INITIAL_COUNT && !showAllGrid && (
+                    <div className="mt-4 text-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowAllGrid(true)}
+                      >
+                        나머지 {chapters.length - GRID_INITIAL_COUNT}개 더 보기
+                      </Button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="space-y-1 max-h-[500px] overflow-y-auto">
                   {chapters.map((chapter) => {
                     const isPending = chapter.status === "PENDING";
-                    const canSelect = isPending && !isTranslating;
+                    const isStuckTranslating = chapter.status === "TRANSLATING" && !isTranslating;
+                    const canSelect = (isPending || isStuckTranslating) && !isTranslating;
                     const isCurrentlyTranslating = isTranslating && job?.currentChapter?.number === chapter.number;
                     const isSelected = selectedChapters.has(chapter.number);
                     const styles = STATUS_STYLES[chapter.status] || STATUS_STYLES.PENDING;
@@ -707,7 +763,16 @@ export default function TranslatePage() {
                     return (
                       <div
                         key={chapter.id}
+                        role={canSelect ? "checkbox" : undefined}
+                        aria-checked={canSelect ? isSelected : undefined}
+                        tabIndex={canSelect ? 0 : undefined}
                         onClick={() => canSelect && toggleChapter(chapter.number)}
+                        onKeyDown={(e) => {
+                          if (canSelect && (e.key === "Enter" || e.key === " ")) {
+                            e.preventDefault();
+                            toggleChapter(chapter.number);
+                          }
+                        }}
                         className={cn(
                           "flex items-center gap-3 px-3 py-2 rounded-lg border transition-all",
                           styles.bg,
@@ -724,7 +789,10 @@ export default function TranslatePage() {
                         )}>
                           {chapter.number}화
                         </span>
-                        <span className="flex-1 text-sm truncate">
+                        <span
+                          className="flex-1 text-sm truncate"
+                          title={chapter.title || `제 ${chapter.number}화`}
+                        >
                           {chapter.title || `제 ${chapter.number}화`}
                         </span>
                         <span className="text-xs text-muted-foreground tabular-nums">

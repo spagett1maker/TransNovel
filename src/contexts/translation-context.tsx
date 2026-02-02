@@ -10,6 +10,7 @@ import {
   useMemo,
   ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 
 // 경량 작업 요약 정보 (서버와 동일한 구조)
 // 챕터 단위 진행률만 추적 (청크 없음)
@@ -21,8 +22,11 @@ export interface TranslationJobSummary {
   totalChapters: number;
   completedChapters: number;
   failedChapters: number;
+  failedChapterNums: number[]; // 실패한 챕터 번호 목록
   currentChapter?: {
     number: number;
+    currentChunk?: number;
+    totalChunks?: number;
   };
   error?: string;
   createdAt: Date;
@@ -76,6 +80,7 @@ const TranslationContext = createContext<TranslationContextType | undefined>(
 );
 
 export function TranslationProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [jobs, setJobs] = useState<Map<string, TranslationJobSummary>>(
     new Map()
   );
@@ -101,7 +106,10 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
   // SSE 재연결 시도 횟수 추적
   const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
   const reconnectTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // 서버 확인 후 재연결 사이클 횟수 추적 (무한 루프 방지)
+  const serverCheckCountRef = useRef<Map<string, number>>(new Map());
   const MAX_RECONNECT_ATTEMPTS = 5;
+  const MAX_SERVER_CHECK_CYCLES = 3; // 서버 확인 → 재연결 사이클 최대 3회
   const RECONNECT_DELAY = 3000; // 3초
 
   // SSE 연결 함수
@@ -155,18 +163,20 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
                 ...job,
                 currentChapter: {
                   number: data.data.chapterNumber,
+                  totalChunks: data.data.totalChunks,
                 },
               });
               break;
 
-            // chunk_progress는 더 이상 사용하지 않지만 하위 호환성을 위해 유지
             case "chunk_progress":
-              // 청크 진행률은 무시하고 챕터 번호만 업데이트
+              // 대형 챕터의 청크 진행률 업데이트
               if (data.data.chapterNumber) {
                 newJobs.set(jobId, {
                   ...job,
                   currentChapter: {
                     number: data.data.chapterNumber,
+                    currentChunk: data.data.currentChunk,
+                    totalChunks: data.data.totalChunks,
                   },
                 });
               }
@@ -206,20 +216,28 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
                 ...job,
                 status: "COMPLETED",
                 completedChapters,
+                failedChapters: data.data.failedChapters ?? 0,
+                failedChapterNums: data.data.failedChapterNums ?? [],
                 currentChapter: undefined,
-                progress: 100,
+                progress: calculateProgress(completedChapters, job.totalChapters),
               });
               break;
             }
 
-            case "job_failed":
+            case "job_failed": {
+              const failedCompletedChapters = data.data.completedChapters ?? job.completedChapters;
               newJobs.set(jobId, {
                 ...job,
                 status: "FAILED",
+                completedChapters: failedCompletedChapters,
+                failedChapters: data.data.failedChapters ?? job.failedChapters,
+                failedChapterNums: data.data.failedChapterNums ?? job.failedChapterNums,
                 error: data.data.error,
                 currentChapter: undefined,
+                progress: calculateProgress(failedCompletedChapters, job.totalChapters),
               });
               break;
+            }
           }
 
           return newJobs;
@@ -233,6 +251,9 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             currentEs.close();
             eventSourcesRef.current.delete(jobId);
           }
+
+          // 서버 컴포넌트 데이터 갱신 (대시보드 통계, 작품 목록 등)
+          router.refresh();
         }
       } catch (e) {
         console.error("[TranslationContext] SSE 파싱 에러:", e);
@@ -243,6 +264,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       // 연결 성공 시 재연결 카운터 리셋
       console.log("[TranslationContext] SSE 연결 성공:", jobId);
       reconnectAttemptsRef.current.set(jobId, 0);
+      serverCheckCountRef.current.delete(jobId); // 서버 확인 사이클도 리셋
     };
 
     es.onerror = (err) => {
@@ -289,6 +311,29 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         console.error("[TranslationContext] 최대 재연결 시도 초과, 서버 상태 확인:", jobId);
         reconnectAttemptsRef.current.delete(jobId);
 
+        // 서버 확인 사이클 횟수 체크 (무한 루프 방지)
+        const serverCheckCount = (serverCheckCountRef.current.get(jobId) || 0) + 1;
+        serverCheckCountRef.current.set(jobId, serverCheckCount);
+
+        if (serverCheckCount > MAX_SERVER_CHECK_CYCLES) {
+          console.error("[TranslationContext] 서버 확인 사이클 초과, 연결 포기:", jobId);
+          serverCheckCountRef.current.delete(jobId);
+          setJobs((prev) => {
+            const newJobs = new Map(prev);
+            const job = newJobs.get(jobId);
+            if (job) {
+              newJobs.set(jobId, {
+                ...job,
+                status: "FAILED",
+                error: "서버 연결이 불안정합니다. 페이지를 새로고침해주세요.",
+              });
+            }
+            return newJobs;
+          });
+          router.refresh();
+          return;
+        }
+
         // 서버에서 실제 상태 확인
         fetch(`/api/translation/active`)
           .then(res => res.json())
@@ -300,8 +345,13 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
                 const newJobs = new Map(prev);
                 newJobs.set(jobId, {
                   ...serverJob,
+                  failedChapterNums: serverJob.failedChapterNums ?? [],
                   currentChapter: serverJob.currentChapter
-                    ? { number: serverJob.currentChapter.number }
+                    ? {
+                        number: serverJob.currentChapter.number,
+                        currentChunk: serverJob.currentChapter.currentChunk,
+                        totalChunks: serverJob.currentChapter.totalChunks,
+                      }
                     : undefined,
                   createdAt: new Date(serverJob.createdAt),
                   updatedAt: serverJob.updatedAt ? new Date(serverJob.updatedAt) : undefined,
@@ -322,9 +372,13 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
                   connectSSE(jobId, true);
                 }, RECONNECT_DELAY);
                 reconnectTimeoutsRef.current.set(jobId, timeoutId);
+              } else {
+                // 터미널 상태면 사이클 카운터 정리
+                serverCheckCountRef.current.delete(jobId);
               }
             } else {
               // 서버에 작업이 없으면 실패 처리
+              serverCheckCountRef.current.delete(jobId);
               setJobs((prev) => {
                 const newJobs = new Map(prev);
                 const job = newJobs.get(jobId);
@@ -353,7 +407,11 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       console.log("[TranslationContext] 서버에서 작업 목록 조회");
       const response = await fetch("/api/translation/active");
       if (!response.ok) {
-        console.error("[TranslationContext] 작업 목록 조회 실패:", response.status);
+        if (response.status === 401) {
+          console.log("[TranslationContext] 세션 미설정, 작업 목록 조회 스킵");
+        } else {
+          console.error("[TranslationContext] 작업 목록 조회 실패:", response.status);
+        }
         return;
       }
 
@@ -373,8 +431,11 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             totalChapters: number;
             completedChapters: number;
             failedChapters: number;
+            failedChapterNums?: number[];
             currentChapter?: {
               number: number;
+              currentChunk?: number;
+              totalChunks?: number;
             };
             error?: string;
             createdAt: string;
@@ -382,8 +443,13 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           }) => {
             newJobs.set(job.jobId, {
               ...job,
+              failedChapterNums: job.failedChapterNums ?? [],
               currentChapter: job.currentChapter
-                ? { number: job.currentChapter.number }
+                ? {
+                    number: job.currentChapter.number,
+                    currentChunk: job.currentChapter.currentChunk,
+                    totalChunks: job.currentChapter.totalChunks,
+                  }
                 : undefined,
               createdAt: new Date(job.createdAt),
               updatedAt: job.updatedAt ? new Date(job.updatedAt) : undefined,
@@ -470,6 +536,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         totalChapters,
         completedChapters: 0,
         failedChapters: 0,
+        failedChapterNums: [],
         createdAt: new Date(),
         progress: 0,
       };
@@ -692,6 +759,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           totalChapters: progress.totalChapters,
           completedChapters: progress.completedChapters,
           failedChapters: progress.failedChapters,
+          failedChapterNums: existingJob?.failedChapterNums ?? [],
           currentChapter: progress.currentChapter,
           error: progress.error,
           createdAt: existingJob?.createdAt || new Date(),

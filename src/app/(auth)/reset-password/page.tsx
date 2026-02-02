@@ -33,9 +33,9 @@ function ResetPasswordForm() {
     return (
       <Card className="w-full max-w-md">
         <CardContent className="py-12 text-center">
-          <XCircle className="mx-auto h-12 w-12 text-red-500" />
+          <XCircle className="mx-auto h-12 w-12 text-destructive" />
           <h2 className="mt-4 text-xl font-semibold">유효하지 않은 링크</h2>
-          <p className="mt-2 text-gray-500">
+          <p className="mt-2 text-muted-foreground">
             비밀번호 재설정 링크가 유효하지 않습니다.
           </p>
           <Button asChild className="mt-6" variant="outline">
@@ -97,9 +97,9 @@ function ResetPasswordForm() {
     return (
       <Card className="w-full max-w-md">
         <CardContent className="py-12 text-center">
-          <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
+          <CheckCircle className="mx-auto h-12 w-12 text-status-success" />
           <h2 className="mt-4 text-xl font-semibold">비밀번호 변경 완료</h2>
-          <p className="mt-2 text-gray-500">
+          <p className="mt-2 text-muted-foreground">
             비밀번호가 성공적으로 변경되었습니다.
             <br />
             로그인 페이지로 이동합니다...
@@ -118,7 +118,7 @@ function ResetPasswordForm() {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -155,7 +155,7 @@ function ResetPasswordForm() {
       <CardFooter className="justify-center">
         <Link
           href="/login"
-          className="text-sm text-gray-600 hover:text-gray-900 hover:underline"
+          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
         >
           로그인으로 돌아가기
         </Link>
@@ -170,7 +170,7 @@ export default function ResetPasswordPage() {
       fallback={
         <Card className="w-full max-w-md">
           <CardContent className="py-12 text-center">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-gray-400" />
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
           </CardContent>
         </Card>
       }

@@ -10,13 +10,15 @@ import {
 export const dynamic = "force-dynamic";
 
 // 폴링 간격 (ms)
-const POLL_INTERVAL = 1000;
+const POLL_INTERVAL = 3000;
 // Keepalive 간격 (ms)
 const KEEPALIVE_INTERVAL = 15000;
 // DB 폴링 재시도 설정
 const MAX_CONSECUTIVE_POLL_FAILURES = 5;
-// 멈춘 작업 타임아웃 (5분)
-const STUCK_JOB_TIMEOUT_MS = 5 * 60 * 1000;
+// 멈춘 작업 타임아웃 (30분)
+// 대형 챕터(19만자 등)는 25+ 청크로 분할되어 각 청크당 ~80초 소요
+// 총 번역 시간이 30분 이상 걸릴 수 있으므로 넉넉하게 설정
+const STUCK_JOB_TIMEOUT_MS = 30 * 60 * 1000;
 
 // DB 쿼리 재시도 래퍼
 async function withRetry<T>(
@@ -41,7 +43,7 @@ export async function GET(req: Request) {
 
   if (!session) {
     console.log("[SSE Stream] 인증 실패");
-    return new Response("Unauthorized", { status: 401 });
+    return new Response("인증이 필요합니다", { status: 401 });
   }
   console.log("[SSE Stream] 인증 성공:", session.user.email);
 
@@ -51,15 +53,27 @@ export async function GET(req: Request) {
 
   if (!jobId) {
     console.log("[SSE Stream] jobId 누락");
-    return new Response("Missing jobId", { status: 400 });
+    return new Response("작업 ID가 필요합니다", { status: 400 });
   }
 
   // DB에서 작업 조회 (async)
   const job = await translationManager.getJob(jobId);
   if (!job) {
     console.log("[SSE Stream] 작업을 찾을 수 없음:", jobId);
-    return new Response("Job not found", { status: 404 });
+    return new Response("작업을 찾을 수 없습니다", { status: 404 });
   }
+
+  // 작업 소유자 확인
+  const { db } = await import("@/lib/db");
+  const dbJob = await db.activeTranslationJob.findUnique({
+    where: { jobId },
+    select: { userId: true },
+  });
+  if (dbJob && dbJob.userId !== session.user.id) {
+    console.log("[SSE Stream] 작업 소유자 불일치:", { jobUserId: dbJob.userId, sessionUserId: session.user.id });
+    return new Response("권한이 없습니다", { status: 403 });
+  }
+
   console.log("[SSE Stream] 작업 조회 성공:", { status: job.status, chapters: job.chapters.length });
 
   const encoder = new TextEncoder();
@@ -135,7 +149,9 @@ export async function GET(req: Request) {
             completedChapters: jobSummary.completedChapters,
             totalChapters: jobSummary.totalChapters,
             failedChapters: jobSummary.failedChapters,
+            failedChapterNums: jobSummary.failedChapterNums,
             currentChapter: jobSummary.currentChapter,
+            error: jobSummary.error,
           },
         };
         console.log(`[${timestamp()}] [SSE Stream] 초기 상태 전송:`, currentState.type);
@@ -224,6 +240,8 @@ export async function GET(req: Request) {
                     status: currentSummary.status,
                     completedChapters: currentSummary.completedChapters,
                     totalChapters: currentSummary.totalChapters,
+                    failedChapters: currentSummary.failedChapters,
+                    failedChapterNums: currentSummary.failedChapterNums,
                   },
                 });
                 cleanup();
@@ -235,6 +253,10 @@ export async function GET(req: Request) {
                   data: {
                     status: currentSummary.status,
                     error: currentSummary.error,
+                    completedChapters: currentSummary.completedChapters,
+                    totalChapters: currentSummary.totalChapters,
+                    failedChapters: currentSummary.failedChapters,
+                    failedChapterNums: currentSummary.failedChapterNums,
                   },
                 });
                 cleanup();

@@ -63,7 +63,7 @@ export function ConfirmDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             설정집 확정
           </DialogTitle>
           <DialogDescription>
@@ -89,9 +89,9 @@ export function ConfirmDialog({
           </div>
 
           {/* 경고 */}
-          <div className="flex gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-sm text-amber-800">
+          <div className="flex gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="text-sm text-amber-800 dark:text-amber-300">
               <p className="font-medium mb-1">확정 전 확인해주세요</p>
               <ul className="text-xs space-y-1 list-disc ml-4">
                 <li>확정 후에는 설정집을 수정할 수 없습니다</li>

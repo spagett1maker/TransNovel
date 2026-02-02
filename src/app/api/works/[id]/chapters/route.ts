@@ -14,7 +14,7 @@ export async function GET(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -100,7 +100,7 @@ export async function POST(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -180,11 +180,13 @@ export async function POST(
       );
     }
 
-    // 총 회차 수 계산 (별도 쿼리 불필요)
-    const totalChapters = existingCount + createdCount;
-    await db.work.update({
-      where: { id },
-      data: { totalChapters },
+    // 총 회차 수를 실제 DB에서 카운트 (동시 업로드 시 정확성 보장)
+    await db.$transaction(async (tx) => {
+      const totalChapters = await tx.chapter.count({ where: { workId: id } });
+      await tx.work.update({
+        where: { id },
+        data: { totalChapters },
+      });
     });
 
     return NextResponse.json(

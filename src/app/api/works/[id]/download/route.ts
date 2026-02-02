@@ -21,7 +21,7 @@ export async function GET(
     const session = await getServerSession(authOptions);
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const { id: workId } = await params;
@@ -77,48 +77,22 @@ export async function GET(
       }
     }
 
-    // 챕터 조회 (번역 완료된 것만)
-    const chapters = await db.chapter.findMany({
+    // 메모리 최적화: 메타데이터만 먼저 조회
+    const chapterMeta = await db.chapter.findMany({
       where: {
         workId,
         ...(chapterNumbers ? { number: { in: chapterNumbers } } : {}),
         status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
       },
       select: {
+        id: true,
         number: true,
         title: true,
-        translatedContent: true,
-        editedContent: true,
       },
       orderBy: { number: "asc" },
     });
 
-    if (chapters.length === 0) {
-      return NextResponse.json(
-        { error: "다운로드할 수 있는 번역본이 없습니다." },
-        { status: 400 }
-      );
-    }
-
-    // 콘텐츠 준비
-    const chapterContents = chapters
-      .map((ch) => {
-        const content =
-          contentType === "edited"
-            ? ch.editedContent || ch.translatedContent
-            : ch.translatedContent;
-
-        if (!content) return null;
-
-        return {
-          number: ch.number,
-          title: ch.title,
-          content,
-        };
-      })
-      .filter((ch): ch is NonNullable<typeof ch> => ch !== null);
-
-    if (chapterContents.length === 0) {
+    if (chapterMeta.length === 0) {
       return NextResponse.json(
         { error: "다운로드할 수 있는 번역본이 없습니다." },
         { status: 400 }
@@ -129,8 +103,27 @@ export async function GET(
     const safeTitle = work.titleKo.replace(/[/\\?%*:|"<>]/g, "_");
 
     // 단일 챕터인 경우 단일 파일로
-    if (chapterContents.length === 1) {
-      const chapter = chapterContents[0];
+    if (chapterMeta.length === 1) {
+      const meta = chapterMeta[0];
+      const ch = await db.chapter.findUnique({
+        where: { id: meta.id },
+        select: { translatedContent: true, editedContent: true },
+      });
+
+      const content = ch
+        ? contentType === "edited"
+          ? ch.editedContent || ch.translatedContent
+          : ch.translatedContent
+        : null;
+
+      if (!content) {
+        return NextResponse.json(
+          { error: "다운로드할 수 있는 번역본이 없습니다." },
+          { status: 400 }
+        );
+      }
+
+      const chapter = { number: meta.number, title: meta.title, content };
       let buffer: Buffer;
       let mimeType: string;
       let filename: string;
@@ -155,9 +148,24 @@ export async function GET(
     }
 
     // 여러 챕터인 경우 ZIP으로 묶기
+    // 메모리 최적화: 챕터 콘텐츠를 한 건씩 DB에서 로드하여 파일 버퍼로 변환
     const files: Array<{ name: string; content: Buffer }> = [];
 
-    for (const chapter of chapterContents) {
+    for (const meta of chapterMeta) {
+      const ch = await db.chapter.findUnique({
+        where: { id: meta.id },
+        select: { translatedContent: true, editedContent: true },
+      });
+
+      const content = ch
+        ? contentType === "edited"
+          ? ch.editedContent || ch.translatedContent
+          : ch.translatedContent
+        : null;
+
+      if (!content) continue;
+
+      const chapter = { number: meta.number, title: meta.title, content };
       let buffer: Buffer;
       let ext: string;
 
@@ -169,11 +177,18 @@ export async function GET(
         ext = "txt";
       }
 
-      const filename = chapter.title
-        ? `${chapter.number}화_${chapter.title.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
-        : `${chapter.number}화.${ext}`;
+      const filename = meta.title
+        ? `${meta.number}화_${meta.title.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
+        : `${meta.number}화.${ext}`;
 
       files.push({ name: filename, content: buffer });
+    }
+
+    if (files.length === 0) {
+      return NextResponse.json(
+        { error: "다운로드할 수 있는 번역본이 없습니다." },
+        { status: 400 }
+      );
     }
 
     const zipBuffer = await generateZIP(files);

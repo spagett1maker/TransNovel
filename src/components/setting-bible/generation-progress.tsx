@@ -20,10 +20,9 @@ interface GenerationProgressProps {
   workId: string;
   workTitle: string;
   totalChapters: number;
-  batchSize?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onComplete: () => void;
+  onComplete: () => void | Promise<void>;
 }
 
 interface GenerationState {
@@ -53,7 +52,6 @@ export function GenerationProgress({
   workId,
   workTitle,
   totalChapters,
-  batchSize = 10, // 10개씩 (Vercel Pro 타임아웃 확장)
   open,
   onOpenChange,
   onComplete,
@@ -61,7 +59,7 @@ export function GenerationProgress({
   const [state, setState] = useState<GenerationState>({
     status: "idle",
     currentBatch: 0,
-    totalBatches: Math.ceil(totalChapters / batchSize),
+    totalBatches: 0,
     analyzedChapters: 0,
   });
 
@@ -109,12 +107,57 @@ export function GenerationProgress({
     shouldCancelRef.current = false;
     clearCancelRequest(workId); // 시작할 때 기존 취소 요청 클리어
 
-    const totalBatches = Math.ceil(totalChapters / batchSize);
-
-    // 전역 상태에 작업 시작 알림
-    startGeneration(workId, workTitle, totalChapters, batchSize);
-
     try {
+      // 서버에서 토큰 기반 최적 배치 계획을 가져옴
+      let batchPlan: number[][] = [];
+      try {
+        const planRes = await fetch(`/api/works/${workId}/setting-bible/batch-plan`);
+        if (planRes.ok) {
+          const planData = await planRes.json();
+          batchPlan = planData.batches;
+        }
+      } catch {
+        // batch-plan 실패 시 fallback
+      }
+
+      // fallback: batch-plan API 실패 시 기존 방식 (10개 고정 배치)
+      if (batchPlan.length === 0) {
+        let actualChapterNumbers: number[] = [];
+        try {
+          const chaptersRes = await fetch(`/api/works/${workId}/chapters?all=true&limit=2000`);
+          if (chaptersRes.ok) {
+            const chaptersData = await chaptersRes.json();
+            const chapters = chaptersData.chapters || chaptersData;
+            actualChapterNumbers = (chapters as { number: number }[])
+              .map((ch: { number: number }) => ch.number)
+              .sort((a: number, b: number) => a - b);
+          }
+        } catch {
+          // 실패 시 fallback
+        }
+
+        if (actualChapterNumbers.length === 0) {
+          actualChapterNumbers = Array.from({ length: totalChapters }, (_, i) => i + 1);
+        }
+
+        // 10개씩 고정 배치 (fallback)
+        const fallbackBatchSize = 10;
+        for (let i = 0; i < actualChapterNumbers.length; i += fallbackBatchSize) {
+          batchPlan.push(actualChapterNumbers.slice(i, i + fallbackBatchSize));
+        }
+      }
+
+      const totalBatches = batchPlan.length;
+      const actualTotal = batchPlan.reduce((sum, b) => sum + b.length, 0);
+
+      // 전역 상태에 작업 시작 알림
+      startGeneration(workId, workTitle, actualTotal, totalBatches);
+
+      setState((prev) => ({
+        ...prev,
+        totalBatches,
+      }));
+
       // 먼저 설정집 초기화
       const initResponse = await fetch(`/api/works/${workId}/setting-bible`, {
         method: "POST",
@@ -140,12 +183,7 @@ export function GenerationProgress({
           return;
         }
 
-        const startChapter = batch * batchSize + 1;
-        const endChapter = Math.min((batch + 1) * batchSize, totalChapters);
-        const chapterNumbers = Array.from(
-          { length: endChapter - startChapter + 1 },
-          (_, i) => startChapter + i
-        );
+        const chapterNumbers = batchPlan[batch];
 
         setState((prev) => ({
           ...prev,
@@ -232,7 +270,8 @@ export function GenerationProgress({
       completeGeneration(workId, state.stats);
 
       toast.success("설정집 생성이 완료되었습니다!");
-      onComplete();
+      // onComplete (fetchBible)을 await하여 데이터가 로드된 후 UI 갱신
+      await onComplete();
     } catch (error) {
       console.error("Bible generation error:", error);
       const errorMessage = error instanceof Error ? error.message : "알 수 없는 오류";
@@ -247,7 +286,7 @@ export function GenerationProgress({
 
       toast.error(error instanceof Error ? error.message : "설정집 생성 실패");
     }
-  }, [workId, workTitle, totalChapters, batchSize, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest, state.stats]);
+  }, [workId, workTitle, totalChapters, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest, state.stats]);
 
   // 다이얼로그가 열리면 자동 시작
   useEffect(() => {
@@ -262,11 +301,11 @@ export function GenerationProgress({
       setState({
         status: "idle",
         currentBatch: 0,
-        totalBatches: Math.ceil(totalChapters / batchSize),
+        totalBatches: 0,
         analyzedChapters: 0,
       });
     }
-  }, [open, totalChapters, batchSize]);
+  }, [open]);
 
   const progressPercent =
     state.totalBatches > 0
@@ -287,10 +326,10 @@ export function GenerationProgress({
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
             )}
             {state.status === "completed" && (
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             )}
             {state.status === "failed" && (
-              <XCircle className="h-5 w-5 text-red-600" />
+              <XCircle className="h-5 w-5 text-destructive" />
             )}
             {state.status === "idle" && (
               <Sparkles className="h-5 w-5 text-primary" />
@@ -298,7 +337,7 @@ export function GenerationProgress({
             설정집 생성
           </DialogTitle>
           <DialogDescription>
-            {state.status === "generating" && state.retryCount && state.retryCount > 0
+            {state.status === "generating" && state.retryCount != null && state.retryCount > 0
               ? `재시도 중... (${state.retryCount}/${BATCH_MAX_RETRIES})`
               : state.status === "generating" && "AI가 원문을 분석하고 있습니다..."}
             {state.status === "completed" && "설정집 생성이 완료되었습니다."}
@@ -347,22 +386,22 @@ export function GenerationProgress({
 
           {/* 페이지 이탈 주의 안내 */}
           {state.status === "generating" && (
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+            <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg text-sm text-primary">
               <p className="font-medium">분석 중 이 페이지를 벗어나지 마세요</p>
-              <p className="mt-1 text-xs text-blue-600">페이지를 닫거나 이동하면 분석이 중단됩니다.</p>
+              <p className="mt-1 text-xs text-primary/80">페이지를 닫거나 이동하면 분석이 중단됩니다.</p>
             </div>
           )}
 
           {/* 재시도 상태 표시 */}
           {state.status === "generating" && state.retryCount && state.retryCount > 0 && (
-            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-700 dark:text-amber-400">
               API 서버가 혼잡합니다. 15초 후 자동으로 재시도합니다...
             </div>
           )}
 
           {/* 에러 메시지 */}
           {state.error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
               <p className="font-medium">{state.error}</p>
               {state.error.includes("503") || state.error.includes("overload") ? (
                 <p className="mt-1 text-xs">AI 서버가 과부하 상태입니다. 잠시 후 다시 시도해주세요.</p>

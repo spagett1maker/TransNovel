@@ -42,6 +42,118 @@ const MAX_CONSECUTIVE_FAILURES = 5; // 연속 실패 허용 횟수 (기존 3 -> 
 const MAX_FAILURE_RATE = 0.3; // 최대 실패율 30% (기존 20% -> 30%)
 const MIN_FAILURES_FOR_RATE_CHECK = 10; // 실패율 체크 시작 최소 실패 수 (기존 5 -> 10)
 
+// ============================================
+// Circuit Breaker (API 연속 실패 시 자동 차단)
+// ============================================
+
+type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+export class CircuitBreaker {
+  private state: CircuitState = "CLOSED";
+  private failureCount: number = 0;
+  private lastFailureTime: number = 0;
+  private readonly failureThreshold: number;
+  private readonly resetTimeoutMs: number;
+
+  constructor(options?: { failureThreshold?: number; resetTimeoutMs?: number }) {
+    this.failureThreshold = options?.failureThreshold ?? 5;
+    this.resetTimeoutMs = options?.resetTimeoutMs ?? 60000; // 60초
+  }
+
+  /**
+   * 요청 전 호출 — OPEN 상태면 에러를 던짐
+   */
+  check(): void {
+    if (this.state === "CLOSED") return;
+
+    if (this.state === "OPEN") {
+      // 타임아웃 경과 시 HALF_OPEN으로 전환
+      if (Date.now() - this.lastFailureTime >= this.resetTimeoutMs) {
+        this.state = "HALF_OPEN";
+        log("Circuit breaker: OPEN → HALF_OPEN (시험 요청 허용)");
+        return;
+      }
+      const remainingSec = Math.ceil((this.resetTimeoutMs - (Date.now() - this.lastFailureTime)) / 1000);
+      throw new TranslationError(
+        `API 서비스가 일시적으로 중단되었습니다. ${remainingSec}초 후 자동 복구를 시도합니다.`,
+        "CIRCUIT_OPEN",
+        true
+      );
+    }
+
+    // HALF_OPEN: 통과 허용 (1건만)
+  }
+
+  /**
+   * 요청 성공 시 호출
+   */
+  onSuccess(): void {
+    if (this.state === "HALF_OPEN") {
+      log("Circuit breaker: HALF_OPEN → CLOSED (복구 성공)");
+    }
+    this.state = "CLOSED";
+    this.failureCount = 0;
+  }
+
+  /**
+   * 요청 실패 시 호출
+   * @param immediate true면 즉시 OPEN (AUTH_ERROR, MODEL_ERROR 등)
+   */
+  onFailure(immediate: boolean = false): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+
+    if (this.state === "HALF_OPEN") {
+      this.state = "OPEN";
+      log("Circuit breaker: HALF_OPEN → OPEN (복구 실패)");
+      return;
+    }
+
+    if (immediate || this.failureCount >= this.failureThreshold) {
+      this.state = "OPEN";
+      log(`Circuit breaker: CLOSED → OPEN (${immediate ? "치명적 에러" : `연속 ${this.failureCount}회 실패`})`);
+    }
+  }
+
+  isOpen(): boolean {
+    if (this.state !== "OPEN") return false;
+    // 타임아웃 경과 확인
+    if (Date.now() - this.lastFailureTime >= this.resetTimeoutMs) {
+      return false; // check()에서 HALF_OPEN으로 전환됨
+    }
+    return true;
+  }
+
+  getState(): { state: CircuitState; failureCount: number } {
+    return { state: this.state, failureCount: this.failureCount };
+  }
+
+  // 테스트용 리셋
+  reset(): void {
+    this.state = "CLOSED";
+    this.failureCount = 0;
+    this.lastFailureTime = 0;
+  }
+}
+
+// 글로벌 circuit breaker 인스턴스 (HMR에서도 유지)
+const globalForCircuitBreaker = globalThis as unknown as {
+  geminiCircuitBreaker: CircuitBreaker | undefined;
+};
+
+const circuitBreaker =
+  globalForCircuitBreaker.geminiCircuitBreaker ??
+  new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60000 });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForCircuitBreaker.geminiCircuitBreaker = circuitBreaker;
+}
+
+// 외부에서 circuit breaker 상태 조회용
+export function getCircuitBreakerState() {
+  return circuitBreaker.getState();
+}
+
 // 글로벌 Rate Limiter (싱글톤) - Promise 기반 큐로 경쟁 조건 방지
 class RateLimiter {
   private tokens: number;
@@ -518,6 +630,9 @@ export async function translateText(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     log(`번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
+      // 0. Circuit Breaker 확인
+      circuitBreaker.check();
+
       // 1. Rate Limiter 토큰 획득 (초당 요청 수 제한)
       await rateLimiter.acquire();
 
@@ -550,7 +665,7 @@ ${content}
             temperature: 0.4,
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 16384,
+            maxOutputTokens: 65536,
           },
         }),
         API_TIMEOUT_MS,
@@ -573,6 +688,7 @@ ${content}
       }
 
       log("번역 성공, 결과 길이:", text.length);
+      circuitBreaker.onSuccess();
       return text;
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
@@ -582,6 +698,12 @@ ${content}
         message: lastError.message,
         retryable: lastError.retryable,
       });
+
+      // Circuit Breaker 실패 보고 (AUTH/MODEL 에러는 즉시 차단)
+      const isCritical = lastError.code === "AUTH_ERROR" || lastError.code === "MODEL_ERROR";
+      if (lastError.code !== "CIRCUIT_OPEN") {
+        circuitBreaker.onFailure(isCritical);
+      }
 
       // Rate limit 에러 시 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
@@ -599,6 +721,7 @@ ${content}
         const baseDelay =
           lastError.code === "RATE_LIMIT" ? 30000 :  // 30초
           lastError.code === "TIMEOUT" ? 10000 :      // 10초
+          lastError.code === "CIRCUIT_OPEN" ? 5000 :   // 5초 (circuit breaker 대기)
           3000;                                        // 3초
 
         const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
@@ -618,20 +741,125 @@ ${content}
   );
 }
 
+// 토큰 기반 동적 청크 사이징
+// Gemini 2.5 Flash 출력 한도: 65536 토큰
+// 번역은 출력 ≈ 입력이므로 출력 토큰이 병목
+const MAX_OUTPUT_TOKENS = 65536;
+const TARGET_CHUNK_TOKENS = Math.floor(MAX_OUTPUT_TOKENS * 0.9); // ~59000 토큰
+
 /**
- * 챕터 전체를 한 번에 번역 (Vercel Pro 플랜용)
- * 청크 분할 없이 전체 챕터를 번역하여 맥락 유지 및 품질 향상
+ * 토큰 예산에 맞는 최대 글자 수를 계산
+ * 텍스트의 CJK 비율을 측정하여 글자당 토큰 비율을 역산
+ */
+function maxCharsForTokenBudget(sampleText: string, tokenBudget: number): number {
+  const cjkPattern = /[\u4e00-\u9fff\u3400-\u4dbf\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]/g;
+  const cjkMatches = sampleText.match(cjkPattern);
+  const cjkCount = cjkMatches?.length ?? 0;
+  const totalChars = sampleText.length || 1;
+  const cjkRatio = cjkCount / totalChars;
+
+  // 가중 평균 토큰/글자 비율: CJK=1.5, non-CJK=0.25
+  const avgTokensPerChar = cjkRatio * 1.5 + (1 - cjkRatio) * 0.25;
+  const maxChars = Math.floor(tokenBudget / avgTokensPerChar);
+
+  log("maxCharsForTokenBudget", {
+    cjkRatio: (cjkRatio * 100).toFixed(1) + "%",
+    avgTokensPerChar: avgTokensPerChar.toFixed(3),
+    tokenBudget,
+    maxChars,
+  });
+
+  return maxChars;
+}
+
+// 동적 청크 임계값 계산 (최소 8000자 보장)
+function getChunkThreshold(text: string): number {
+  return Math.max(8000, maxCharsForTokenBudget(text, TARGET_CHUNK_TOKENS));
+}
+
+function getChunkSize(text: string): number {
+  return Math.max(8000, maxCharsForTokenBudget(text, TARGET_CHUNK_TOKENS));
+}
+
+// 대형 챕터 청크 진행률 콜백
+export type LargeChapterProgressCallback = (
+  currentChunk: number,
+  totalChunks: number
+) => void | Promise<void>;
+
+/**
+ * 챕터 전체를 번역 (Vercel Pro 플랜용)
+ * - 토큰 예산 이내: 한 번에 번역하여 맥락 유지 및 품질 향상
+ * - 토큰 예산 초과: 자동으로 청크 분할 후 번역하여 타임아웃 방지
  */
 export async function translateChapter(
   content: string,
   context: TranslationContext,
-  maxRetries: number = 5
+  maxRetries: number = 5,
+  onChunkProgress?: LargeChapterProgressCallback
 ): Promise<string> {
+  const chunkThreshold = getChunkThreshold(content);
   log("translateChapter 시작", {
     contentLength: content.length,
+    chunkThreshold,
     title: context.titleKo,
   });
 
+  // 대형 챕터는 자동으로 청크 분할
+  if (content.length > chunkThreshold) {
+    log(`대형 챕터 감지 (${content.length}자 > ${chunkThreshold}자), 청크 분할 번역 진행`);
+    return translateLargeChapter(content, context, maxRetries, onChunkProgress);
+  }
+
+  // 소형 챕터는 한 번에 번역
+  return translateSingleChapter(content, context, maxRetries);
+}
+
+/**
+ * 대형 챕터를 청크로 분할하여 번역
+ */
+async function translateLargeChapter(
+  content: string,
+  context: TranslationContext,
+  maxRetries: number,
+  onChunkProgress?: LargeChapterProgressCallback
+): Promise<string> {
+  const dynamicChunkSize = getChunkSize(content);
+  const chunks = splitIntoChunks(content, dynamicChunkSize);
+  log(`대형 챕터 청크 분할: ${chunks.length}개 청크`, {
+    contentLength: content.length,
+    chunkSizes: chunks.map(c => c.length),
+  });
+
+  // 청크 진행률을 콜백으로 전달
+  const { results, failedChunks } = await translateChunks(
+    chunks,
+    context,
+    onChunkProgress
+      ? async (current, total) => {
+          await onChunkProgress(current, total);
+        }
+      : undefined
+  );
+
+  if (failedChunks.length > 0) {
+    logError(`대형 챕터 번역 중 ${failedChunks.length}개 청크 실패`, {
+      failedChunks,
+      totalChunks: chunks.length,
+    });
+  }
+
+  return results.join("\n\n");
+}
+
+/**
+ * 소형 챕터를 한 번에 번역
+ */
+async function translateSingleChapter(
+  content: string,
+  context: TranslationContext,
+  maxRetries: number
+): Promise<string> {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
   });
@@ -644,6 +872,9 @@ export async function translateChapter(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     log(`챕터 번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
+      // 0. Circuit Breaker 확인
+      circuitBreaker.check();
+
       // 1. Rate Limiter 토큰 획득
       await rateLimiter.acquire();
 
@@ -699,6 +930,7 @@ ${content}
       }
 
       log("챕터 번역 성공, 결과 길이:", text.length);
+      circuitBreaker.onSuccess();
       return text;
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
@@ -708,6 +940,12 @@ ${content}
         message: lastError.message,
         retryable: lastError.retryable,
       });
+
+      // Circuit Breaker 실패 보고
+      const isCritical = lastError.code === "AUTH_ERROR" || lastError.code === "MODEL_ERROR";
+      if (lastError.code !== "CIRCUIT_OPEN") {
+        circuitBreaker.onFailure(isCritical);
+      }
 
       // Rate limit 에러 시 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
@@ -724,6 +962,7 @@ ${content}
         const baseDelay =
           lastError.code === "RATE_LIMIT" ? 30000 :  // 30초
           lastError.code === "TIMEOUT" ? 15000 :     // 15초 (챕터 번역은 더 긴 대기)
+          lastError.code === "CIRCUIT_OPEN" ? 5000 :  // 5초
           5000;                                       // 5초
 
         const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
@@ -858,6 +1097,16 @@ export async function translateChunks(
           "CONSECUTIVE_WAIT",
           i
         );
+      }
+
+      // Circuit Breaker가 열렸으면 즉시 중단
+      if (circuitBreaker.isOpen()) {
+        logError("Circuit breaker OPEN 상태로 청크 번역 중단", {
+          failedChunks,
+          processedChunks: i - startFromChunk + 1,
+          totalChunks: chunks.length,
+        });
+        break;
       }
 
       // 재시도 불가능한 오류가 연속 N회 이상이면 중단
@@ -1133,7 +1382,7 @@ export async function retranslateText(
             temperature: 0.3, // 재번역은 좀 더 일관성 있게
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 16384,
+            maxOutputTokens: 65536,
           },
         }),
         API_TIMEOUT_MS,
@@ -1188,4 +1437,110 @@ export async function retranslateText(
     "MAX_RETRIES",
     false
   );
+}
+
+// ============================================
+// AI 표현 개선 (윤문 지원)
+// ============================================
+
+export interface ExpressionSuggestion {
+  text: string;
+  reason: string;
+}
+
+/**
+ * 선택한 텍스트에 대해 3가지 대안 표현을 제안합니다.
+ */
+export async function improveExpression(
+  selectedText: string,
+  context: string,
+  genres: string[] = []
+): Promise<ExpressionSuggestion[]> {
+  const genreNote = genres.length > 0
+    ? `이 작품의 장르는 ${genres.join(", ")}입니다. 장르 분위기에 맞는 표현을 제안하세요.`
+    : "";
+
+  const systemPrompt = `당신은 전문 한국어 윤문가입니다. 사용자가 선택한 텍스트에 대해 더 나은 3가지 대안 표현을 제안하세요.
+
+규칙:
+- 원문의 의미를 정확히 유지하면서 표현력을 높이세요
+- 자연스러운 한국어 문체를 사용하세요
+- 각 제안은 서로 다른 스타일/뉘앙스를 가져야 합니다
+- 번역 투가 아닌 자연스러운 한국어를 사용하세요
+${genreNote}
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON 배열만 반환하세요:
+[
+  { "text": "대안 표현 1", "reason": "변경 이유 (10자 이내)" },
+  { "text": "대안 표현 2", "reason": "변경 이유 (10자 이내)" },
+  { "text": "대안 표현 3", "reason": "변경 이유 (10자 이내)" }
+]`;
+
+  const userPrompt = context
+    ? `문맥:\n${context}\n\n개선할 텍스트: "${selectedText}"`
+    : `개선할 텍스트: "${selectedText}"`;
+
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+  const IMPROVE_TIMEOUT_MS = 30000; // 30초
+  const MAX_RETRIES = 2;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      await rateLimiter.acquire();
+
+      const result = await withTimeout(
+        model.generateContent({
+          contents: [
+            { role: "user", parts: [{ text: systemPrompt + "\n\n" + userPrompt }] },
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            topP: 0.9,
+            topK: 40,
+            maxOutputTokens: 2048,
+            responseMimeType: "application/json",
+          },
+        }),
+        IMPROVE_TIMEOUT_MS,
+        "AI 표현 개선"
+      );
+
+      const responseText = result.response.text().trim();
+
+      // Parse JSON from response (handle possible markdown code block wrapping)
+      let jsonStr = responseText;
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+
+      const parsed = JSON.parse(jsonStr);
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed
+        .filter(
+          (item: unknown): item is ExpressionSuggestion =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as ExpressionSuggestion).text === "string" &&
+            typeof (item as ExpressionSuggestion).reason === "string"
+        )
+        .slice(0, 3);
+    } catch (error) {
+      // Last attempt — throw
+      if (attempt === MAX_RETRIES - 1) {
+        if (error instanceof TranslationError) {
+          throw new Error(error.message);
+        }
+        const mapped = analyzeError(error);
+        throw new Error(mapped.message);
+      }
+      // Retry on transient errors
+      console.warn(`[AI Improve] 시도 ${attempt + 1} 실패, 재시도:`, error instanceof Error ? error.message : error);
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+
+  return [];
 }

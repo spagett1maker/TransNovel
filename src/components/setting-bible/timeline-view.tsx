@@ -36,27 +36,27 @@ const EVENT_TYPE_CONFIG: Record<EventType, {
   PLOT: {
     label: "플롯",
     icon: <BookOpen className="h-4 w-4" />,
-    color: "bg-blue-100 text-blue-700 border-blue-200",
+    color: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800",
   },
   CHARACTER_DEV: {
     label: "캐릭터",
     icon: <Users className="h-4 w-4" />,
-    color: "bg-purple-100 text-purple-700 border-purple-200",
+    color: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800",
   },
   FORESHADOWING: {
     label: "복선",
     icon: <Lightbulb className="h-4 w-4" />,
-    color: "bg-amber-100 text-amber-700 border-amber-200",
+    color: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800",
   },
   REVEAL: {
     label: "반전",
     icon: <Zap className="h-4 w-4" />,
-    color: "bg-red-100 text-red-700 border-red-200",
+    color: "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800",
   },
   WORLD_BUILDING: {
     label: "세계관",
     icon: <Globe className="h-4 w-4" />,
-    color: "bg-green-100 text-green-700 border-green-200",
+    color: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800",
   },
 };
 
@@ -134,7 +134,7 @@ export function TimelineView({ events }: TimelineViewProps) {
                 </p>
 
                 {event.foreshadowNote && (
-                  <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                  <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded text-xs text-amber-800 dark:text-amber-300">
                     <span className="font-medium">복선 메모:</span>{" "}
                     {event.foreshadowNote}
                   </div>

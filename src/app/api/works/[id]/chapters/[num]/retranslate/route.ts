@@ -18,7 +18,7 @@ export async function POST(
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const { id: workId, num } = await params;
@@ -64,6 +64,14 @@ export async function POST(
       return NextResponse.json(
         { error: "회차를 찾을 수 없습니다." },
         { status: 404 }
+      );
+    }
+
+    // 윤문 완료/승인된 챕터는 재번역 불가 (에디터 작업 보호)
+    if (["EDITED", "APPROVED"].includes(chapter.status)) {
+      return NextResponse.json(
+        { error: "윤문 완료된 회차는 재번역할 수 없습니다. 스냅샷을 확인해주세요." },
+        { status: 400 }
       );
     }
 

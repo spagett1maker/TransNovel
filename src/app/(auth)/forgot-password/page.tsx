@@ -51,14 +51,14 @@ export default function ForgotPasswordPage() {
     return (
       <Card className="w-full max-w-md">
         <CardContent className="py-12 text-center">
-          <Mail className="mx-auto h-12 w-12 text-blue-500" />
+          <Mail className="mx-auto h-12 w-12 text-status-info" />
           <h2 className="mt-4 text-xl font-semibold">이메일을 확인하세요</h2>
-          <p className="mt-2 text-gray-500">
+          <p className="mt-2 text-muted-foreground">
             비밀번호 재설정 링크를 발송했습니다.
             <br />
             이메일을 확인해주세요.
           </p>
-          <p className="mt-4 text-sm text-gray-400">
+          <p className="mt-4 text-sm text-muted-foreground/70">
             이메일이 도착하지 않았다면 스팸함을 확인해주세요.
           </p>
           <Button asChild className="mt-6" variant="outline">
@@ -83,7 +83,7 @@ export default function ForgotPasswordPage() {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -99,7 +99,7 @@ export default function ForgotPasswordPage() {
               disabled={isLoading}
             />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
+          <Button type="submit" className="w-full" disabled={isLoading || !email.trim()}>
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             재설정 링크 받기
           </Button>
@@ -108,7 +108,7 @@ export default function ForgotPasswordPage() {
       <CardFooter className="justify-center">
         <Link
           href="/login"
-          className="text-sm text-gray-600 hover:text-gray-900 hover:underline"
+          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
         >
           로그인으로 돌아가기
         </Link>

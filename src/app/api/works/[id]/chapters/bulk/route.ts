@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
 import { authOptions } from "@/lib/auth";
+import { parseChaptersFromText } from "@/lib/chapter-parser";
 import { db, dbTransaction } from "@/lib/db";
 
 interface ChapterInput {
@@ -20,100 +21,6 @@ interface BulkUploadRequest {
 // 배치 크기 (한 번에 처리할 챕터 수)
 const BATCH_SIZE = 50;
 
-/**
- * 텍스트에서 챕터를 자동 감지하여 분리
- * 패턴: 第X章, 第X话, 第X節, Chapter X, 제X화, 제X장 등
- */
-function parseChaptersFromText(text: string, separator?: string): ChapterInput[] {
-  const chapters: ChapterInput[] = [];
-
-  // 사용자 지정 구분자가 있는 경우
-  if (separator) {
-    const parts = text.split(separator).filter(p => p.trim());
-    parts.forEach((part, index) => {
-      const trimmed = part.trim();
-      if (trimmed) {
-        // 첫 줄을 제목으로 사용
-        const lines = trimmed.split('\n');
-        const firstLine = lines[0].trim();
-        const content = lines.slice(1).join('\n').trim() || trimmed;
-
-        chapters.push({
-          number: index + 1,
-          title: firstLine.length < 100 ? firstLine : undefined,
-          content: content,
-        });
-      }
-    });
-    return chapters;
-  }
-
-  // 자동 감지 패턴
-  const patterns = [
-    /^第[一二三四五六七八九十百千\d]+[章话節节回卷]/gm,  // 중국어
-    /^第[一二三四五六七八九十百千\d]+話/gm,              // 일본어
-    /^Chapter\s*\d+/gim,                                 // 영어
-    /^제\s*\d+\s*[화장회]/gm,                            // 한국어
-    /^[\d]+[\.、]\s*/gm,                                 // 숫자만
-  ];
-
-  let bestPattern: RegExp | null = null;
-  let maxMatches = 0;
-
-  // 가장 많이 매칭되는 패턴 찾기
-  for (const pattern of patterns) {
-    const matches = text.match(pattern);
-    if (matches && matches.length > maxMatches) {
-      maxMatches = matches.length;
-      bestPattern = pattern;
-    }
-  }
-
-  if (bestPattern && maxMatches >= 2) {
-    // 패턴으로 분리
-    const parts = text.split(bestPattern);
-    const headers = text.match(bestPattern) || [];
-
-    // 첫 번째 부분이 프롤로그인 경우 처리
-    if (parts[0].trim()) {
-      chapters.push({
-        number: 0,
-        title: "프롤로그",
-        content: parts[0].trim(),
-      });
-    }
-
-    headers.forEach((header, index) => {
-      const content = parts[index + 1]?.trim();
-      if (content) {
-        // 헤더에서 번호 추출
-        const numMatch = header.match(/\d+/);
-        const num = numMatch ? parseInt(numMatch[0]) : index + 1;
-
-        // 헤더 다음 줄에서 제목 추출
-        const lines = content.split('\n');
-        const firstLine = lines[0].trim();
-        const hasTitle = firstLine.length < 50 && !firstLine.includes('。') && !firstLine.includes('.');
-
-        chapters.push({
-          number: num,
-          title: hasTitle ? firstLine : undefined,
-          content: hasTitle ? lines.slice(1).join('\n').trim() : content,
-        });
-      }
-    });
-  } else {
-    // 패턴을 찾지 못한 경우 전체를 하나의 챕터로
-    chapters.push({
-      number: 1,
-      title: undefined,
-      content: text.trim(),
-    });
-  }
-
-  return chapters;
-}
-
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -123,7 +30,7 @@ export async function POST(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -140,8 +47,20 @@ export async function POST(
 
     // 자동 감지 모드 또는 원본 텍스트 제공 시
     if (body.rawText) {
+      if (typeof body.rawText !== "string") {
+        return NextResponse.json({ error: "rawText는 문자열이어야 합니다." }, { status: 400 });
+      }
       chapters = parseChaptersFromText(body.rawText, body.separator);
     } else if (body.chapters && Array.isArray(body.chapters)) {
+      // 클라이언트가 직접 전달한 챕터 배열 검증
+      for (const ch of body.chapters) {
+        if (typeof ch.number !== "number" || !Number.isInteger(ch.number) || ch.number < 0) {
+          return NextResponse.json({ error: "회차 번호가 유효하지 않습니다." }, { status: 400 });
+        }
+        if (typeof ch.content !== "string" || ch.content.trim().length === 0) {
+          return NextResponse.json({ error: "회차 내용이 비어있습니다." }, { status: 400 });
+        }
+      }
       chapters = body.chapters;
     }
 
@@ -224,15 +143,17 @@ export async function POST(
       }
     }
 
-    // 총 회차 수 업데이트 및 상태 변경
-    const totalChapters = await db.chapter.count({ where: { workId: id } });
-    await db.work.update({
-      where: { id },
-      data: {
-        totalChapters,
-        // 회차가 등록되면 상태를 REGISTERED로 변경 (PREPARING에서)
-        status: work.status === "PREPARING" ? "REGISTERED" : work.status,
-      },
+    // 총 회차 수 업데이트 및 상태 변경 (트랜잭션으로 동시 업로드 시 카운트 정확성 보장)
+    await db.$transaction(async (tx) => {
+      const totalChapters = await tx.chapter.count({ where: { workId: id } });
+      await tx.work.update({
+        where: { id },
+        data: {
+          totalChapters,
+          // 회차가 등록되면 상태를 REGISTERED로 변경 (PREPARING에서)
+          status: work.status === "PREPARING" ? "REGISTERED" : work.status,
+        },
+      });
     });
 
     return NextResponse.json({

@@ -2,13 +2,14 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
 import { authOptions } from "@/lib/auth";
+import { db } from "@/lib/db";
 import { translationManager } from "@/lib/translation-manager";
 
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const { jobId } = await req.json();
@@ -17,6 +18,26 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "작업 ID가 필요합니다." },
         { status: 400 }
+      );
+    }
+
+    // 작업 소유자 확인
+    const job = await db.activeTranslationJob.findUnique({
+      where: { jobId },
+      select: { userId: true },
+    });
+
+    if (!job) {
+      return NextResponse.json(
+        { error: "작업을 찾을 수 없습니다." },
+        { status: 404 }
+      );
+    }
+
+    if (job.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "본인의 작업만 일시정지할 수 있습니다." },
+        { status: 403 }
       );
     }
 

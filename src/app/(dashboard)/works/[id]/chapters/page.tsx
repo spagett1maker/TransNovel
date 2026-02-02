@@ -16,12 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-
-interface ParsedChapter {
-  number: number;
-  title?: string;
-  content: string;
-}
+import { parseChaptersFromText, type ParsedChapter } from "@/lib/chapter-parser";
 
 export default function ChaptersPage() {
   const params = useParams();
@@ -33,38 +28,7 @@ export default function ChaptersPage() {
   const [parsedChapters, setParsedChapters] = useState<ParsedChapter[]>([]);
 
   const parseChapters = useCallback((text: string) => {
-    const chapters: ParsedChapter[] = [];
-
-    // 회차 구분 패턴: 제1화, 1화, 第1章, Chapter 1 등
-    const chapterPattern = /(?:^|\n)(?:제?\s*(\d+)\s*[화장회편]|第\s*(\d+)\s*[章话回]|Chapter\s*(\d+))/gi;
-
-    const matches = [...text.matchAll(chapterPattern)];
-
-    if (matches.length === 0) {
-      // 구분자가 없으면 전체를 1화로 처리
-      if (text.trim()) {
-        chapters.push({
-          number: 1,
-          content: text.trim(),
-        });
-      }
-    } else {
-      for (let i = 0; i < matches.length; i++) {
-        const match = matches[i];
-        const chapterNum = parseInt(match[1] || match[2] || match[3]);
-        const startIndex = match.index! + match[0].length;
-        const endIndex = i < matches.length - 1 ? matches[i + 1].index! : text.length;
-        const content = text.slice(startIndex, endIndex).trim();
-
-        if (content) {
-          chapters.push({
-            number: chapterNum,
-            content,
-          });
-        }
-      }
-    }
-
+    const chapters = parseChaptersFromText(text);
     setParsedChapters(chapters);
   }, []);
 
@@ -125,7 +89,7 @@ export default function ChaptersPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-6xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
@@ -134,8 +98,8 @@ export default function ChaptersPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold">회차 업로드</h1>
-          <p className="text-gray-500">원고 파일을 업로드하세요</p>
+          <h1 className="text-3xl font-semibold tracking-tight">회차 업로드</h1>
+          <p className="text-muted-foreground">원고 파일을 업로드하세요</p>
         </div>
       </div>
 
@@ -171,7 +135,7 @@ export default function ChaptersPage() {
               onChange={handleTextChange}
             />
 
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               지원 형식: TXT (UTF-8 인코딩 권장)
             </p>
           </CardContent>
@@ -189,8 +153,8 @@ export default function ChaptersPage() {
           </CardHeader>
           <CardContent>
             {parsedChapters.length === 0 ? (
-              <div className="py-16 text-center text-gray-500">
-                <FileText className="mx-auto h-12 w-12 text-gray-300" />
+              <div className="py-16 text-center text-muted-foreground">
+                <FileText className="mx-auto h-12 w-12 text-muted-foreground/40" />
                 <p className="mt-2">원고를 입력해주세요</p>
               </div>
             ) : (
@@ -201,12 +165,14 @@ export default function ChaptersPage() {
                     className="rounded-lg border p-3 space-y-2"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">{chapter.number}화</span>
+                      <span className="font-medium">
+                        {chapter.number}화{chapter.title && ` - ${chapter.title}`}
+                      </span>
                       <Badge variant="outline">
                         {chapter.content.length.toLocaleString()}자
                       </Badge>
                     </div>
-                    <p className="text-sm text-gray-500 line-clamp-3">
+                    <p className="text-sm text-muted-foreground line-clamp-3">
                       {chapter.content.slice(0, 200)}...
                     </p>
                   </div>

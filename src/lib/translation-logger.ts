@@ -461,6 +461,92 @@ class TranslationLogger {
     };
   }
 
+  // === 로그 보존 정책 (자동 정리) ===
+
+  /**
+   * 오래된 로그를 차등 보존 기간에 따라 삭제
+   * - DEBUG: 7일
+   * - INFO: 30일
+   * - WARN/ERROR: 90일
+   * @returns 삭제된 총 레코드 수
+   */
+  async cleanupOldLogs(options?: {
+    debugDays?: number;
+    infoDays?: number;
+    warnErrorDays?: number;
+  }): Promise<{ deletedCount: number; details: Record<string, number> }> {
+    const debugDays = options?.debugDays ?? 7;
+    const infoDays = options?.infoDays ?? 30;
+    const warnErrorDays = options?.warnErrorDays ?? 90;
+
+    const now = Date.now();
+    const details: Record<string, number> = {};
+
+    try {
+      // DEBUG 로그 정리
+      const debugResult = await db.translationLog.deleteMany({
+        where: {
+          level: LogLevel.DEBUG,
+          createdAt: { lt: new Date(now - debugDays * 24 * 60 * 60 * 1000) },
+        },
+      });
+      details.DEBUG = debugResult.count;
+
+      // INFO 로그 정리
+      const infoResult = await db.translationLog.deleteMany({
+        where: {
+          level: LogLevel.INFO,
+          createdAt: { lt: new Date(now - infoDays * 24 * 60 * 60 * 1000) },
+        },
+      });
+      details.INFO = infoResult.count;
+
+      // WARN 로그 정리
+      const warnResult = await db.translationLog.deleteMany({
+        where: {
+          level: LogLevel.WARN,
+          createdAt: { lt: new Date(now - warnErrorDays * 24 * 60 * 60 * 1000) },
+        },
+      });
+      details.WARN = warnResult.count;
+
+      // ERROR 로그 정리
+      const errorResult = await db.translationLog.deleteMany({
+        where: {
+          level: LogLevel.ERROR,
+          createdAt: { lt: new Date(now - warnErrorDays * 24 * 60 * 60 * 1000) },
+        },
+      });
+      details.ERROR = errorResult.count;
+
+      const deletedCount = Object.values(details).reduce((sum, n) => sum + n, 0);
+      return { deletedCount, details };
+    } catch (error) {
+      console.error("[TranslationLogger] Failed to cleanup logs:", error);
+      return { deletedCount: 0, details };
+    }
+  }
+
+  /**
+   * 오래된 작업 히스토리 삭제
+   * @param retentionDays 보존 기간 (기본 90일)
+   * @returns 삭제된 레코드 수
+   */
+  async cleanupOldJobHistory(retentionDays: number = 90): Promise<number> {
+    try {
+      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      const result = await db.translationJobHistory.deleteMany({
+        where: {
+          createdAt: { lt: cutoff },
+        },
+      });
+      return result.count;
+    } catch (error) {
+      console.error("[TranslationLogger] Failed to cleanup job history:", error);
+      return 0;
+    }
+  }
+
   // 작업 히스토리 조회
   async getJobHistory(options: {
     workId?: string;

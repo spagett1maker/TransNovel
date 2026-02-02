@@ -1,5 +1,5 @@
 import { getServerSession } from "next-auth";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
@@ -7,55 +7,31 @@ import { db } from "@/lib/db";
 import { translateChapter, TranslationError, TranslationContext } from "@/lib/gemini";
 import { translationManager } from "@/lib/translation-manager";
 import { translationLogger } from "@/lib/translation-logger";
+import { canTransitionWorkStatus } from "@/lib/work-status";
+import { WorkStatus } from "@prisma/client";
 
 // 챕터 크기 제한 (안전 마진 포함)
 const MAX_CHAPTER_SIZE = 500000; // 50만 자 (약 100KB)
 const WARN_CHAPTER_SIZE = 200000; // 20만 자 경고
 
 // ============================================
-// 사용자별 Rate Limiting (메모리 기반)
+// 사용자별 Rate Limiting (DB 기반 — 서버리스 인스턴스 간 공유)
 // ============================================
-const RATE_LIMIT_REQUESTS = 5; // 윈도우당 최대 요청 수
+const RATE_LIMIT_REQUESTS = 5;
 const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
+async function checkRateLimit(userId: string): Promise<{ allowed: boolean; retryAfter?: number }> {
+  const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS);
+  const recentJobCount = await db.activeTranslationJob.count({
+    where: {
+      userId,
+      startedAt: { gte: windowStart },
+    },
+  });
 
-const userRateLimits = new Map<string, RateLimitEntry>();
-
-// 오래된 rate limit 엔트리 정리 (메모리 누수 방지)
-setInterval(() => {
-  const now = Date.now();
-  for (const [userId, entry] of userRateLimits.entries()) {
-    if (entry.resetAt < now) {
-      userRateLimits.delete(userId);
-    }
+  if (recentJobCount >= RATE_LIMIT_REQUESTS) {
+    return { allowed: false, retryAfter: 60 };
   }
-}, 60000); // 1분마다 정리
-
-function checkRateLimit(userId: string): { allowed: boolean; retryAfter?: number } {
-  const now = Date.now();
-  const entry = userRateLimits.get(userId);
-
-  if (!entry || entry.resetAt < now) {
-    // 새 윈도우 시작
-    userRateLimits.set(userId, {
-      count: 1,
-      resetAt: now + RATE_LIMIT_WINDOW_MS,
-    });
-    return { allowed: true };
-  }
-
-  if (entry.count >= RATE_LIMIT_REQUESTS) {
-    return {
-      allowed: false,
-      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
-    };
-  }
-
-  entry.count++;
   return { allowed: true };
 }
 
@@ -93,10 +69,11 @@ function log(prefix: string, message: string, data?: object) {
 }
 
 // 백그라운드 번역 처리 함수 (서버 측 챕터 전체 번역)
+// 메모리 최적화: originalContent를 루프 내에서 한 건씩 DB에서 로드
 async function processTranslation(
   jobId: string,
   workId: string,
-  chapters: Array<{ id: string; number: number; originalContent: string }>,
+  chapters: Array<{ id: string; number: number }>,
   context: TranslationContext,
   userId: string,
   userEmail?: string
@@ -124,6 +101,25 @@ async function processTranslation(
   await translationManager.startJob(jobId);
   log("[Translation]", "작업 시작됨", { jobId });
 
+  // 작품 상태를 TRANSLATING으로 업데이트 (상태 전이 검증)
+  try {
+    const currentWork = await db.work.findUnique({
+      where: { id: workId },
+      select: { status: true },
+    });
+    if (currentWork && canTransitionWorkStatus(currentWork.status as WorkStatus, "TRANSLATING" as WorkStatus)) {
+      await db.work.update({
+        where: { id: workId },
+        data: { status: "TRANSLATING" },
+      });
+      log("[Translation]", "작품 상태 업데이트: TRANSLATING");
+    } else {
+      log("[Translation]", "작품 상태 전이 불가, 현재 상태 유지", { current: currentWork?.status });
+    }
+  } catch (e) {
+    log("[Translation]", "작품 상태 업데이트 실패 (무시)", { error: String(e) });
+  }
+
   // 실패한 챕터 번호 추적
   const failedChapterNums: number[] = [];
 
@@ -146,8 +142,19 @@ async function processTranslation(
       await new Promise(resolve => setTimeout(resolve, chapterDelay));
     }
 
+    // 메모리 최적화: 챕터 원문을 한 건씩 DB에서 로드 (iteration 끝나면 GC 가능)
+    const chapterData = await db.chapter.findUnique({
+      where: { id: chapter.id },
+      select: { originalContent: true },
+    });
+    if (!chapterData) {
+      log("[Translation]", `챕터 ${chapter.number} DB에서 찾을 수 없음, 스킵`);
+      await translationManager.completeChapter(jobId, chapter.number);
+      continue;
+    }
+
     log("[Translation]", `챕터 ${chapter.number} 처리 시작`, {
-      contentLength: chapter.originalContent.length
+      contentLength: chapterData.originalContent.length
     });
 
     try {
@@ -171,12 +178,21 @@ async function processTranslation(
       await translationManager.startChapter(jobId, chapter.number, 1); // totalChunks = 1
       await translationLogger.logChapterStart(jobId, workId, chapter.id, chapter.number, 1, { userId, userEmail });
 
-      // 챕터 전체 번역 (청크 분할 없이)
+      // 챕터 번역 (대형 챕터는 자동 청크 분할)
       log("[Translation]", `챕터 ${chapter.number} 번역 API 호출`);
-      const translatedContent = await translateChapter(chapter.originalContent, context);
+      const translatedContent = await translateChapter(
+        chapterData.originalContent,
+        context,
+        5, // maxRetries
+        // 대형 챕터 청크 진행률 콜백: DB updatedAt 갱신 + 청크 진행률 추적
+        async (currentChunk, totalChunks) => {
+          log("[Translation]", `챕터 ${chapter.number} 청크 진행: ${currentChunk}/${totalChunks}`);
+          await translationManager.updateChunkProgress(jobId, chapter.number, currentChunk, totalChunks);
+        }
+      );
 
       log("[Translation]", `챕터 ${chapter.number} 번역 완료`, {
-        originalLength: chapter.originalContent.length,
+        originalLength: chapterData.originalContent.length,
         translatedLength: translatedContent.length,
       });
 
@@ -238,6 +254,9 @@ async function processTranslation(
   // 작업 완료
   const jobDuration = Date.now() - jobStartTime;
   const completedChapters = chapters.length - failedChapterNums.length;
+  const hasFailed = failedChapterNums.length > 0;
+  const allFailed = failedChapterNums.length === chapters.length;
+  const jobStatus = allFailed ? "FAILED" : hasFailed ? "FAILED" : "COMPLETED";
 
   log("[Translation]", "==================== 모든 챕터 처리 완료 ====================");
   log("[Translation]", "작업 종료", {
@@ -245,6 +264,8 @@ async function processTranslation(
     totalChapters: chapters.length,
     completedChapters,
     failedChapters: failedChapterNums.length,
+    failedChapterNums,
+    jobStatus,
     durationMs: jobDuration,
   });
 
@@ -258,7 +279,7 @@ async function processTranslation(
     workTitle: context.titleKo,
     userId,
     userEmail,
-    status: failedChapterNums.length === chapters.length ? "FAILED" : "COMPLETED",
+    status: jobStatus,
     totalChapters: chapters.length,
     completedChapters,
     failedChapters: failedChapterNums.length,
@@ -268,7 +289,99 @@ async function processTranslation(
     durationMs: jobDuration,
   });
 
-  await translationManager.completeJob(jobId);
+  // 실패한 챕터가 있으면 FAILED, 없으면 COMPLETED
+  if (hasFailed) {
+    const errorMsg = allFailed
+      ? `전체 ${chapters.length}개 회차 번역 실패`
+      : `${failedChapterNums.length}개 회차 번역 실패 (${failedChapterNums.join(", ")}화)`;
+    await translationManager.failJob(jobId, errorMsg);
+  } else {
+    await translationManager.completeJob(jobId);
+  }
+
+  // 작품의 전체 챕터 상태를 확인하여 Work.status 업데이트
+  try {
+    const allChapters = await db.chapter.findMany({
+      where: { workId },
+      select: { status: true },
+    });
+    const totalCount = allChapters.length;
+    const translatedCount = allChapters.filter(
+      (ch) => ch.status === "TRANSLATED" || ch.status === "EDITED" || ch.status === "APPROVED"
+    ).length;
+
+    if (totalCount > 0 && translatedCount === totalCount) {
+      // 모든 챕터가 번역 완료 → TRANSLATED (윤문가 대기) — 상태 전이 검증
+      const workForStatus = await db.work.findUnique({
+        where: { id: workId },
+        select: { status: true },
+      });
+      if (workForStatus && canTransitionWorkStatus(workForStatus.status as WorkStatus, "TRANSLATED" as WorkStatus)) {
+        await db.work.update({
+          where: { id: workId },
+          data: { status: "TRANSLATED" },
+        });
+        log("[Translation]", "작품 상태 업데이트: TRANSLATED (모든 회차 번역 완료)");
+      } else {
+        log("[Translation]", "TRANSLATED 전이 불가, 현재 상태 유지", { current: workForStatus?.status });
+      }
+
+      // 자동 공고 초안 생성: 이미 공고가 없으면 DRAFT로 생성 (작가가 검토 후 발행)
+      const existingListing = await db.projectListing.findFirst({
+        where: { workId },
+      });
+      if (!existingListing) {
+        const work = await db.work.findUnique({
+          where: { id: workId },
+          select: { titleKo: true, authorId: true, synopsis: true, totalChapters: true },
+        });
+        if (work) {
+          // 챕터 0(프롤로그) 존재 여부 확인
+          const hasChapter0 = await db.chapter.findUnique({
+            where: { workId_number: { workId, number: 0 } },
+            select: { id: true },
+          });
+          await db.projectListing.create({
+            data: {
+              workId,
+              authorId: work.authorId,
+              title: `[윤문 요청] ${work.titleKo}`,
+              description: work.synopsis || `${work.titleKo} 작품의 윤문을 요청합니다.`,
+              status: "DRAFT",
+              chapterStart: hasChapter0 ? 0 : 1,
+              chapterEnd: work.totalChapters || totalCount,
+            },
+          });
+          log("[Translation]", `자동 공고 초안 생성 완료: ${work.titleKo}`);
+        }
+      } else {
+        log("[Translation]", "자동 공고 생성 스킵: 이미 공고 존재", {
+          existingListingId: existingListing.id,
+          existingStatus: existingListing.status,
+        });
+      }
+    } else if (totalCount > 0 && translatedCount < totalCount) {
+      // 부분 번역 또는 전체 실패: TRANSLATING → BIBLE_CONFIRMED으로 복원
+      // status가 이미 바뀌었을 수 있으므로 현재 상태 확인 후 복원
+      const currentWork = await db.work.findUnique({
+        where: { id: workId },
+        select: { status: true },
+      });
+      if (currentWork && canTransitionWorkStatus(currentWork.status as WorkStatus, "BIBLE_CONFIRMED" as WorkStatus)) {
+        await db.work.update({
+          where: { id: workId },
+          data: { status: "BIBLE_CONFIRMED" },
+        });
+        log("[Translation]", "작품 상태 복원: BIBLE_CONFIRMED (부분 번역 완료)", {
+          total: totalCount,
+          translated: translatedCount,
+          remaining: totalCount - translatedCount,
+        });
+      }
+    }
+  } catch (e) {
+    log("[Translation]", "작품 상태 업데이트 실패 (무시)", { error: String(e) });
+  }
 }
 
 export async function POST(req: Request) {
@@ -278,12 +391,12 @@ export async function POST(req: Request) {
 
     if (!session) {
       console.log("[Translation API] 인증 실패: 세션 없음");
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
     console.log("[Translation API] 인증 성공:", session.user.email);
 
     // Rate Limiting 체크
-    const rateLimit = checkRateLimit(session.user.id);
+    const rateLimit = await checkRateLimit(session.user.id);
     if (!rateLimit.allowed) {
       console.log("[Translation API] Rate limit 초과:", session.user.id);
       return NextResponse.json(
@@ -350,6 +463,17 @@ export async function POST(req: Request) {
     }
     console.log("[Translation API] 작품 조회 성공:", work.titleKo);
 
+    // Work 상태 검증: TRANSLATING으로 전이 가능한 상태인지 확인
+    if (!canTransitionWorkStatus(work.status as WorkStatus, "TRANSLATING" as WorkStatus)) {
+      return NextResponse.json(
+        {
+          error: `현재 작품 상태(${work.status})에서는 번역을 시작할 수 없습니다.`,
+          code: "INVALID_WORK_STATUS",
+        },
+        { status: 400 }
+      );
+    }
+
     // 설정집 확정 검증
     if (!work.settingBible || work.settingBible.status !== "CONFIRMED") {
       console.log("[Translation API] 설정집 미확정:", {
@@ -375,24 +499,58 @@ export async function POST(req: Request) {
       }, { status: 409 });
     }
 
-    // 번역할 챕터 조회
+    // 번역할 챕터 조회 (PENDING + 멈춘 TRANSLATING 챕터 포함)
     console.log("[Translation API] 챕터 조회:", chapterNumbers);
     const chapters = await db.chapter.findMany({
       where: {
         workId,
         number: { in: chapterNumbers },
-        status: "PENDING",
+        status: { in: ["PENDING", "TRANSLATING"] },
       },
+      select: { id: true, number: true, status: true, originalContent: true },
       orderBy: { number: "asc" },
     });
     console.log("[Translation API] 조회된 챕터:", chapters.length, "개");
 
+    // 멈춘 TRANSLATING 챕터를 PENDING으로 리셋
+    const stuckTranslating = chapters.filter((ch) => ch.status === "TRANSLATING");
+    if (stuckTranslating.length > 0) {
+      console.log("[Translation API] 멈춘 TRANSLATING 챕터 리셋:", stuckTranslating.map((ch) => ch.number));
+      await db.chapter.updateMany({
+        where: {
+          id: { in: stuckTranslating.map((ch) => ch.id) },
+          status: "TRANSLATING",
+        },
+        data: { status: "PENDING" },
+      });
+    }
+
     if (chapters.length === 0) {
       console.log("[Translation API] 번역할 회차 없음");
-      // 슬롯 예약 해제 (DB 기반에서는 필요 없지만 호환성 유지)
       translationManager.releaseJobSlot(workId);
+
+      // 요청한 챕터의 실제 상태를 조회하여 구체적 에러 메시지 제공
+      const requestedChapters = await db.chapter.findMany({
+        where: { workId, number: { in: chapterNumbers } },
+        select: { number: true, status: true },
+        orderBy: { number: "asc" },
+      });
+
+      const statusDetails = requestedChapters.map(
+        (ch) => `${ch.number}화: ${ch.status}`
+      );
+      const missingNumbers = chapterNumbers.filter(
+        (n) => !requestedChapters.find((ch) => ch.number === n)
+      );
+
       return NextResponse.json(
-        { error: "번역할 회차가 없습니다." },
+        {
+          error: "번역할 회차가 없습니다. 선택한 회차가 이미 번역되었거나 존재하지 않습니다.",
+          details: [
+            ...statusDetails,
+            ...missingNumbers.map((n) => `${n}화: 존재하지 않음`),
+          ],
+        },
         { status: 400 }
       );
     }
@@ -462,20 +620,17 @@ export async function POST(req: Request) {
     );
     console.log("[Translation API] 작업 생성됨:", jobId);
 
-    // 백그라운드에서 번역 실행 (await 하지 않음)
-    // 클라이언트가 SSE 연결할 시간을 주기 위해 약간의 딜레이 추가
-    console.log("[Translation API] 백그라운드 번역 시작 (500ms 딜레이 후)");
+    // 백그라운드에서 번역 실행 (after()로 응답 후 실행 보장)
+    // 메모리 최적화: closure에 originalContent를 포함하지 않음
+    const chapterMeta = chapters.map((ch) => ({ id: ch.id, number: ch.number }));
+    console.log("[Translation API] 백그라운드 번역 예약 (after)");
 
-    setTimeout(async () => {
+    after(async () => {
       try {
         await processTranslation(
           jobId,
           workId,
-          chapters.map((ch) => ({
-            id: ch.id,
-            number: ch.number,
-            originalContent: ch.originalContent,
-          })),
+          chapterMeta,
           context,
           userId,
           userEmail
@@ -512,11 +667,11 @@ export async function POST(req: Request) {
             userId,
             userEmail,
             status: "FAILED",
-            totalChapters: chapters.length,
+            totalChapters: chapterMeta.length,
             completedChapters: 0,
-            failedChapters: chapters.length,
+            failedChapters: chapterMeta.length,
             errorMessage,
-            failedChapterNums: chapters.map(ch => ch.number),
+            failedChapterNums: chapterMeta.map(ch => ch.number),
             startedAt: new Date(),
             completedAt: new Date(),
           });
@@ -530,7 +685,7 @@ export async function POST(req: Request) {
           console.error("[Translation API] 작업 실패 처리 중 오류:", failError);
         }
       }
-    }, 500); // 500ms 딜레이
+    });
 
     // 즉시 jobId 반환
     console.log("[Translation API] 응답 반환:", { jobId, totalChapters: chapters.length });

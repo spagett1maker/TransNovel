@@ -29,7 +29,7 @@ export async function GET(
     const { id, charId } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -69,7 +69,7 @@ export async function PATCH(
     const { id, charId } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -143,7 +143,7 @@ export async function DELETE(
     const { id, charId } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({

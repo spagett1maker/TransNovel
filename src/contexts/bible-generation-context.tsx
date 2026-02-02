@@ -36,7 +36,7 @@ interface BibleGenerationContextType {
     workId: string,
     workTitle: string,
     totalChapters: number,
-    batchSize: number
+    totalBatches: number
   ) => void;
   updateProgress: (
     workId: string,
@@ -65,10 +65,8 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
 
   // 새 작업 시작
   const startGeneration = useCallback(
-    (workId: string, workTitle: string, totalChapters: number, batchSize: number) => {
-      console.log("[BibleGeneration] 생성 시작:", { workId, workTitle, totalChapters });
-
-      const totalBatches = Math.ceil(totalChapters / batchSize);
+    (workId: string, workTitle: string, totalChapters: number, totalBatches: number) => {
+      console.log("[BibleGeneration] 생성 시작:", { workId, workTitle, totalChapters, totalBatches });
       const newJob: BibleGenerationJob = {
         workId,
         workTitle,
@@ -178,17 +176,10 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
       return newSet;
     });
 
-    // 상태 업데이트
+    // 취소된 작업은 컨텍스트에서 제거 (글로벌 인디케이터에 잔류 방지)
     setJobs((prev) => {
       const newJobs = new Map(prev);
-      const job = newJobs.get(workId);
-      if (!job) return prev;
-
-      newJobs.set(workId, {
-        ...job,
-        status: "idle",
-        error: "취소됨",
-      });
+      newJobs.delete(workId);
       return newJobs;
     });
   }, []);

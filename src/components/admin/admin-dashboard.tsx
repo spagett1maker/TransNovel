@@ -179,7 +179,7 @@ export function AdminDashboard() {
       case "ERROR":
         return <Badge variant="destructive">ERROR</Badge>;
       case "WARN":
-        return <Badge className="bg-yellow-500">WARN</Badge>;
+        return <Badge className="bg-amber-500 dark:bg-amber-600">WARN</Badge>;
       case "INFO":
         return <Badge variant="secondary">INFO</Badge>;
       default:
@@ -190,11 +190,11 @@ export function AdminDashboard() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "COMPLETED":
-        return <Badge className="bg-green-500">완료</Badge>;
+        return <Badge className="bg-emerald-600 dark:bg-emerald-500">완료</Badge>;
       case "FAILED":
         return <Badge variant="destructive">실패</Badge>;
       case "PAUSED":
-        return <Badge className="bg-yellow-500">일시정지</Badge>;
+        return <Badge className="bg-amber-500 dark:bg-amber-600">일시정지</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -610,7 +610,7 @@ export function AdminDashboard() {
                       <td className="p-3 text-right tabular-nums">
                         {user.totalChapters}
                       </td>
-                      <td className="p-3 text-right tabular-nums text-green-600">
+                      <td className="p-3 text-right tabular-nums text-emerald-600 dark:text-emerald-400">
                         {user.completedChapters}
                       </td>
                       <td className="p-3 text-right tabular-nums text-destructive">

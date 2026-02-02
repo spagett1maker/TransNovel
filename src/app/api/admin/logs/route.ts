@@ -10,7 +10,7 @@ export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     // ADMIN만 접근 가능
@@ -56,6 +56,43 @@ export async function GET(req: Request) {
     console.error("Failed to fetch logs:", error);
     return NextResponse.json(
       { error: "로그 조회에 실패했습니다." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session) {
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+    }
+
+    if (session.user.role !== UserRole.ADMIN) {
+      return NextResponse.json({ error: "관리자만 접근할 수 있습니다." }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const debugDays = parseInt(searchParams.get("debugDays") || "7", 10);
+    const infoDays = parseInt(searchParams.get("infoDays") || "30", 10);
+    const warnErrorDays = parseInt(searchParams.get("warnErrorDays") || "90", 10);
+    const historyDays = parseInt(searchParams.get("historyDays") || "90", 10);
+
+    const [logResult, historyCount] = await Promise.all([
+      translationLogger.cleanupOldLogs({ debugDays, infoDays, warnErrorDays }),
+      translationLogger.cleanupOldJobHistory(historyDays),
+    ]);
+
+    return NextResponse.json({
+      message: "로그 정리 완료",
+      logs: logResult,
+      jobHistory: { deletedCount: historyCount },
+    });
+  } catch (error) {
+    console.error("Failed to cleanup logs:", error);
+    return NextResponse.json(
+      { error: "로그 정리에 실패했습니다." },
       { status: 500 }
     );
   }

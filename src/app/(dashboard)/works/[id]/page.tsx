@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import { CheckCircle } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -6,6 +7,7 @@ import { BulkUploadDialog } from "@/components/chapters/bulk-upload-dialog";
 import { ChapterList } from "@/components/chapters/chapter-list";
 import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { QuickActions } from "@/components/works/quick-actions";
 import { TranslationActionButton } from "@/components/works/translation-action-button";
 import { WorkPageRefresher } from "@/components/works/work-page-refresher";
@@ -47,7 +49,7 @@ export default async function WorkDetailPage({
         take: 10,
       },
       editor: {
-        select: { id: true, name: true, email: true },
+        select: { id: true, name: true },
       },
       settingBible: {
         select: {
@@ -62,6 +64,24 @@ export default async function WorkDetailPage({
             },
           },
         },
+      },
+      listings: {
+        select: {
+          id: true,
+          status: true,
+          _count: {
+            select: { applications: true },
+          },
+          applications: {
+            where: { status: "PENDING" },
+            select: { id: true },
+          },
+        },
+      },
+      contracts: {
+        where: { isActive: true },
+        select: { id: true, chapterStart: true, chapterEnd: true },
+        take: 1,
       },
       _count: {
         select: { chapters: true, glossary: true },
@@ -84,8 +104,12 @@ export default async function WorkDetailPage({
   }
 
   const isAuthor = work.authorId === session.user.id || userRole === UserRole.ADMIN;
+  const isCompleted = work.status === "COMPLETED";
 
   // 이미 가져온 chapters 데이터에서 계산 (별도 쿼리 불필요)
+  const approvedCount = work.chapters.filter(
+    (ch) => ch.status === "APPROVED"
+  ).length;
   const translatedCount = work.chapters.filter(
     (ch) => ["TRANSLATED", "EDITED", "APPROVED"].includes(ch.status)
   ).length;
@@ -93,6 +117,20 @@ export default async function WorkDetailPage({
   const progressPercent = work._count.chapters > 0
     ? Math.round((translatedCount / work._count.chapters) * 100)
     : 0;
+
+  const activeContract = work.contracts[0] ?? null;
+
+  // 완료 배너: 계약이 있으면 계약 범위 내 챕터만, 없으면 전체 챕터 기준
+  const relevantChapters = activeContract
+    ? work.chapters.filter((ch) => {
+        if (activeContract.chapterStart && ch.number < activeContract.chapterStart) return false;
+        if (activeContract.chapterEnd && ch.number > activeContract.chapterEnd) return false;
+        return true;
+      })
+    : work.chapters;
+  const allRelevantApproved = relevantChapters.length > 0 &&
+    relevantChapters.every((ch) => ch.status === "APPROVED");
+  const showCompletionBanner = allRelevantApproved && activeContract && !isCompleted;
 
   const statusConfig = getWorkStatusConfig(work.status);
 
@@ -133,15 +171,52 @@ export default async function WorkDetailPage({
               </p>
             )}
           </div>
-          <div className="flex gap-2 shrink-0">
-            <BulkUploadDialog workId={id} />
-            <TranslationActionButton
-              workId={id}
-              settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
-            />
-          </div>
+          {!isCompleted && (
+            <div className="flex gap-2 shrink-0">
+              <BulkUploadDialog workId={id} />
+              <TranslationActionButton
+                workId={id}
+                settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
+              />
+            </div>
+          )}
+          {isCompleted && (
+            <div className="shrink-0">
+              <DownloadDialog
+                workId={work.id}
+                workTitle={work.titleKo}
+                chapters={work.chapters.map((ch) => ({
+                  number: ch.number,
+                  title: ch.title,
+                  status: ch.status,
+                }))}
+              />
+            </div>
+          )}
         </div>
       </header>
+
+      {/* 모든 챕터 승인 완료 + 계약 미종료 시 완료 안내 배너 */}
+      {showCompletionBanner && (
+        <div className="flex items-center justify-between gap-4 px-5 py-4 mb-10 rounded-xl border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-emerald-900 dark:text-emerald-100">
+                모든 회차의 승인이 완료되었습니다
+              </p>
+              <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+                계약을 완료하여 프로젝트를 마무리하세요
+              </p>
+            </div>
+          </div>
+          <Button asChild size="sm" variant="outline" className="border-emerald-300 dark:border-emerald-700 shrink-0">
+            <Link href={`/contracts/${activeContract.id}`}>
+              계약 완료하기
+            </Link>
+          </Button>
+        </div>
+      )}
 
       {/* Stats Row */}
       <section className="mb-12">
@@ -151,19 +226,25 @@ export default async function WorkDetailPage({
             <p className="text-2xl font-semibold tabular-nums mt-1">{work._count.chapters}</p>
           </div>
           <div className="stat-card">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">번역 완료</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">
+              {isCompleted ? "승인 완료" : "번역 완료"}
+            </p>
             <div className="flex items-baseline gap-2 mt-1">
-              <p className="text-2xl font-semibold tabular-nums">{translatedCount}</p>
+              <p className="text-2xl font-semibold tabular-nums">
+                {isCompleted ? approvedCount : translatedCount}
+              </p>
               <p className="text-sm text-muted-foreground">/ {work._count.chapters}</p>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="flex-1 h-1 bg-border rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-foreground rounded-full"
-                  style={{ width: `${progressPercent}%` }}
+                  className={`h-full rounded-full ${isCompleted ? "bg-emerald-500" : "bg-foreground"}`}
+                  style={{ width: `${isCompleted ? 100 : progressPercent}%` }}
                 />
               </div>
-              <span className="text-xs tabular-nums text-muted-foreground">{progressPercent}%</span>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {isCompleted ? "100%" : `${progressPercent}%`}
+              </span>
             </div>
           </div>
           <div className="stat-card">
@@ -291,23 +372,55 @@ export default async function WorkDetailPage({
             </dl>
           </div>
 
-          {/* Quick Actions */}
-          <div>
-            <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
-              빠른 작업
-            </h3>
-            <QuickActions
-              workId={id}
-              settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
-              settingBibleExists={!!work.settingBible}
-              characterCount={work.settingBible?._count.characters ?? 0}
-              termCount={work.settingBible?._count.terms ?? 0}
-              glossaryCount={work._count.glossary}
-            />
-          </div>
+          {/* Quick Actions (COMPLETED 시 숨김) */}
+          {!isCompleted && (
+            <div>
+              <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+                빠른 작업
+              </h3>
+              <QuickActions
+                workId={id}
+                settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
+                settingBibleExists={!!work.settingBible}
+                characterCount={work.settingBible?._count.characters ?? 0}
+                termCount={work.settingBible?._count.terms ?? 0}
+                glossaryCount={work._count.glossary}
+              />
+            </div>
+          )}
 
-          {/* Editor Assignment */}
-          {isAuthor && (
+          {/* Application Notifications */}
+          {isAuthor && work.listings.length > 0 && (() => {
+            const pendingCount = work.listings.reduce(
+              (sum, l) => sum + l.applications.length, 0
+            );
+            const totalApps = work.listings.reduce(
+              (sum, l) => sum + l._count.applications, 0
+            );
+            return (
+              <div>
+                <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
+                  지원서
+                </h3>
+                <Link
+                  href={`/works/${id}/listings`}
+                  className="block border rounded-xl p-4 hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">지원서 관리</span>
+                    {pendingCount > 0 ? (
+                      <Badge variant="warning">{pendingCount}건 대기</Badge>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">{totalApps}건</span>
+                    )}
+                  </div>
+                </Link>
+              </div>
+            );
+          })()}
+
+          {/* Editor Assignment (COMPLETED 시 숨김) */}
+          {isAuthor && !isCompleted && (
             <div>
               <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
                 담당 윤문가

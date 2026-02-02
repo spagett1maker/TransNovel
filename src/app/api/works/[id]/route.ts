@@ -16,7 +16,7 @@ export async function GET(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({
@@ -24,14 +24,20 @@ export async function GET(
       include: {
         creators: true,
         chapters: {
+          select: {
+            id: true,
+            number: true,
+            title: true,
+            status: true,
+            wordCount: true,
+          },
           orderBy: { number: "asc" },
         },
-        glossary: true,
         author: {
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true },
         },
         editor: {
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true },
         },
         _count: {
           select: { chapters: true },
@@ -70,7 +76,7 @@ export async function PATCH(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const existingWork = await db.work.findUnique({
@@ -96,6 +102,20 @@ export async function PATCH(
         );
       }
 
+      // 에디터 해제 시 활성 계약이 있으면 차단
+      if (!body.editorId) {
+        const activeContract = await db.projectContract.findFirst({
+          where: { workId: id, isActive: true },
+          select: { id: true },
+        });
+        if (activeContract) {
+          return NextResponse.json(
+            { error: "진행 중인 계약이 있어 윤문가를 해제할 수 없습니다. 먼저 계약을 완료해주세요." },
+            { status: 400 }
+          );
+        }
+      }
+
       const work = await db.work.update({
         where: { id },
         data: {
@@ -104,7 +124,7 @@ export async function PATCH(
         include: {
           creators: true,
           editor: {
-            select: { id: true, name: true, email: true },
+            select: { id: true, name: true },
           },
         },
       });
@@ -172,7 +192,7 @@ export async function DELETE(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const existingWork = await db.work.findUnique({
@@ -202,6 +222,18 @@ export async function DELETE(
     if (activeJob) {
       return NextResponse.json(
         { error: "번역 작업이 진행 중인 작품은 삭제할 수 없습니다. 먼저 작업을 취소해주세요." },
+        { status: 409 }
+      );
+    }
+
+    // 활성 계약 확인 - 진행 중인 계약이 있으면 삭제 차단
+    const activeContract = await db.projectContract.findFirst({
+      where: { workId: id, isActive: true },
+    });
+
+    if (activeContract) {
+      return NextResponse.json(
+        { error: "진행 중인 계약이 있는 작품은 삭제할 수 없습니다. 먼저 계약을 완료해주세요." },
         { status: 409 }
       );
     }

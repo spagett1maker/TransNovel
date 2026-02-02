@@ -154,7 +154,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
               />
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 {rawText.length.toLocaleString()}자 입력됨
               </p>
             </div>
@@ -172,21 +172,21 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
                   disabled={isLoading}
                 />
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 TXT 또는 DOCX 파일을 업로드하세요 (UTF-8 인코딩 권장)
               </p>
             </div>
             {isLoading && (
-              <div className="rounded-md bg-blue-50 p-4">
-                <p className="text-sm text-blue-600">
+              <div className="rounded-md bg-primary/10 p-4">
+                <p className="text-sm text-primary">
                   <Loader2 className="inline-block mr-2 h-4 w-4 animate-spin" />
                   파일을 처리하는 중...
                 </p>
               </div>
             )}
             {rawText && !isLoading && (
-              <div className="rounded-md bg-gray-50 p-4">
-                <p className="text-sm text-gray-600">
+              <div className="rounded-md bg-muted p-4">
+                <p className="text-sm text-muted-foreground">
                   <FileText className="inline-block mr-2 h-4 w-4" />
                   {rawText.length.toLocaleString()}자 로드됨
                 </p>
@@ -203,7 +203,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
             value={separator}
             onChange={(e) => setSeparator(e.target.value)}
           />
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-muted-foreground">
             비워두면 자동으로 챕터를 감지합니다 (第X章, Chapter X, 제X화 등)
           </p>
         </div>
@@ -217,7 +217,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
                   <span>
                     {ch.number}화{ch.title && ` - ${ch.title}`}
                   </span>
-                  <span className="text-gray-500">{ch.wordCount.toLocaleString()}자</span>
+                  <span className="text-muted-foreground">{ch.wordCount.toLocaleString()}자</span>
                 </div>
               ))}
             </div>

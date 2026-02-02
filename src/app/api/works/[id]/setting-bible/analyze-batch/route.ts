@@ -12,7 +12,7 @@ import {
 } from "@/lib/bible-generator";
 
 const requestSchema = z.object({
-  chapterNumbers: z.array(z.number().int().positive()),
+  chapterNumbers: z.array(z.number().int().nonnegative()),
 });
 
 // POST /api/works/[id]/setting-bible/analyze-batch - 배치 단위 분석
@@ -25,7 +25,7 @@ export async function POST(
     const { id } = await params;
 
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
     const work = await db.work.findUnique({

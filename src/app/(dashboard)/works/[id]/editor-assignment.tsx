@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, UserMinus, UserPlus } from "lucide-react";
+import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -17,7 +18,7 @@ import {
 interface Editor {
   id: string;
   name: string;
-  email: string;
+  email?: string;
 }
 
 interface EditorAssignmentProps {
@@ -50,13 +51,14 @@ export function EditorAssignment({
       }
     } catch (error) {
       console.error("Failed to fetch editors:", error);
+      toast.error("윤문가 목록을 불러오지 못했습니다");
     } finally {
       setIsFetching(false);
     }
   }
 
   async function handleAssign() {
-    if (!selectedEditorId) return;
+    if (!selectedEditorId || isLoading) return;
 
     setIsLoading(true);
     try {
@@ -67,20 +69,22 @@ export function EditorAssignment({
       });
 
       if (response.ok) {
+        toast.success("윤문가가 할당되었습니다");
         router.refresh();
       } else {
         const error = await response.json();
-        alert(error.error || "윤문가 할당에 실패했습니다.");
+        toast.error(error.error || "윤문가 할당에 실패했습니다.");
       }
     } catch (error) {
       console.error("Failed to assign editor:", error);
-      alert("윤문가 할당에 실패했습니다.");
+      toast.error("윤문가 할당에 실패했습니다.");
     } finally {
       setIsLoading(false);
     }
   }
 
   async function handleRemove() {
+    if (isLoading) return;
     setIsLoading(true);
     try {
       const response = await fetch(`/api/works/${workId}`, {
@@ -90,15 +94,16 @@ export function EditorAssignment({
       });
 
       if (response.ok) {
+        toast.success("윤문가가 해제되었습니다");
         setSelectedEditorId("");
         router.refresh();
       } else {
         const error = await response.json();
-        alert(error.error || "윤문가 해제에 실패했습니다.");
+        toast.error(error.error || "윤문가 해제에 실패했습니다.");
       }
     } catch (error) {
       console.error("Failed to remove editor:", error);
-      alert("윤문가 해제에 실패했습니다.");
+      toast.error("윤문가 해제에 실패했습니다.");
     } finally {
       setIsLoading(false);
     }
@@ -107,7 +112,7 @@ export function EditorAssignment({
   if (isFetching) {
     return (
       <div className="flex items-center justify-center py-4">
-        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -117,13 +122,13 @@ export function EditorAssignment({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Avatar className="h-10 w-10">
-            <AvatarFallback className="bg-green-100 text-green-700">
+            <AvatarFallback className="bg-accent text-accent-foreground">
               {currentEditor.name[0]}
             </AvatarFallback>
           </Avatar>
           <div>
             <p className="font-medium">{currentEditor.name}</p>
-            <p className="text-sm text-gray-500">{currentEditor.email}</p>
+            {currentEditor.email && <p className="text-sm text-muted-foreground">{currentEditor.email}</p>}
           </div>
         </div>
         <Button
@@ -145,7 +150,7 @@ export function EditorAssignment({
 
   if (editors.length === 0) {
     return (
-      <div className="text-center py-4 text-gray-500">
+      <div className="text-center py-4 text-muted-foreground">
         <p>등록된 윤문가가 없습니다.</p>
         <p className="text-sm mt-1">윤문가로 가입한 사용자가 필요합니다.</p>
       </div>
@@ -163,7 +168,7 @@ export function EditorAssignment({
             <SelectItem key={editor.id} value={editor.id}>
               <div className="flex items-center gap-2">
                 <span>{editor.name}</span>
-                <span className="text-gray-500 text-xs">({editor.email})</span>
+                <span className="text-muted-foreground text-xs">({editor.email})</span>
               </div>
             </SelectItem>
           ))}

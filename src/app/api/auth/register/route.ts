@@ -8,8 +8,7 @@ import { registerSchema } from "@/lib/validations/auth";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    // role은 스키마 검증만 하고, 실제로는 AUTHOR로 고정 (보안상 ADMIN 지정 차단)
-    const { name, email, password } = registerSchema.parse(body);
+    const { name, email, password, role } = registerSchema.parse(body);
 
     // Check if user already exists
     const existingUser = await db.user.findUnique({
@@ -26,15 +25,25 @@ export async function POST(req: Request) {
     // Hash password
     const hashedPassword = await hash(password, 12);
 
-    // Create user - 항상 AUTHOR로 생성 (관리자 권한은 DB에서 직접 부여)
+    // Create user with selected role (AUTHOR or EDITOR)
     const user = await db.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role: UserRole.AUTHOR,
+        role: role as UserRole,
       },
     });
+
+    // 윤문가로 가입 시 EditorProfile 자동 생성
+    if (role === "EDITOR") {
+      await db.editorProfile.create({
+        data: {
+          userId: user.id,
+          displayName: name,
+        },
+      });
+    }
 
     return NextResponse.json(
       {

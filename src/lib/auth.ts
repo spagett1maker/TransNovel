@@ -67,13 +67,14 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.role = user.role;
       }
-      // 주기적으로 사용자 존재 여부 확인 (세션 갱신 시)
+      // 세션 갱신 시 DB에서 최신 정보 반영
       if (trigger === "update" || !token.role) {
         const dbUser = await db.user.findUnique({
           where: { id: token.id as string },
-          select: { id: true, role: true },
+          select: { id: true, name: true, role: true },
         });
         if (dbUser) {
+          token.name = dbUser.name;
           token.role = dbUser.role;
         }
       }

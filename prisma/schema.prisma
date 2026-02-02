@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") // 마이그레이션용 직접 연결
+  directUrl = env("DIRECT_URL")
 }
 
 enum UserRole {
@@ -22,16 +22,17 @@ enum AgeRating {
 
 enum WorkStatus {
   // 기존 값 (호환성 유지)
-  PREPARING       // @deprecated - REGISTERED로 대체
-  ONGOING         // @deprecated - TRANSLATING으로 대체
+  PREPARING // @deprecated - REGISTERED로 대체
+  ONGOING // @deprecated - TRANSLATING으로 대체
   // 새 값
-  REGISTERED      // 등록됨 (원문 등록 대기)
+  REGISTERED // 등록됨 (원문 등록 대기)
   BIBLE_GENERATING // 설정집 생성중
-  BIBLE_DRAFT     // 설정집 검토대기
+  BIBLE_DRAFT // 설정집 검토대기
   BIBLE_CONFIRMED // 설정집 확정 (번역 준비 완료)
-  TRANSLATING     // 번역 진행중
-  PROOFREADING    // 윤문 진행중
-  COMPLETED       // 완료
+  TRANSLATING // 번역 진행중
+  TRANSLATED // 번역 완료 (윤문가 대기)
+  PROOFREADING // 윤문 진행중 (윤문가 배정됨)
+  COMPLETED // 완료
 }
 
 enum BibleStatus {
@@ -48,13 +49,13 @@ enum CharacterRole {
 }
 
 enum TermCategory {
-  CHARACTER       // 인명
-  PLACE           // 지명
-  ORGANIZATION    // 조직/문파
-  RANK_TITLE      // 관직/제도
+  CHARACTER // 인명
+  PLACE // 지명
+  ORGANIZATION // 조직/문파
+  RANK_TITLE // 관직/제도
   SKILL_TECHNIQUE // 무공/스킬
-  ITEM            // 사물
-  OTHER           // 기타
+  ITEM // 사물
+  OTHER // 기타
 }
 
 enum EventType {
@@ -66,15 +67,15 @@ enum EventType {
 }
 
 enum OriginalStatus {
-  ONGOING         // 원작 연재중
-  COMPLETED       // 원작 완결
+  ONGOING // 원작 연재중
+  COMPLETED // 원작 완결
 }
 
 enum SourceLanguage {
-  ZH              // 중국어
-  JA              // 일본어
-  EN              // 영어
-  OTHER           // 기타
+  ZH // 중국어
+  JA // 일본어
+  EN // 영어
+  OTHER // 기타
 }
 
 enum ChapterStatus {
@@ -97,10 +98,27 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  works         Work[]    @relation("AuthorWorks")
-  editingWorks  Work[]    @relation("EditorWorks")
-  accounts      Account[]
-  sessions      Session[]
+  works        Work[]    @relation("AuthorWorks")
+  editingWorks Work[]    @relation("EditorWorks")
+  accounts     Account[]
+  sessions     Session[]
+
+  // 협업 편집기 관계
+  lastEditedChapters Chapter[]         @relation("LastEditedChapters")
+  comments           ChapterComment[]  @relation("CommentAuthor")
+  resolvedComments   ChapterComment[]  @relation("CommentResolver")
+  snapshots          ChapterSnapshot[] @relation("SnapshotAuthor")
+  changes            ChapterChange[]   @relation("ChangeAuthor")
+  reviewedChanges    ChapterChange[]   @relation("ChangeReviewer")
+  activities         ChapterActivity[] @relation("ActivityActor")
+
+  // 매칭 시스템 관계
+  editorProfile    EditorProfile?
+  authorListings   ProjectListing[]         @relation("AuthorListings")
+  authorContracts  ProjectContract[]        @relation("AuthorContracts")
+  editorContracts  ProjectContract[]        @relation("EditorContracts")
+  revisionRequests ChapterRevisionRequest[] @relation("RevisionRequester")
+  authorReviews    EditorReview[]           @relation("AuthorReviews")
 }
 
 model Account {
@@ -119,6 +137,7 @@ model Account {
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -127,6 +146,8 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -148,40 +169,45 @@ model PasswordResetToken {
 }
 
 model Work {
-  id              String         @id @default(cuid())
-  titleKo         String
-  titleOriginal   String
-  publisher       String
-  ageRating       AgeRating      @default(ALL)
-  status          WorkStatus     @default(REGISTERED)
-  coverImage      String?
-  synopsis        String         @db.Text
-  genres          String[]
+  id            String     @id @default(cuid())
+  titleKo       String
+  titleOriginal String
+  publisher     String
+  ageRating     AgeRating  @default(ALL)
+  status        WorkStatus @default(REGISTERED)
+  coverImage    String?
+  synopsis      String     @db.Text
+  genres        String[]
 
   // 원작 정보
-  originalStatus  OriginalStatus @default(COMPLETED)
-  sourceLanguage  SourceLanguage @default(ZH)
-  expectedChapters Int?          // 예상 총 회차 (완결 작품은 확정)
+  originalStatus   OriginalStatus @default(COMPLETED)
+  sourceLanguage   SourceLanguage @default(ZH)
+  expectedChapters Int? // 예상 총 회차 (완결 작품은 확정)
 
   // 원작 플랫폼
-  platformName    String?
-  platformUrl     String?
-  publishedAt     DateTime?
-  totalChapters   Int            @default(0)
+  platformName  String?
+  platformUrl   String?
+  publishedAt   DateTime?
+  totalChapters Int       @default(0)
 
-  authorId        String
-  author          User           @relation("AuthorWorks", fields: [authorId], references: [id])
+  authorId String
+  author   User   @relation("AuthorWorks", fields: [authorId], references: [id], onDelete: Cascade)
 
-  editorId        String?
-  editor          User?          @relation("EditorWorks", fields: [editorId], references: [id])
+  editorId String?
+  editor   User?   @relation("EditorWorks", fields: [editorId], references: [id], onDelete: SetNull)
 
-  chapters        Chapter[]
-  glossary        GlossaryItem[]
-  creators        Creator[]
-  settingBible    SettingBible?
+  chapters     Chapter[]
+  glossary     GlossaryItem[]
+  creators     Creator[]
+  settingBible SettingBible?
 
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  // 매칭 시스템 관계
+  listings  ProjectListing[]
+  contracts ProjectContract[]
+  reviews   EditorReview[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([authorId])
   @@index([editorId])
@@ -190,11 +216,11 @@ model Work {
 }
 
 model Creator {
-  id      String @id @default(cuid())
-  name    String
-  role    String
-  workId  String
-  work    Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  name   String
+  role   String
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@index([workId])
 }
@@ -211,13 +237,30 @@ model Chapter {
 
   // 번역 중간 저장 메타데이터 (JSON)
   // { lastSavedChunk: number, totalChunks: number, partialResults: string[] }
-  translationMeta   Json?
+  translationMeta Json?
 
-  workId            String
-  work              Work          @relation(fields: [workId], references: [id], onDelete: Cascade)
+  // Track Changes 상태 (JSON - ProseMirror track-changes plugin state)
+  trackChangesState Json?
 
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  // 마지막 편집자 추적
+  lastEditedById String?
+  lastEditedBy   User?     @relation("LastEditedChapters", fields: [lastEditedById], references: [id], onDelete: SetNull)
+  lastEditedAt   DateTime?
+
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  // 협업 편집기 관계
+  comments   ChapterComment[]
+  snapshots  ChapterSnapshot[]
+  changes    ChapterChange[]
+  activities ChapterActivity[]
+
+  // 매칭 시스템 관계
+  revisionRequests ChapterRevisionRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([workId, number])
   @@index([workId])
@@ -226,14 +269,14 @@ model Chapter {
 }
 
 model GlossaryItem {
-  id          String  @id @default(cuid())
-  original    String
-  translated  String
-  category    String?
-  note        String?
+  id         String  @id @default(cuid())
+  original   String
+  translated String
+  category   String?
+  note       String?
 
-  workId      String
-  work        Work    @relation(fields: [workId], references: [id], onDelete: Cascade)
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@unique([workId, original])
   @@index([workId])
@@ -251,46 +294,46 @@ enum LogLevel {
 }
 
 enum LogCategory {
-  TRANSLATION      // 번역 관련
-  API_CALL         // Gemini API 호출
-  RATE_LIMIT       // Rate limit 관련
-  CHUNK            // 청크 처리
-  CHAPTER          // 챕터 처리
-  JOB              // 작업 전체
-  SYSTEM           // 시스템
+  TRANSLATION // 번역 관련
+  API_CALL // Gemini API 호출
+  RATE_LIMIT // Rate limit 관련
+  CHUNK // 청크 처리
+  CHAPTER // 챕터 처리
+  JOB // 작업 전체
+  SYSTEM // 시스템
 }
 
 model TranslationLog {
-  id          String      @id @default(cuid())
-  level       LogLevel    @default(INFO)
-  category    LogCategory @default(TRANSLATION)
+  id       String      @id @default(cuid())
+  level    LogLevel    @default(INFO)
+  category LogCategory @default(TRANSLATION)
 
   // 관련 엔티티
-  jobId       String?
-  workId      String?
-  chapterId   String?
-  chapterNum  Int?
-  chunkIndex  Int?
+  jobId      String?
+  workId     String?
+  chapterId  String?
+  chapterNum Int?
+  chunkIndex Int?
 
   // 사용자 정보
-  userId      String?
-  userEmail   String?
+  userId    String?
+  userEmail String?
 
   // 로그 내용
-  message     String      @db.Text
-  errorCode   String?     // TranslationError 코드
-  errorStack  String?     @db.Text
-  metadata    Json?       // 추가 메타데이터 (JSON)
+  message    String  @db.Text
+  errorCode  String? // TranslationError 코드
+  errorStack String? @db.Text
+  metadata   Json? // 추가 메타데이터 (JSON)
 
   // 성능 메트릭
-  durationMs  Int?        // 소요 시간
-  retryCount  Int?        // 재시도 횟수
+  durationMs Int? // 소요 시간
+  retryCount Int? // 재시도 횟수
 
   // 환경 정보
-  clientIp    String?
-  userAgent   String?
+  clientIp  String?
+  userAgent String?
 
-  createdAt   DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@index([level])
   @@index([category])
@@ -300,29 +343,29 @@ model TranslationLog {
   @@index([errorCode])
   @@index([createdAt])
   @@index([level, createdAt])
-  @@index([category, createdAt])      // 어드민 로그 필터링용
-  @@index([level, category])          // 복합 필터링용
-  @@index([workId, createdAt])        // 작품별 로그 조회용
+  @@index([category, createdAt]) // 어드민 로그 필터링용
+  @@index([level, category]) // 복합 필터링용
+  @@index([workId, createdAt]) // 작품별 로그 조회용
 }
 
 // 활성 번역 작업 (서버리스 환경 지원 - DB 기반)
 model ActiveTranslationJob {
-  id                String    @id @default(cuid())
-  jobId             String    @unique  // 클라이언트 식별용 ID
+  id    String @id @default(cuid())
+  jobId String @unique // 클라이언트 식별용 ID
 
-  workId            String
-  workTitle         String
-  userId            String
-  userEmail         String?
+  workId    String
+  workTitle String
+  userId    String
+  userEmail String?
 
   // 상태
-  status            String    @default("PENDING")  // PENDING, IN_PROGRESS, PAUSED, COMPLETED, FAILED
-  isPauseRequested  Boolean   @default(false)
+  status           String  @default("PENDING") // PENDING, IN_PROGRESS, PAUSED, COMPLETED, FAILED
+  isPauseRequested Boolean @default(false)
 
   // 진행률
   totalChapters     Int
-  completedChapters Int       @default(0)
-  failedChapters    Int       @default(0)
+  completedChapters Int @default(0)
+  failedChapters    Int @default(0)
 
   // 현재 진행 중인 챕터 정보
   currentChapterNum Int?
@@ -331,16 +374,16 @@ model ActiveTranslationJob {
 
   // 챕터별 상태 (JSON)
   // [{ number, chapterId, status, currentChunk, totalChunks, error? }]
-  chaptersProgress  Json?
+  chaptersProgress Json?
 
   // 에러 정보
-  errorMessage      String?   @db.Text
+  errorMessage String? @db.Text
 
   // 시간 정보
-  startedAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  startedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([workId, status])  // 작품당 하나의 활성 작업만
+  @@index([workId, status]) // 작품당 활성 작업 조회용 (앱 레벨에서 중복 방지)
   @@index([workId])
   @@index([userId])
   @@index([status])
@@ -349,29 +392,29 @@ model ActiveTranslationJob {
 
 // 번역 작업 히스토리 (영구 저장)
 model TranslationJobHistory {
-  id                String    @id @default(cuid())
-  jobId             String    @unique  // translationManager의 jobId
+  id    String @id @default(cuid())
+  jobId String @unique // translationManager의 jobId
 
-  workId            String
-  workTitle         String
-  userId            String
-  userEmail         String?
+  workId    String
+  workTitle String
+  userId    String
+  userEmail String?
 
-  status            String    // COMPLETED, FAILED, PAUSED
+  status            String // COMPLETED, FAILED, PAUSED
   totalChapters     Int
   completedChapters Int
   failedChapters    Int
 
   // 실패 정보
-  errorMessage      String?   @db.Text
-  failedChapterNums Int[]     // 실패한 챕터 번호 목록
+  errorMessage      String? @db.Text
+  failedChapterNums Int[] // 실패한 챕터 번호 목록
 
   // 시간 정보
-  startedAt         DateTime
-  completedAt       DateTime?
-  durationMs        Int?      // 전체 소요 시간
+  startedAt   DateTime
+  completedAt DateTime?
+  durationMs  Int? // 전체 소요 시간
 
-  createdAt         DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([workId])
   @@index([userId])
@@ -384,38 +427,38 @@ model TranslationJobHistory {
 // ============================================
 
 model SettingBible {
-  id                String       @id @default(cuid())
-  workId            String       @unique
-  work              Work         @relation(fields: [workId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  workId String @unique
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
 
-  status            BibleStatus  @default(DRAFT)
-  version           Int          @default(1)
+  status  BibleStatus @default(DRAFT)
+  version Int         @default(1)
 
-  translationGuide  String?      @db.Text  // 번역 가이드/복선 노트
-  analyzedChapters  Int          @default(0)
+  translationGuide String? @db.Text // 번역 가이드/복선 노트
+  analyzedChapters Int     @default(0)
 
-  generatedAt       DateTime?
-  confirmedAt       DateTime?
-  confirmedBy       String?
+  generatedAt DateTime?
+  confirmedAt DateTime?
+  confirmedBy String?
 
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  characters        Character[]
-  terms             SettingTerm[]
-  events            TimelineEvent[]
+  characters Character[]
+  terms      SettingTerm[]
+  events     TimelineEvent[]
 }
 
 model Character {
-  id              String        @id @default(cuid())
-  bibleId         String
-  bible           SettingBible  @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+  id      String       @id @default(cuid())
+  bibleId String
+  bible   SettingBible @relation(fields: [bibleId], references: [id], onDelete: Cascade)
 
-  nameOriginal    String
-  nameKorean      String
-  nameHanja       String?
-  titles          String[]
-  aliases         String[]
+  nameOriginal String
+  nameKorean   String
+  nameHanja    String?
+  titles       String[]
+  aliases      String[]
 
   personality     String?       @db.Text
   speechStyle     String?       @db.Text
@@ -424,27 +467,27 @@ model Character {
   relationships   Json?
   firstAppearance Int?
 
-  sortOrder       Int           @default(0)
-  isConfirmed     Boolean       @default(false)
+  sortOrder   Int     @default(0)
+  isConfirmed Boolean @default(false)
 
   @@unique([bibleId, nameOriginal])
   @@index([bibleId])
 }
 
 model SettingTerm {
-  id              String        @id @default(cuid())
-  bibleId         String
-  bible           SettingBible  @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+  id      String       @id @default(cuid())
+  bibleId String
+  bible   SettingBible @relation(fields: [bibleId], references: [id], onDelete: Cascade)
 
   original        String
   translated      String
   category        TermCategory
-  note            String?       @db.Text
-  context         String?       @db.Text
+  note            String?      @db.Text
+  context         String?      @db.Text
   firstAppearance Int?
-  frequency       Int           @default(1)
+  frequency       Int          @default(1)
 
-  isConfirmed     Boolean       @default(false)
+  isConfirmed Boolean @default(false)
 
   @@unique([bibleId, original])
   @@index([bibleId])
@@ -452,21 +495,391 @@ model SettingTerm {
 }
 
 model TimelineEvent {
-  id                   String       @id @default(cuid())
-  bibleId              String
-  bible                SettingBible @relation(fields: [bibleId], references: [id], onDelete: Cascade)
+  id      String       @id @default(cuid())
+  bibleId String
+  bible   SettingBible @relation(fields: [bibleId], references: [id], onDelete: Cascade)
 
-  title                String
-  description          String       @db.Text
-  chapterStart         Int
-  chapterEnd           Int?
-  eventType            EventType    @default(PLOT)
-  importance           Int          @default(1)
+  title        String
+  description  String    @db.Text
+  chapterStart Int
+  chapterEnd   Int?
+  eventType    EventType @default(PLOT)
+  importance   Int       @default(1)
 
-  isForeshadowing      Boolean      @default(false)
-  foreshadowNote       String?      @db.Text
+  isForeshadowing      Boolean  @default(false)
+  foreshadowNote       String?  @db.Text
   involvedCharacterIds String[]
 
   @@index([bibleId])
   @@index([chapterStart])
+}
+
+// ============================================
+// 협업 편집기 (Collaboration Editor)
+// ============================================
+
+enum SnapshotType {
+  MANUAL // 사용자 직접 생성
+  AUTO_SAVE // 자동 저장
+  STATUS_CHANGE // 상태 변경 시
+  RETRANSLATE // 재번역 전
+}
+
+enum ChangeType {
+  INSERT
+  DELETE
+  REPLACE
+}
+
+enum ChangeStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ActivityType {
+  COMMENT_ADDED
+  COMMENT_RESOLVED
+  COMMENT_REPLIED
+  EDIT_MADE
+  CHANGE_ACCEPTED
+  CHANGE_REJECTED
+  STATUS_CHANGED
+  SNAPSHOT_CREATED
+  SNAPSHOT_RESTORED
+}
+
+// 인라인 댓글
+model ChapterComment {
+  id        String  @id @default(cuid())
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User    @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  // 답글 지원
+  parentId String?
+  parent   ChapterComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  ChapterComment[] @relation("CommentReplies")
+
+  content    String  @db.Text
+  textRange  Json? // {from: number, to: number} - ProseMirror positions
+  quotedText String? @db.Text
+
+  isResolved   Boolean   @default(false)
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolvedBy   User?     @relation("CommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([chapterId])
+  @@index([chapterId, isResolved])
+  @@index([authorId])
+  @@index([parentId])
+}
+
+// 버전 스냅샷
+model ChapterSnapshot {
+  id        String  @id @default(cuid())
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User    @relation("SnapshotAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  name         String?
+  description  String?
+  snapshotType SnapshotType @default(MANUAL)
+
+  originalContent   String        @db.Text
+  translatedContent String?       @db.Text
+  editedContent     String?       @db.Text
+  status            ChapterStatus
+
+  triggerEvent String? // 자동 스냅샷 트리거 설명
+
+  createdAt DateTime @default(now())
+
+  @@index([chapterId])
+  @@index([chapterId, createdAt])
+  @@index([authorId])
+}
+
+// 변경 추적 (Track Changes)
+model ChapterChange {
+  id        String  @id @default(cuid())
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User    @relation("ChangeAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  changeType ChangeType
+  fromPos    Int
+  toPos      Int
+  oldText    String?    @db.Text
+  newText    String?    @db.Text
+
+  status       ChangeStatus @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?        @relation("ChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([chapterId])
+  @@index([chapterId, status])
+  @@index([authorId])
+}
+
+// 활동 로그
+model ChapterActivity {
+  id        String  @id @default(cuid())
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User    @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  activityType ActivityType
+  metadata     Json? // 추가 메타데이터
+  summary      String // 사람이 읽을 수 있는 요약
+
+  createdAt DateTime @default(now())
+
+  @@index([chapterId])
+  @@index([chapterId, createdAt])
+  @@index([actorId])
+}
+
+// ============================================
+// 매칭 시스템 (Matching System)
+// ============================================
+
+enum EditorAvailability {
+  AVAILABLE
+  BUSY
+  UNAVAILABLE
+}
+
+enum ProjectListingStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ApplicationStatus {
+  PENDING
+  SHORTLISTED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+
+
+enum RevisionRequestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DISPUTED
+}
+
+// 윤문가 프로필
+model EditorProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName  String?
+  bio          String? @db.Text
+  portfolioUrl String?
+
+  specialtyGenres String[]
+  languages       String[]
+
+  availability  EditorAvailability @default(AVAILABLE)
+  maxConcurrent Int                @default(3)
+
+  completedProjects Int    @default(0)
+  averageRating     Float?
+  totalReviews      Int    @default(0)
+
+  isVerified Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  portfolioItems PortfolioItem[]
+  applications   ProjectApplication[]
+  reviews        EditorReview[]
+
+  @@index([availability])
+  @@index([averageRating])
+  @@index([availability, averageRating])
+}
+
+// 포트폴리오 아이템
+model PortfolioItem {
+  id        String        @id @default(cuid())
+  profileId String
+  profile   EditorProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String? @db.Text
+  genre       String?
+  sampleText  String? @db.Text
+
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([profileId])
+}
+
+// 프로젝트 공고
+model ProjectListing {
+  id       String @id @default(cuid())
+  workId   String
+  work     Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  authorId String
+  author   User   @relation("AuthorListings", fields: [authorId], references: [id], onDelete: Cascade)
+
+  title        String
+  description  String  @db.Text
+  requirements String? @db.Text
+
+  status     ProjectListingStatus @default(DRAFT)
+
+  budgetMin Int?
+  budgetMax Int?
+  deadline  DateTime?
+
+  chapterStart Int?
+  chapterEnd   Int?
+
+  viewCount        Int @default(0)
+  applicationCount Int @default(0)
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  applications ProjectApplication[]
+  contract     ProjectContract?
+
+  @@index([status])
+  @@index([status, publishedAt])
+  @@index([workId])
+  @@index([authorId])
+  @@index([authorId, status])
+}
+
+// 지원서
+model ProjectApplication {
+  id              String         @id @default(cuid())
+  listingId       String
+  listing         ProjectListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  editorProfileId String
+  editorProfile   EditorProfile  @relation(fields: [editorProfileId], references: [id], onDelete: Cascade)
+
+  proposalMessage String @db.Text
+  priceQuote      Int?
+  estimatedDays   Int?
+
+  status     ApplicationStatus @default(PENDING)
+  authorNote String?           @db.Text
+
+  submittedAt DateTime  @default(now())
+  reviewedAt  DateTime?
+
+  @@unique([listingId, editorProfileId])
+  @@index([listingId])
+  @@index([editorProfileId])
+  @@index([status])
+  @@index([status, listingId])
+}
+
+// 계약
+model ProjectContract {
+  id        String         @id @default(cuid())
+  listingId String         @unique
+  listing   ProjectListing @relation(fields: [listingId], references: [id])
+  workId    String
+  work      Work           @relation(fields: [workId], references: [id])
+  authorId  String
+  author    User           @relation("AuthorContracts", fields: [authorId], references: [id])
+  editorId  String
+  editor    User           @relation("EditorContracts", fields: [editorId], references: [id])
+
+  totalAmount     Int?
+  startDate       DateTime
+  expectedEndDate DateTime?
+
+  chapterStart Int
+  chapterEnd   Int?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  revisionRequests ChapterRevisionRequest[]
+
+  @@index([workId])
+  @@index([authorId])
+  @@index([authorId, isActive])
+  @@index([editorId])
+  @@index([editorId, isActive])
+  @@index([isActive])
+}
+
+// 수정 요청
+model ChapterRevisionRequest {
+  id            String          @id @default(cuid())
+  contractId    String
+  contract      ProjectContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  chapterId     String
+  chapter       Chapter         @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  requestedById String
+  requestedBy   User            @relation("RevisionRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+
+  reason           String  @db.Text
+  specificFeedback String? @db.Text
+
+  status   RevisionRequestStatus @default(PENDING)
+  response String?               @db.Text
+
+  requestedAt   DateTime  @default(now())
+  completedAt   DateTime?
+  revisionCount Int       @default(1)
+
+  @@index([contractId])
+  @@index([chapterId])
+  @@index([contractId, status])
+}
+
+// 리뷰/평점
+model EditorReview {
+  id              String        @id @default(cuid())
+  editorProfileId String
+  editorProfile   EditorProfile @relation(fields: [editorProfileId], references: [id], onDelete: Cascade)
+  authorId        String
+  author          User          @relation("AuthorReviews", fields: [authorId], references: [id], onDelete: Cascade)
+  workId          String
+  work            Work          @relation(fields: [workId], references: [id])
+
+  overallRating       Int // 1-5
+  qualityRating       Int? // 1-5
+  speedRating         Int? // 1-5
+  communicationRating Int? // 1-5
+  content             String? @db.Text
+
+  isPublic  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([editorProfileId, authorId, workId])
+  @@index([editorProfileId])
+  @@index([editorProfileId, createdAt])
+  @@index([authorId])
+  @@index([authorId, workId])
 }

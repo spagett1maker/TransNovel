@@ -2,6 +2,7 @@
 
 import { Download, FileText, Loader2 } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,7 +44,7 @@ const ChapterItem = memo(function ChapterItem({
   onToggle: (number: number) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-3 rounded p-1 hover:bg-gray-50">
+    <label className="flex cursor-pointer items-center gap-3 rounded p-1 hover:bg-muted">
       <Checkbox
         checked={isSelected}
         onCheckedChange={() => onToggle(chapter.number)}
@@ -51,7 +52,7 @@ const ChapterItem = memo(function ChapterItem({
       <span className="text-sm">
         {chapter.number}화
         {chapter.title && (
-          <span className="ml-1 text-gray-500">- {chapter.title}</span>
+          <span className="ml-1 text-muted-foreground">- {chapter.title}</span>
         )}
       </span>
     </label>
@@ -114,19 +115,34 @@ export function DownloadDialog({
 
       const url = `/api/works/${workId}/download?format=${format}&chapters=${chaptersParam}&content=${contentType}`;
 
-      // 다운로드 트리거
+      // fetch로 다운로드하여 에러 처리
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.error || "다운로드에 실패했습니다");
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition");
+      const filenameMatch = disposition?.match(/filename="?(.+?)"?$/);
+      const filename = filenameMatch?.[1] || `download.${format}`;
+
+      const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url;
-      link.download = "";
+      link.href = blobUrl;
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
 
       // 다이얼로그 닫기
       setTimeout(() => {
         setOpen(false);
         setSelectedChapters(new Set());
       }, 500);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "다운로드에 실패했습니다");
     } finally {
       setIsDownloading(false);
     }
@@ -183,7 +199,7 @@ export function DownloadDialog({
                 />
               ))}
             </div>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               {selectedChapters.size}개 선택됨 (총{" "}
               {downloadableChapters.length}개 다운로드 가능)
             </p>
@@ -225,7 +241,7 @@ export function DownloadDialog({
                 <span className="text-sm">AI 번역본</span>
               </label>
             </RadioGroup>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               윤문본이 없는 경우 AI 번역본이 사용됩니다
             </p>
           </div>

@@ -39,7 +39,6 @@ interface ProgressEvent {
     | "job_started"
     | "chapter_started"
     | "chunk_progress"
-    | "chunk_error"
     | "chapter_completed"
     | "chapter_partial"
     | "chapter_failed"
@@ -201,21 +200,7 @@ export function TranslationProgress({
             );
             break;
 
-          case "chunk_error":
-            setChapters((prev) =>
-              prev.map((ch) =>
-                ch.number === data.data.chapterNumber
-                  ? {
-                      ...ch,
-                      failedChunks: [
-                        ...(ch.failedChunks || []),
-                        { index: data.data.chunkIndex || 0, error: data.data.error || "" },
-                      ],
-                    }
-                  : ch
-              )
-            );
-            break;
+
 
           case "chapter_completed":
             setChapters((prev) =>

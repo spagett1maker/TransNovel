@@ -1,211 +1,28 @@
 "use client";
 
-import { ChapterStatus, UserRole } from "@prisma/client";
-import { Loader2, RefreshCw, X } from "lucide-react";
+import { UserRole } from "@prisma/client";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  EditorProvider,
+  CollaborationEditor,
+  useEditorContext,
+} from "@/components/editor";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
-import { getAvailableNextStatuses, getStatusDisplayName } from "@/lib/permissions";
 
-interface Chapter {
-  id: string;
-  number: number;
-  title: string | null;
-  originalContent: string;
-  translatedContent: string | null;
-  editedContent: string | null;
-  status: ChapterStatus;
-  wordCount: number;
-}
-
-interface Work {
-  id: string;
-  titleKo: string;
-  titleOriginal: string;
-  _count: {
-    chapters: number;
-  };
-}
-
-type ViewMode = "side-by-side" | "original" | "translated" | "edit";
-
-export default function ChapterReaderPage() {
+// Inner component that uses the editor context
+function ChapterEditorContent() {
   const params = useParams();
   const router = useRouter();
-  const { data: session } = useSession();
 
   const workId = params.id as string;
   const chapterNum = parseInt(params.num as string, 10);
 
-  const [work, setWork] = useState<Work | null>(null);
-  const [chapter, setChapter] = useState<Chapter | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("side-by-side");
-  const [editedContent, setEditedContent] = useState("");
-
-  // 재번역 관련 상태
-  const [showRetranslateModal, setShowRetranslateModal] = useState(false);
-  const [retranslateFeedback, setRetranslateFeedback] = useState("");
-  const [selectedTextForRetranslate, setSelectedTextForRetranslate] = useState("");
-  const [isRetranslating, setIsRetranslating] = useState(false);
-
-  const userRole = (session?.user?.role as UserRole) || UserRole.AUTHOR;
-
-  useEffect(() => {
-    fetchData();
-  }, [workId, chapterNum]);
-
-  async function fetchData() {
-    setIsLoading(true);
-    try {
-      const [workRes, chapterRes] = await Promise.all([
-        fetch(`/api/works/${workId}`),
-        fetch(`/api/works/${workId}/chapters/${chapterNum}`),
-      ]);
-
-      if (!workRes.ok || !chapterRes.ok) {
-        throw new Error("Failed to fetch data");
-      }
-
-      const workData = await workRes.json();
-      const chapterData = await chapterRes.json();
-
-      setWork(workData);
-      setChapter(chapterData);
-      setEditedContent(chapterData.editedContent || chapterData.translatedContent || "");
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function handleSave() {
-    if (!chapter) return;
-
-    setIsSaving(true);
-    try {
-      const response = await fetch(
-        `/api/works/${workId}/chapters/${chapterNum}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ editedContent }),
-        }
-      );
-
-      if (!response.ok) throw new Error("Failed to save");
-
-      const updatedChapter = await response.json();
-      setChapter(updatedChapter);
-    } catch (error) {
-      console.error("Error saving:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleStatusChange(newStatus: ChapterStatus) {
-    if (!chapter) return;
-
-    setIsSaving(true);
-    try {
-      const response = await fetch(
-        `/api/works/${workId}/chapters/${chapterNum}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: newStatus,
-            editedContent: editedContent || chapter.translatedContent,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        alert(error.error || "상태 변경에 실패했습니다.");
-        return;
-      }
-
-      const updatedChapter = await response.json();
-      setChapter(updatedChapter);
-    } catch (error) {
-      console.error("Error changing status:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  // 재번역 처리
-  async function handleRetranslate() {
-    if (!chapter || !retranslateFeedback.trim()) {
-      toast.error("피드백을 입력해주세요.");
-      return;
-    }
-
-    setIsRetranslating(true);
-    try {
-      const response = await fetch(
-        `/api/works/${workId}/chapters/${chapterNum}/retranslate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            feedback: retranslateFeedback,
-            selectedText: selectedTextForRetranslate || undefined,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "재번역에 실패했습니다.");
-      }
-
-      setChapter(data.chapter);
-      setEditedContent(data.chapter.translatedContent || "");
-      setShowRetranslateModal(false);
-      setRetranslateFeedback("");
-      setSelectedTextForRetranslate("");
-      toast.success("재번역이 완료되었습니다!");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "재번역에 실패했습니다."
-      );
-    } finally {
-      setIsRetranslating(false);
-    }
-  }
-
-  // 텍스트 선택 시 재번역 모달 열기
-  function handleTextSelection() {
-    const selection = window.getSelection();
-    if (selection && selection.toString().trim().length > 0) {
-      setSelectedTextForRetranslate(selection.toString().trim());
-    }
-  }
-
-  // 재번역 모달 열기
-  function openRetranslateModal() {
-    setShowRetranslateModal(true);
-  }
-
-  const availableStatuses = chapter
-    ? getAvailableNextStatuses(userRole, chapter.status)
-    : [];
-
-  const hasTranslation = chapter && ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status);
-  const translatedText = chapter?.editedContent || chapter?.translatedContent;
+  const { work, chapter, isLoading } = useEditorContext();
 
   if (isLoading) {
     return (
@@ -222,7 +39,9 @@ export default function ChapterReaderPage() {
     return (
       <div className="text-center py-20">
         <p className="text-xl font-medium mb-2">회차를 찾을 수 없습니다</p>
-        <p className="text-muted-foreground mb-8">요청한 회차가 존재하지 않습니다.</p>
+        <p className="text-muted-foreground mb-8">
+          요청한 회차가 존재하지 않습니다.
+        </p>
         <Button variant="outline" asChild>
           <Link href={`/works/${workId}`}>작품으로 돌아가기</Link>
         </Button>
@@ -232,13 +51,18 @@ export default function ChapterReaderPage() {
 
   const statusConfig = getChapterStatusConfig(chapter.status);
 
+  // Compute actual chapter number range from chapters array
+  const chapterNumbers = work.chapters?.map((c) => c.number) ?? [];
+  const minChapter = chapterNumbers.length > 0 ? Math.min(...chapterNumbers) : 0;
+  const maxChapter = chapterNumbers.length > 0 ? Math.max(...chapterNumbers) : 0;
+
   return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col">
+    <div className="h-[calc(100dvh-6rem)] sm:h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-4rem)] flex flex-col">
       {/* Header */}
-      <header className="shrink-0 pb-6 border-b border-border mb-6">
+      <header className="shrink-0 pb-4 border-b border-border mb-4">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <nav className="mb-3">
+            <nav className="mb-2">
               <Link
                 href={`/works/${workId}`}
                 className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -247,9 +71,13 @@ export default function ChapterReaderPage() {
               </Link>
             </nav>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">
+              <h1 className="text-xl font-semibold tracking-tight">
                 {chapter.number}화
-                {chapter.title && <span className="text-muted-foreground ml-2 font-normal">{chapter.title}</span>}
+                {chapter.title && (
+                  <span className="text-muted-foreground ml-2 font-normal">
+                    {chapter.title}
+                  </span>
+                )}
               </h1>
               <Badge variant={statusConfig.variant}>{statusConfig.label}</Badge>
             </div>
@@ -258,341 +86,57 @@ export default function ChapterReaderPage() {
             </p>
           </div>
 
-          {/* Navigation & Actions */}
-          <div className="flex items-center gap-3 shrink-0">
-            {/* Chapter Navigation */}
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={chapterNum <= 1}
-                onClick={() => router.push(`/works/${workId}/chapters/${chapterNum - 1}`)}
-              >
-                ← 이전
-              </Button>
-              <span className="px-3 text-sm text-muted-foreground tabular-nums">
-                {chapterNum} / {work._count.chapters}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={chapterNum >= work._count.chapters}
-                onClick={() => router.push(`/works/${workId}/chapters/${chapterNum + 1}`)}
-              >
-                다음 →
-              </Button>
-            </div>
-
-            {/* Retranslate Button */}
-            {hasTranslation && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openRetranslateModal}
-                className="ml-2"
-              >
-                <RefreshCw className="h-4 w-4 mr-1" />
-                재번역
-              </Button>
-            )}
-
-            {/* Status Change */}
-            {availableStatuses.length > 0 && (
-              <div className="flex gap-1 ml-2">
-                {availableStatuses.map((status) => (
-                  <Button
-                    key={status}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleStatusChange(status)}
-                    disabled={isSaving}
-                  >
-                    {getStatusDisplayName(status)}
-                  </Button>
-                ))}
-              </div>
-            )}
+          {/* Chapter Navigation */}
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={chapterNum <= minChapter}
+              onClick={() =>
+                router.push(`/works/${workId}/chapters/${chapterNum - 1}`)
+              }
+              aria-label="이전 회차"
+            >
+              ← 이전
+            </Button>
+            <span className="px-3 text-sm text-muted-foreground tabular-nums">
+              {chapterNum} / {maxChapter}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={chapterNum >= maxChapter}
+              onClick={() =>
+                router.push(`/works/${workId}/chapters/${chapterNum + 1}`)
+              }
+              aria-label="다음 회차"
+            >
+              다음 →
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* View Mode Tabs */}
-      <div className="shrink-0 flex items-center gap-6 mb-6">
-        <div className="flex gap-1">
-          {[
-            { mode: "side-by-side" as ViewMode, label: "비교 보기" },
-            { mode: "original" as ViewMode, label: "원문만" },
-            { mode: "translated" as ViewMode, label: "번역문만", disabled: !hasTranslation },
-            { mode: "edit" as ViewMode, label: "편집" },
-          ].map(({ mode, label, disabled }) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              disabled={disabled}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
-                viewMode === mode
-                  ? "bg-foreground text-background"
-                  : disabled
-                    ? "text-muted-foreground/50 cursor-not-allowed"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {viewMode === "edit" && (
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            {isSaving ? "저장 중..." : "저장"}
-          </Button>
-        )}
+      {/* Collaboration Editor */}
+      <div className="flex-1 min-h-0">
+        <CollaborationEditor workId={workId} />
       </div>
-
-      {/* Content Area */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {viewMode === "side-by-side" && (
-          <div className="grid grid-cols-2 gap-6 h-full">
-            {/* Original */}
-            <div className="flex flex-col h-full min-h-0">
-              <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 shrink-0">
-                원문
-              </h2>
-              <div className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-muted/50 p-6">
-                <div className="prose prose-sm max-w-none">
-                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0">
-                    {chapter.originalContent}
-                  </pre>
-                </div>
-              </div>
-            </div>
-
-            {/* Translated */}
-            <div className="flex flex-col h-full min-h-0">
-              <div className="flex items-center justify-between mb-3 shrink-0">
-                <h2 className="text-xs uppercase tracking-widest text-muted-foreground">
-                  번역문
-                </h2>
-                {translatedText && (
-                  <span className="text-xs text-muted-foreground">
-                    텍스트를 선택하고 재번역 버튼을 누르세요
-                  </span>
-                )}
-              </div>
-              <div
-                className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-muted/50 p-6"
-                onMouseUp={handleTextSelection}
-              >
-                {translatedText ? (
-                  <div className="prose prose-sm max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0 selection:bg-yellow-200 selection:text-foreground">
-                      {translatedText}
-                    </pre>
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <p className="text-muted-foreground mb-4">아직 번역되지 않았습니다</p>
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/works/${workId}/translate`}>번역 시작</Link>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {viewMode === "original" && (
-          <div className="h-full overflow-y-auto rounded-xl bg-muted/50 p-8">
-            <div className="max-w-3xl mx-auto">
-              <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground">
-                {chapter.originalContent}
-              </pre>
-            </div>
-          </div>
-        )}
-
-        {viewMode === "translated" && (
-          <div className="h-full overflow-y-auto rounded-xl bg-muted/50 p-8">
-            <div className="max-w-3xl mx-auto">
-              {translatedText ? (
-                <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground">
-                  {translatedText}
-                </pre>
-              ) : (
-                <div className="text-center py-20">
-                  <p className="text-muted-foreground">번역된 내용이 없습니다</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {viewMode === "edit" && (
-          <div className="grid grid-cols-2 gap-6 h-full">
-            {/* Reference - Original */}
-            <div className="flex flex-col h-full">
-              <h2 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 shrink-0">
-                원문 (참조)
-              </h2>
-              <div className="flex-1 overflow-y-auto rounded-xl bg-muted/50 p-6">
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">
-                  {chapter.originalContent}
-                </pre>
-              </div>
-            </div>
-
-            {/* Editor */}
-            <div className="flex flex-col h-full">
-              <div className="flex items-center justify-between mb-3 shrink-0">
-                <h2 className="text-xs uppercase tracking-widest text-muted-foreground">
-                  편집
-                </h2>
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  {editedContent.length.toLocaleString()}자
-                </span>
-              </div>
-              <Textarea
-                value={editedContent}
-                onChange={(e) => setEditedContent(e.target.value)}
-                className="flex-1 resize-none rounded-xl bg-background text-sm leading-relaxed p-6 font-sans"
-                placeholder="번역문을 수정하세요..."
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 재번역 모달 */}
-      {showRetranslateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => !isRetranslating && setShowRetranslateModal(false)}
-          />
-
-          {/* Modal */}
-          <div className="relative z-10 w-full max-w-lg bg-background rounded-2xl shadow-2xl p-6 mx-4">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-semibold">재번역</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  피드백을 입력하면 AI가 번역을 수정합니다
-                </p>
-              </div>
-              <button
-                onClick={() => !isRetranslating && setShowRetranslateModal(false)}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                disabled={isRetranslating}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* 선택된 텍스트 표시 */}
-            {selectedTextForRetranslate && (
-              <div className="mb-4">
-                <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
-                  선택된 부분
-                </label>
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm max-h-24 overflow-y-auto">
-                  <p className="text-yellow-800 line-clamp-3">
-                    {selectedTextForRetranslate}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setSelectedTextForRetranslate("")}
-                  className="text-xs text-muted-foreground hover:text-foreground mt-1"
-                >
-                  선택 해제
-                </button>
-              </div>
-            )}
-
-            {/* 피드백 입력 */}
-            <div className="mb-6">
-              <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
-                수정 피드백
-              </label>
-              <Textarea
-                value={retranslateFeedback}
-                onChange={(e) => setRetranslateFeedback(e.target.value)}
-                placeholder="예: 말투를 더 부드럽게 해주세요, 이 단어는 '○○'로 번역해주세요, 문장이 너무 길어요..."
-                className="min-h-[120px] resize-none"
-                disabled={isRetranslating}
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                구체적일수록 더 정확한 재번역이 가능합니다
-              </p>
-            </div>
-
-            {/* 예시 피드백 */}
-            <div className="mb-6">
-              <label className="text-xs uppercase tracking-widest text-muted-foreground mb-2 block">
-                예시
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  "말투를 더 부드럽게",
-                  "문장을 더 짧게",
-                  "격식체로 변경",
-                  "감정 표현 강조",
-                  "액션 장면 더 생동감 있게",
-                ].map((example) => (
-                  <button
-                    key={example}
-                    onClick={() =>
-                      setRetranslateFeedback((prev) =>
-                        prev ? `${prev}, ${example}` : example
-                      )
-                    }
-                    className="px-3 py-1.5 text-xs bg-muted hover:bg-muted/80 rounded-full transition-colors"
-                    disabled={isRetranslating}
-                  >
-                    {example}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 버튼 */}
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowRetranslateModal(false)}
-                disabled={isRetranslating}
-                className="flex-1"
-              >
-                취소
-              </Button>
-              <Button
-                onClick={handleRetranslate}
-                disabled={isRetranslating || !retranslateFeedback.trim()}
-                className="flex-1"
-              >
-                {isRetranslating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    재번역 중...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    재번역 시작
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
+  );
+}
+
+// Main page component
+export default function ChapterEditorPage() {
+  const params = useParams();
+  const { data: session } = useSession();
+
+  const workId = params.id as string;
+  const chapterNum = parseInt(params.num as string, 10);
+  const userRole = (session?.user?.role as UserRole) || UserRole.AUTHOR;
+
+  return (
+    <EditorProvider workId={workId} chapterNum={chapterNum} userRole={userRole}>
+      <ChapterEditorContent />
+    </EditorProvider>
   );
 }

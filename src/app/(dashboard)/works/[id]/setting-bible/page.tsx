@@ -15,6 +15,7 @@ import {
   Users,
   FileText,
   Clock,
+  Save,
   StopCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
@@ -151,6 +162,13 @@ export default function SettingBiblePage() {
   const [editingTerm, setEditingTerm] = useState<Term | null>(null);
   const [showGenerationProgress, setShowGenerationProgress] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [deletingCharacterId, setDeletingCharacterId] = useState<string | null>(null);
+  const [isDeletingCharacter, setIsDeletingCharacter] = useState(false);
+  const [deletingTermId, setDeletingTermId] = useState<string | null>(null);
+  const [isDeletingTerm, setIsDeletingTerm] = useState(false);
+  const [guideText, setGuideText] = useState("");
+  const [isSavingGuide, setIsSavingGuide] = useState(false);
+  const [guideDirty, setGuideDirty] = useState(false);
 
   // 전역 설정집 생성 상태
   const { getJobByWorkId, cancelGeneration } = useBibleGeneration();
@@ -169,6 +187,10 @@ export default function SettingBiblePage() {
       if (bibleRes.ok) {
         const data = await bibleRes.json();
         setBible(data.bible);
+        if (data.bible?.translationGuide != null) {
+          setGuideText(data.bible.translationGuide);
+          setGuideDirty(false);
+        }
       }
 
       if (statusRes.ok) {
@@ -215,12 +237,13 @@ export default function SettingBiblePage() {
   }) || [];
 
   // 핸들러
-  const handleDeleteCharacter = async (id: string) => {
-    if (!confirm("이 인물을 삭제하시겠습니까?")) return;
+  const handleDeleteCharacter = async () => {
+    if (!deletingCharacterId || isDeletingCharacter) return;
 
+    setIsDeletingCharacter(true);
     try {
       const response = await fetch(
-        `/api/works/${workId}/setting-bible/characters/${id}`,
+        `/api/works/${workId}/setting-bible/characters/${deletingCharacterId}`,
         { method: "DELETE" }
       );
 
@@ -229,19 +252,26 @@ export default function SettingBiblePage() {
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 
+      // Optimistic: remove from local state immediately
+      setBible((prev) =>
+        prev ? { ...prev, characters: prev.characters.filter((c) => c.id !== deletingCharacterId) } : prev
+      );
       toast.success("인물이 삭제되었습니다.");
-      fetchBible();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "삭제에 실패했습니다.");
+    } finally {
+      setDeletingCharacterId(null);
+      setIsDeletingCharacter(false);
     }
   };
 
-  const handleDeleteTerm = async (id: string) => {
-    if (!confirm("이 용어를 삭제하시겠습니까?")) return;
+  const handleDeleteTerm = async () => {
+    if (!deletingTermId || isDeletingTerm) return;
 
+    setIsDeletingTerm(true);
     try {
       const response = await fetch(
-        `/api/works/${workId}/setting-bible/terms/${id}`,
+        `/api/works/${workId}/setting-bible/terms/${deletingTermId}`,
         { method: "DELETE" }
       );
 
@@ -250,10 +280,40 @@ export default function SettingBiblePage() {
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 
+      // Optimistic: remove from local state immediately
+      setBible((prev) =>
+        prev ? { ...prev, terms: prev.terms.filter((t) => t.id !== deletingTermId) } : prev
+      );
       toast.success("용어가 삭제되었습니다.");
-      fetchBible();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "삭제에 실패했습니다.");
+    } finally {
+      setDeletingTermId(null);
+      setIsDeletingTerm(false);
+    }
+  };
+
+  const handleSaveGuide = async () => {
+    if (isSavingGuide) return;
+    setIsSavingGuide(true);
+    try {
+      const res = await fetch(`/api/works/${workId}/setting-bible`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ translationGuide: guideText }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "번역 가이드 저장에 실패했습니다.");
+        return;
+      }
+      toast.success("번역 가이드가 저장되었습니다.");
+      setGuideDirty(false);
+    } catch (error) {
+      console.error("Failed to save translation guide:", error);
+      toast.error("번역 가이드 저장에 실패했습니다.");
+    } finally {
+      setIsSavingGuide(false);
     }
   };
 
@@ -270,7 +330,7 @@ export default function SettingBiblePage() {
   // 설정집이 없는 경우
   if (!bible) {
     return (
-      <div className="max-w-4xl">
+      <div className="max-w-6xl">
         <nav className="mb-6">
           <Link
             href={`/works/${workId}`}
@@ -281,7 +341,7 @@ export default function SettingBiblePage() {
           </Link>
         </nav>
 
-        <div className="section-surface p-16 text-center">
+        <div className="section-surface p-16 text-center max-w-4xl mx-auto">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mx-auto mb-4">
             <BookOpen className="h-8 w-8 text-primary" />
           </div>
@@ -338,7 +398,7 @@ export default function SettingBiblePage() {
             )
           ) : (
             <div className="space-y-4">
-              <p className="text-sm text-amber-600">
+              <p className="text-sm text-amber-600 dark:text-amber-400">
                 회차가 등록되지 않았습니다. 먼저 원문을 업로드해주세요.
               </p>
               <Button variant="outline" asChild>
@@ -502,9 +562,9 @@ export default function SettingBiblePage() {
 
       {/* Read-only Warning */}
       {isReadOnly && (
-        <div className="p-4 mb-6 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
-          <CheckCircle2 className="h-5 w-5 text-amber-600" />
-          <p className="text-sm text-amber-800">
+        <div className="p-4 mb-6 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-800 dark:text-amber-300">
             설정집이 확정되어 수정할 수 없습니다. 번역 시 이 설정이 자동 적용됩니다.
           </p>
         </div>
@@ -569,7 +629,7 @@ export default function SettingBiblePage() {
                   key={char.id}
                   character={char}
                   onEdit={setEditingCharacter}
-                  onDelete={handleDeleteCharacter}
+                  onDelete={setDeletingCharacterId}
                   readOnly={isReadOnly}
                 />
               ))}
@@ -607,7 +667,7 @@ export default function SettingBiblePage() {
           <TermTable
             terms={filteredTerms}
             onEdit={setEditingTerm}
-            onDelete={handleDeleteTerm}
+            onDelete={setDeletingTermId}
             readOnly={isReadOnly}
           />
         </TabsContent>
@@ -620,17 +680,36 @@ export default function SettingBiblePage() {
         {/* Guide Tab */}
         <TabsContent value="guide">
           <div className="section-surface p-6">
-            <h3 className="font-semibold mb-4">번역 가이드</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">번역 가이드</h3>
+              {!isReadOnly && (
+                <Button
+                  size="sm"
+                  onClick={handleSaveGuide}
+                  disabled={isSavingGuide || !guideDirty}
+                >
+                  {isSavingGuide ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  저장
+                </Button>
+              )}
+            </div>
             {isReadOnly ? (
               <div className="prose prose-sm max-w-none text-muted-foreground whitespace-pre-wrap">
                 {bible.translationGuide || "등록된 번역 가이드가 없습니다."}
               </div>
             ) : (
               <Textarea
-                value={bible.translationGuide || ""}
+                value={guideText}
+                onChange={(e) => {
+                  setGuideText(e.target.value);
+                  setGuideDirty(true);
+                }}
                 placeholder="AI가 생성한 번역 가이드가 여기에 표시됩니다. 수정이 필요하면 직접 편집할 수 있습니다."
                 className="min-h-[300px]"
-                readOnly
               />
             )}
           </div>
@@ -673,10 +752,58 @@ export default function SettingBiblePage() {
         open={showConfirmDialog}
         onOpenChange={setShowConfirmDialog}
         onConfirmed={() => {
+          // Optimistic: mark as confirmed immediately
+          setBible((prev) =>
+            prev ? { ...prev, status: "CONFIRMED" as BibleStatus } : prev
+          );
           fetchBible();
           router.refresh();
         }}
       />
+
+      {/* 인물 삭제 확인 다이얼로그 */}
+      <AlertDialog open={!!deletingCharacterId} onOpenChange={() => setDeletingCharacterId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>인물 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 인물을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingCharacter}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteCharacter}
+              disabled={isDeletingCharacter}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingCharacter ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 용어 삭제 확인 다이얼로그 */}
+      <AlertDialog open={!!deletingTermId} onOpenChange={() => setDeletingTermId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>용어 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 용어를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingTerm}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteTerm}
+              disabled={isDeletingTerm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingTerm ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
