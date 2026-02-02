@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Briefcase, Calendar, CheckCircle, Clock } from "lucide-react";
@@ -48,14 +49,29 @@ interface Contract {
 }
 
 export default function ContractsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
+  const abortRef = useRef<AbortController | null>(null);
 
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get("status") || "all");
+
+  // URL 동기화
+  const syncUrl = useCallback((status: string) => {
+    const params = new URLSearchParams();
+    if (status && status !== "all") params.set("status", status);
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "/contracts", { scroll: false });
+  }, [router]);
 
   const fetchContracts = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsLoading(true);
     setFetchError(false);
     try {
@@ -64,22 +80,27 @@ export default function ContractsPage() {
         params.set("isActive", statusFilter === "active" ? "true" : "false");
       }
 
-      const res = await fetch(`/api/contracts?${params.toString()}`);
+      const res = await fetch(`/api/contracts?${params.toString()}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) {
         throw new Error("Failed to fetch contracts");
       }
       const data = await res.json();
       setContracts(data.data || []);
+      syncUrl(statusFilter);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Failed to fetch contracts:", error);
       setFetchError(true);
     } finally {
       setIsLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, syncUrl]);
 
   useEffect(() => {
     fetchContracts();
+    return () => abortRef.current?.abort();
   }, [fetchContracts]);
 
   const formatDate = (dateString: string) => {

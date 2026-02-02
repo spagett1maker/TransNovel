@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { EditorAvailability } from "@prisma/client";
@@ -64,12 +64,13 @@ const LANGUAGES: Record<string, string> = {
 export default function EditorsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const abortRef = useRef<AbortController | null>(null);
 
   const [editors, setEditors] = useState<EditorProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
   const [pagination, setPagination] = useState({
-    page: 1,
+    page: parseInt(searchParams.get("page") || "1", 10),
     limit: 20,
     total: 0,
     totalPages: 0,
@@ -81,8 +82,25 @@ export default function EditorsPage() {
   const [availability, setAvailability] = useState(searchParams.get("availability") || "all");
   const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "rating");
 
+  // URL 동기화
+  const syncUrl = useCallback((page: number, s: string, g: string, avail: string, sort: string) => {
+    const params = new URLSearchParams();
+    if (page > 1) params.set("page", page.toString());
+    if (s) params.set("search", s);
+    if (g && g !== "all") params.set("genre", g);
+    if (avail && avail !== "all") params.set("availability", avail);
+    if (sort && sort !== "rating") params.set("sortBy", sort);
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "/editors", { scroll: false });
+  }, [router]);
+
   const fetchEditors = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsLoading(true);
+    setFetchError(false);
     try {
       const params = new URLSearchParams();
       params.set("page", pagination.page.toString());
@@ -92,7 +110,9 @@ export default function EditorsPage() {
       if (availability && availability !== "all") params.set("availability", availability);
       if (sortBy) params.set("sortBy", sortBy);
 
-      const res = await fetch(`/api/editors?${params.toString()}`);
+      const res = await fetch(`/api/editors?${params.toString()}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) {
         throw new Error("Failed to fetch editors");
       }
@@ -105,21 +125,23 @@ export default function EditorsPage() {
         total: data.pagination?.total || 0,
         totalPages: data.pagination?.totalPages || 0,
       }));
+      syncUrl(pagination.page, search, genre, availability, sortBy);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Failed to fetch editors:", error);
       setFetchError(true);
     } finally {
       setIsLoading(false);
     }
-  }, [pagination.page, pagination.limit, search, genre, availability, sortBy]);
+  }, [pagination.page, pagination.limit, search, genre, availability, sortBy, syncUrl]);
 
   useEffect(() => {
     fetchEditors();
+    return () => abortRef.current?.abort();
   }, [fetchEditors]);
 
   const handleSearch = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
-    fetchEditors();
   };
 
   const getAvailabilityBadge = (status: EditorAvailability) => {

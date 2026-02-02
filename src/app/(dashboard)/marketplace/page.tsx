@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Search, Filter, Calendar, Users, BookOpen } from "lucide-react";
 
@@ -63,13 +63,15 @@ const LANGUAGES: Record<string, string> = {
 };
 
 export default function MarketplacePage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const abortRef = useRef<AbortController | null>(null);
 
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
   const [pagination, setPagination] = useState({
-    page: 1,
+    page: parseInt(searchParams.get("page") || "1", 10),
     limit: 20,
     total: 0,
     totalPages: 0,
@@ -80,7 +82,22 @@ export default function MarketplacePage() {
   const [genre, setGenre] = useState(searchParams.get("genre") || "all");
   const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "recent");
 
+  // URL 동기화
+  const syncUrl = useCallback((page: number, s: string, g: string, sort: string) => {
+    const params = new URLSearchParams();
+    if (page > 1) params.set("page", page.toString());
+    if (s) params.set("search", s);
+    if (g && g !== "all") params.set("genre", g);
+    if (sort && sort !== "recent") params.set("sortBy", sort);
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : "/marketplace", { scroll: false });
+  }, [router]);
+
   const fetchListings = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsLoading(true);
     setFetchError(false);
     try {
@@ -91,7 +108,9 @@ export default function MarketplacePage() {
       if (genre && genre !== "all") params.set("genre", genre);
       if (sortBy) params.set("sortBy", sortBy);
 
-      const res = await fetch(`/api/listings?${params.toString()}`);
+      const res = await fetch(`/api/listings?${params.toString()}`, {
+        signal: controller.signal,
+      });
       if (!res.ok) {
         setFetchError(true);
         return;
@@ -104,21 +123,23 @@ export default function MarketplacePage() {
         total: data.pagination?.total || 0,
         totalPages: data.pagination?.totalPages || 0,
       }));
+      syncUrl(pagination.page, search, genre, sortBy);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Failed to fetch listings:", error);
       setFetchError(true);
     } finally {
       setIsLoading(false);
     }
-  }, [pagination.page, pagination.limit, search, genre, sortBy]);
+  }, [pagination.page, pagination.limit, search, genre, sortBy, syncUrl]);
 
   useEffect(() => {
     fetchListings();
+    return () => abortRef.current?.abort();
   }, [fetchListings]);
 
   const handleSearch = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
-    fetchListings();
   };
 
   const formatDeadline = (dateString: string | null) => {
