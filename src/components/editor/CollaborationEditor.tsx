@@ -11,6 +11,7 @@ import { SnapshotPanel } from "./versions";
 import { ActivitySidebar } from "./activity";
 import { GlossarySidebar } from "./glossary/GlossarySidebar";
 import { TrackChangesView } from "./changes/TrackChangesView";
+import DOMPurify from "dompurify";
 import { cn } from "@/lib/utils";
 
 interface CollaborationEditorProps {
@@ -90,9 +91,12 @@ export function CollaborationEditor({ workId }: CollaborationEditorProps) {
           <div className="h-full overflow-y-auto rounded-xl bg-muted/50 p-8">
             <div className="max-w-3xl mx-auto">
               {chapter?.translatedContent ? (
-                <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground">
-                  {chapter.editedContent || chapter.translatedContent}
-                </pre>
+                <div
+                  className="prose prose-sm max-w-none text-foreground text-base leading-relaxed [&_p]:my-0 [&_p]:leading-relaxed whitespace-pre-wrap"
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(chapter.editedContent || chapter.translatedContent),
+                  }}
+                />
               ) : (
                 <div className="text-center py-20">
                   <p className="text-muted-foreground">번역된 내용이 없습니다</p>

@@ -2,6 +2,7 @@
 
 import { useRef, useEffect } from "react";
 import Link from "next/link";
+import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { useEditorContext } from "../EditorProvider";
 
@@ -79,11 +80,12 @@ export function TranslationColumn({
         className="flex-1 min-h-0 overflow-y-auto rounded-xl bg-muted/50 p-6"
       >
         {translatedText ? (
-          <div className="prose prose-sm max-w-none">
-            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground bg-transparent p-0 m-0 selection:bg-blue-200 selection:text-foreground">
-              {translatedText}
-            </pre>
-          </div>
+          <div
+            className="prose prose-sm max-w-none text-foreground text-sm leading-relaxed [&_p]:my-0 [&_p]:leading-relaxed whitespace-pre-wrap selection:bg-blue-200 selection:text-foreground"
+            dangerouslySetInnerHTML={{
+              __html: DOMPurify.sanitize(translatedText),
+            }}
+          />
         ) : (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
