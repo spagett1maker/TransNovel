@@ -72,8 +72,16 @@ export default function ChaptersPage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "업로드에 실패했습니다.");
+        let message = "업로드에 실패했습니다.";
+        try {
+          const error = await response.json();
+          message = error.error || message;
+        } catch {
+          if (response.status === 413) {
+            message = "텍스트가 너무 큽니다. 더 적은 회차로 나눠서 업로드해주세요.";
+          }
+        }
+        throw new Error(message);
       }
 
       const result = await response.json();
