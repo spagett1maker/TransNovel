@@ -47,9 +47,9 @@ function estimateTokens(text: string): number {
 // Vercel 서버리스 타임아웃(Pro: 300초) 내에 Gemini 응답이 완료되어야 함
 // 토큰이 많을수록 Gemini 처리 시간이 길어지므로, 안전한 범위로 제한
 const BIBLE_INPUT_TOKEN_LIMIT = 1_000_000;
-const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.3); // 300K (Vercel 타임아웃 고려)
+const BIBLE_TARGET_INPUT_TOKENS = Math.floor(BIBLE_INPUT_TOKEN_LIMIT * 0.1); // 100K (Vercel 타임아웃 내 Gemini 응답 보장)
 const PROMPT_OVERHEAD_TOKENS = 2000; // 프롬프트 오버헤드
-const MAX_CHAPTERS_PER_BATCH = 100; // 배치당 최대 챕터 수 (Vercel 타임아웃 방지)
+const MAX_CHAPTERS_PER_BATCH = 30; // 배치당 최대 챕터 수 (Vercel 타임아웃 방지)
 
 /**
  * 챕터 목록을 토큰 예산에 맞게 최적 배치로 분할
