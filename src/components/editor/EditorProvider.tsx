@@ -42,6 +42,11 @@ export interface Work {
 
 export type ViewMode = "collaboration" | "original" | "translated" | "edit" | "changes";
 
+interface ContractRange {
+  chapterStart: number | null;
+  chapterEnd: number | null;
+}
+
 interface EditorContextType {
   // Data
   work: Work | null;
@@ -70,6 +75,8 @@ interface EditorContextType {
 
   // Permissions
   isEditable: boolean;
+  outOfContractRange: boolean;
+  contractRange: ContractRange | null;
 }
 
 const EditorContext = createContext<EditorContextType | null>(null);
@@ -104,6 +111,7 @@ export function EditorProvider({
   const [viewMode, setViewMode] = useState<ViewMode>("collaboration");
   const [leftSidebar, setLeftSidebar] = useState<"comments" | "versions" | "glossary" | null>("comments");
   const [rightSidebar, setRightSidebar] = useState<"activity" | null>(null);
+  const [contractRange, setContractRange] = useState<ContractRange | null>(null);
 
   // TipTap Editor
   const editor = useEditor({
@@ -149,10 +157,18 @@ export function EditorProvider({
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [workRes, chapterRes] = await Promise.all([
+      const fetches: Promise<Response>[] = [
         fetch(`/api/works/${workId}`),
         fetch(`/api/works/${workId}/chapters/${chapterNum}`),
-      ]);
+      ];
+
+      // 에디터 역할인 경우 계약 범위 정보도 함께 가져오기
+      if (userRole === UserRole.EDITOR) {
+        fetches.push(fetch(`/api/contracts?isActive=true`));
+      }
+
+      const responses = await Promise.all(fetches);
+      const [workRes, chapterRes] = responses;
 
       if (!workRes.ok || !chapterRes.ok) {
         throw new Error("Failed to fetch data");
@@ -164,6 +180,26 @@ export function EditorProvider({
       setWork(workData);
       setChapter(chapterData);
 
+      // 에디터 계약 범위 확인
+      if (userRole === UserRole.EDITOR && responses[2]) {
+        const contractRes = responses[2];
+        if (contractRes.ok) {
+          const contractData = await contractRes.json();
+          const contracts = contractData.data || [];
+          const activeContract = contracts.find(
+            (c: { work?: { id: string } }) => c.work?.id === workId
+          );
+          if (activeContract) {
+            setContractRange({
+              chapterStart: activeContract.chapterStart ?? null,
+              chapterEnd: activeContract.chapterEnd ?? null,
+            });
+          } else {
+            setContractRange(null);
+          }
+        }
+      }
+
       // Set editor content
       const content = chapterData.editedContent || chapterData.translatedContent || "";
       if (editor) {
@@ -174,7 +210,7 @@ export function EditorProvider({
     } finally {
       setIsLoading(false);
     }
-  }, [workId, chapterNum, editor, toEditorHtml]);
+  }, [workId, chapterNum, editor, toEditorHtml, userRole]);
 
   // Initial fetch
   useEffect(() => {
@@ -192,11 +228,21 @@ export function EditorProvider({
     }
   }, [editor, chapter, toEditorHtml]);
 
+  // 에디터 계약 범위 밖 여부 확인
+  const outOfContractRange = useMemo(() => {
+    if (userRole !== UserRole.EDITOR || !contractRange) return false;
+    const { chapterStart, chapterEnd } = contractRange;
+    if (chapterStart !== null && chapterNum < chapterStart) return true;
+    if (chapterEnd !== null && chapterNum > chapterEnd) return true;
+    return false;
+  }, [userRole, contractRange, chapterNum]);
+
   // Compute editable state
   const isEditable = useMemo(() => {
     if (!chapter) return true;
+    if (outOfContractRange) return false;
     return canEditChapterContent(userRole, chapter.status);
-  }, [userRole, chapter?.status]);
+  }, [userRole, chapter?.status, outOfContractRange]);
 
   // Sync editor editable state
   useEffect(() => {
@@ -327,6 +373,8 @@ export function EditorProvider({
     handleStatusChange,
     userRole,
     isEditable,
+    outOfContractRange,
+    contractRange,
   };
 
   return (

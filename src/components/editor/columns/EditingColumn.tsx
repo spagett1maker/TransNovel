@@ -11,7 +11,7 @@ interface EditingColumnProps {
 }
 
 export function EditingColumn({ onScroll, syncScrollRef }: EditingColumnProps) {
-  const { editor, chapter, work, isEditable } = useEditorContext();
+  const { editor, chapter, work, isEditable, outOfContractRange, contractRange } = useEditorContext();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Expose scroll method for sync
@@ -53,6 +53,11 @@ export function EditingColumn({ onScroll, syncScrollRef }: EditingColumnProps) {
           {charCount.toLocaleString()}자
         </span>
       </div>
+      {outOfContractRange && contractRange && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
+          계약 범위({contractRange.chapterStart ?? "처음"}~{contractRange.chapterEnd ?? "끝"}화) 밖의 회차입니다. 읽기만 가능합니다.
+        </div>
+      )}
       <div
         ref={containerRef}
         onScroll={handleScroll}
