@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { parseChaptersFromText } from "@/lib/chapter-parser";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,7 +39,9 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
   const [separator, setSeparator] = useState("");
   const [preview, setPreview] = useState<{ number: number; title?: string; wordCount: number }[]>([]);
 
-  // 미리보기 생성
+  // 업로드 (클라이언트 파싱 + 배치 전송)
+  const BATCH_SIZE = 20;
+
   const handlePreview = async () => {
     if (!rawText.trim()) {
       toast.error("원문을 입력해주세요.");
@@ -47,24 +50,47 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
 
     setIsLoading(true);
     try {
-      // 서버에 미리보기 요청
-      const response = await fetch(`/api/works/${workId}/chapters/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rawText,
-          separator: separator || undefined,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "미리보기 생성에 실패했습니다.");
+      // 클라이언트에서 챕터 파싱
+      const parsed = parseChaptersFromText(rawText, separator || undefined);
+      if (parsed.length === 0) {
+        toast.error("챕터를 감지하지 못했습니다.");
+        return;
       }
 
-      setPreview(data.chapters);
-      toast.success(`${data.created}개의 회차가 등록되었습니다.`);
+      setPreview(parsed.map((ch) => ({ number: ch.number, title: ch.title, wordCount: ch.content.length })));
+
+      // 배치로 나누어 전송
+      let totalCreated = 0;
+      let totalUpdated = 0;
+
+      for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+        const batch = parsed.slice(i, i + BATCH_SIZE);
+        const response = await fetch(`/api/works/${workId}/chapters/bulk`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chapters: batch }),
+        });
+
+        let data;
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error(
+            response.status === 413
+              ? "텍스트가 너무 큽니다. 더 적은 회차로 나눠서 업로드해주세요."
+              : "서버 오류가 발생했습니다."
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || "업로드에 실패했습니다.");
+        }
+
+        totalCreated += data.created || 0;
+        totalUpdated += data.updated || 0;
+      }
+
+      toast.success(`${totalCreated + totalUpdated}개의 회차가 등록되었습니다.`);
       setOpen(false);
       router.refresh();
       onSuccess?.();
