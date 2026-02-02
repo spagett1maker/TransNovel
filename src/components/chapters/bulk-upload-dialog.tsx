@@ -39,8 +39,27 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
   const [separator, setSeparator] = useState("");
   const [preview, setPreview] = useState<{ number: number; title?: string; wordCount: number }[]>([]);
 
-  // 업로드 (클라이언트 파싱 + 배치 전송)
-  const BATCH_SIZE = 20;
+  // 크기 기반 배치 분할 (Vercel 4.5MB 제한 → 3MB 타깃)
+  const MAX_BATCH_BYTES = 3 * 1024 * 1024;
+
+  function splitIntoBatches(chapters: { number: number; title?: string; content: string }[]) {
+    const batches: (typeof chapters)[] = [];
+    let current: typeof chapters = [];
+    let currentSize = 0;
+
+    for (const ch of chapters) {
+      const chSize = ch.content.length * 3; // UTF-8 최대 3바이트/문자
+      if (current.length > 0 && currentSize + chSize > MAX_BATCH_BYTES) {
+        batches.push(current);
+        current = [];
+        currentSize = 0;
+      }
+      current.push(ch);
+      currentSize += chSize;
+    }
+    if (current.length > 0) batches.push(current);
+    return batches;
+  }
 
   const handlePreview = async () => {
     if (!rawText.trim()) {
@@ -59,12 +78,12 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
 
       setPreview(parsed.map((ch) => ({ number: ch.number, title: ch.title, wordCount: ch.content.length })));
 
-      // 배치로 나누어 전송
+      // 크기 기반 배치 분할 후 전송
+      const batches = splitIntoBatches(parsed);
       let totalCreated = 0;
       let totalUpdated = 0;
 
-      for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
-        const batch = parsed.slice(i, i + BATCH_SIZE);
+      for (const batch of batches) {
         const response = await fetch(`/api/works/${workId}/chapters/bulk`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -75,11 +94,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
         try {
           data = await response.json();
         } catch {
-          throw new Error(
-            response.status === 413
-              ? "텍스트가 너무 큽니다. 더 적은 회차로 나눠서 업로드해주세요."
-              : "서버 오류가 발생했습니다."
-          );
+          throw new Error("서버 오류가 발생했습니다. 다시 시도해주세요.");
         }
 
         if (!response.ok) {
