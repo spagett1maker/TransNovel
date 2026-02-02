@@ -248,7 +248,7 @@ export default function SettingBiblePage() {
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 
@@ -276,7 +276,7 @@ export default function SettingBiblePage() {
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 

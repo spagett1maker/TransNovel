@@ -118,7 +118,7 @@ export function CharacterEditDialog({
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         throw new Error(error.error || "저장에 실패했습니다.");
       }
 

@@ -222,7 +222,7 @@ export function GenerationProgress({
             );
 
             if (!response.ok) {
-              const error = await response.json();
+              const error = await response.json().catch(() => ({}));
               throw new Error(error.error || "분석 실패");
             }
 

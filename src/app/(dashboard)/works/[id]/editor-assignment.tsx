@@ -72,7 +72,7 @@ export function EditorAssignment({
         toast.success("윤문가가 할당되었습니다");
         router.refresh();
       } else {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         toast.error(error.error || "윤문가 할당에 실패했습니다.");
       }
     } catch (error) {
@@ -98,7 +98,7 @@ export function EditorAssignment({
         setSelectedEditorId("");
         router.refresh();
       } else {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         toast.error(error.error || "윤문가 해제에 실패했습니다.");
       }
     } catch (error) {

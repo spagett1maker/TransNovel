@@ -97,12 +97,13 @@ export default function RegisterPage() {
         body: JSON.stringify(data),
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        setError(result.error);
+        const result = await response.json().catch(() => ({}));
+        setError(result.error || "회원가입에 실패했습니다.");
         return;
       }
+
+      const result = await response.json();
 
       router.push("/login?registered=true");
     } catch {

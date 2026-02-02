@@ -100,7 +100,7 @@ export default function NewWorkPage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         throw new Error(error.error || "작품 등록에 실패했습니다.");
       }
 

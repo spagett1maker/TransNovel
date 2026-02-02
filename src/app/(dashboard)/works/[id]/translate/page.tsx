@@ -455,7 +455,7 @@ export default function TranslatePage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         throw new Error(error.error || "번역 시작에 실패했습니다.");
       }
 

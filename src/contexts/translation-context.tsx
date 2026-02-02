@@ -670,7 +670,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         console.error("[TranslationContext] 일시정지 실패:", data.error);
         return false;
       }
@@ -694,12 +694,13 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ jobId }),
         });
 
-        const data = await response.json();
-
         if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
           console.error("[TranslationContext] 재개 실패:", data.error);
           return { success: false, error: data.error };
         }
+
+        const data = await response.json();
 
         // 재개 성공 시 SSE 연결 시작 (기존 jobId 재사용)
         connectSSE(jobId);

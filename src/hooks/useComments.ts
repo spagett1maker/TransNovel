@@ -72,7 +72,7 @@ export function useComments({
         const response = await fetch(url);
 
         if (!response.ok) {
-          const data = await response.json();
+          const data = await response.json().catch(() => ({}));
           throw new Error(data.error || "댓글을 불러오는 데 실패했습니다");
         }
 
@@ -126,7 +126,7 @@ export function useComments({
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "댓글 작성에 실패했습니다");
         }
 
@@ -176,7 +176,7 @@ export function useComments({
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "댓글 수정에 실패했습니다");
         }
 
@@ -232,7 +232,7 @@ export function useComments({
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "댓글 삭제에 실패했습니다");
         }
 

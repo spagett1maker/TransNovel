@@ -74,11 +74,12 @@ function ResetPasswordForm() {
         body: JSON.stringify({ token, password }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "비밀번호 변경에 실패했습니다.");
       }
+
+      const data = await response.json();
 
       setIsSuccess(true);
       setTimeout(() => {

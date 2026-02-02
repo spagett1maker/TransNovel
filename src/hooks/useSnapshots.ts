@@ -57,7 +57,7 @@ export function useSnapshots({ workId, chapterNum }: UseSnapshotsOptions) {
         const response = await fetch(url);
 
         if (!response.ok) {
-          const data = await response.json();
+          const data = await response.json().catch(() => ({}));
           throw new Error(data.error || "스냅샷을 불러오는 데 실패했습니다");
         }
 
@@ -94,7 +94,7 @@ export function useSnapshots({ workId, chapterNum }: UseSnapshotsOptions) {
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "스냅샷 생성에 실패했습니다");
         }
 
@@ -124,7 +124,7 @@ export function useSnapshots({ workId, chapterNum }: UseSnapshotsOptions) {
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "스냅샷 삭제에 실패했습니다");
         }
 
@@ -153,7 +153,7 @@ export function useSnapshots({ workId, chapterNum }: UseSnapshotsOptions) {
         );
 
         if (!response.ok) {
-          const errorData = await response.json();
+          const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.error || "스냅샷 복원에 실패했습니다");
         }
 

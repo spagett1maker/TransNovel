@@ -276,7 +276,7 @@ export function EditorProvider({
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         if (error.code === "CONFLICT") {
           toast.error("다른 사용자가 이미 수정했습니다. 페이지를 새로고침해주세요.", {
             action: {
@@ -328,7 +328,7 @@ export function EditorProvider({
         );
 
         if (!response.ok) {
-          const error = await response.json();
+          const error = await response.json().catch(() => ({}));
           if (error.code === "CONFLICT") {
             toast.error("다른 사용자가 이미 수정했습니다. 페이지를 새로고침해주세요.", {
               action: {

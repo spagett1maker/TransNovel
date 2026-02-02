@@ -35,7 +35,7 @@ export default function ForgotPasswordPage() {
       });
 
       if (!response.ok) {
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "요청에 실패했습니다.");
       }
 
