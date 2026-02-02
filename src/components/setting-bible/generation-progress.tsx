@@ -63,8 +63,9 @@ export function GenerationProgress({
     analyzedChapters: 0,
   });
 
-  const [shouldCancel, setShouldCancel] = useState(false);
   const shouldCancelRef = useRef(false);
+  const statsRef = useRef<GenerationState["stats"]>(undefined);
+  const isGeneratingRef = useRef(false);
 
   // 전역 상태 관리
   const {
@@ -82,7 +83,6 @@ export function GenerationProgress({
     if (isCancelRequested(workId)) {
       console.log("[GenerationProgress] 외부 취소 요청 감지");
       shouldCancelRef.current = true;
-      setShouldCancel(true);
       clearCancelRequest(workId);
     }
   }, [workId, isCancelRequested, clearCancelRequest]);
@@ -102,19 +102,50 @@ export function GenerationProgress({
   }, [state.status]);
 
   const generateBible = useCallback(async () => {
+    // 이미 실행 중이면 중복 실행 방지
+    if (isGeneratingRef.current) return;
+    isGeneratingRef.current = true;
+
     setState((prev) => ({ ...prev, status: "generating", error: undefined }));
-    setShouldCancel(false);
     shouldCancelRef.current = false;
-    clearCancelRequest(workId); // 시작할 때 기존 취소 요청 클리어
+    clearCancelRequest(workId);
 
     try {
-      // 서버에서 토큰 기반 최적 배치 계획을 가져옴
+      // 1. 설정집 초기화 (이미 존재하면 resume 모드)
+      let isResume = false;
+      const initResponse = await fetch(`/api/works/${workId}/setting-bible`, {
+        method: "POST",
+      });
+
+      if (!initResponse.ok) {
+        const error = await initResponse.json();
+        if (error.error?.includes("이미")) {
+          isResume = true; // 기존 설정집이 있으면 이어서 분석
+        } else {
+          throw new Error(error.error || "설정집 초기화 실패");
+        }
+      }
+
+      // 2. 배치 계획 가져옴 (resume 시 이미 분석된 회차 건너뛰기)
       let batchPlan: number[][] = [];
+      let skippedChapters = 0;
       try {
-        const planRes = await fetch(`/api/works/${workId}/setting-bible/batch-plan`);
+        const resumeParam = isResume ? "&resume=true" : "";
+        const planRes = await fetch(`/api/works/${workId}/setting-bible/batch-plan?${resumeParam}`);
         if (planRes.ok) {
           const planData = await planRes.json();
+
+          // 이미 전체 분석 완료된 경우
+          if (planData.alreadyComplete) {
+            toast.success("이미 모든 회차가 분석되었습니다.");
+            setState((prev) => ({ ...prev, status: "completed" }));
+            completeGeneration(workId, statsRef.current);
+            await onComplete();
+            return;
+          }
+
           batchPlan = planData.batches;
+          skippedChapters = planData.skippedChapters || 0;
         }
       } catch {
         // batch-plan 실패 시 fallback
@@ -124,7 +155,7 @@ export function GenerationProgress({
       if (batchPlan.length === 0) {
         let actualChapterNumbers: number[] = [];
         try {
-          const chaptersRes = await fetch(`/api/works/${workId}/chapters?all=true&limit=2000`);
+          const chaptersRes = await fetch(`/api/works/${workId}/chapters?all=true&limit=10000`);
           if (chaptersRes.ok) {
             const chaptersData = await chaptersRes.json();
             const chapters = chaptersData.chapters || chaptersData;
@@ -137,7 +168,7 @@ export function GenerationProgress({
         }
 
         if (actualChapterNumbers.length === 0) {
-          actualChapterNumbers = Array.from({ length: totalChapters }, (_, i) => i + 1);
+          throw new Error("회차 목록을 가져올 수 없습니다. 페이지를 새로고침 후 다시 시도해주세요.");
         }
 
         // 10개씩 고정 배치 (fallback)
@@ -156,19 +187,11 @@ export function GenerationProgress({
       setState((prev) => ({
         ...prev,
         totalBatches,
+        analyzedChapters: skippedChapters > 0 ? skippedChapters : prev.analyzedChapters,
       }));
 
-      // 먼저 설정집 초기화
-      const initResponse = await fetch(`/api/works/${workId}/setting-bible`, {
-        method: "POST",
-      });
-
-      if (!initResponse.ok) {
-        const error = await initResponse.json();
-        // 이미 존재하는 경우 계속 진행
-        if (!error.error?.includes("이미")) {
-          throw new Error(error.error || "설정집 초기화 실패");
-        }
+      if (skippedChapters > 0) {
+        console.log(`[GenerationProgress] 이어서 분석: ${skippedChapters}회차 건너뜀, 남은 ${actualTotal}회차 분석`);
       }
 
       // 배치별로 분석 실행
@@ -176,8 +199,8 @@ export function GenerationProgress({
         if (shouldCancelRef.current) {
           setState((prev) => ({
             ...prev,
-            status: "idle",
-            error: "취소됨",
+            status: "failed",
+            error: "사용자에 의해 취소됨",
           }));
           cancelGeneration(workId);
           return;
@@ -228,6 +251,7 @@ export function GenerationProgress({
 
             const result = await response.json();
 
+            statsRef.current = result.stats;
             setState((prev) => ({
               ...prev,
               analyzedChapters: result.analyzedChapters,
@@ -266,8 +290,8 @@ export function GenerationProgress({
         status: "completed",
       }));
 
-      // 전역 상태에 완료 알림
-      completeGeneration(workId, state.stats);
+      // 전역 상태에 완료 알림 (ref로 최신 stats 참조)
+      completeGeneration(workId, statsRef.current);
 
       toast.success("설정집 생성이 완료되었습니다!");
       // onComplete (fetchBible)을 await하여 데이터가 로드된 후 UI 갱신
@@ -285,8 +309,10 @@ export function GenerationProgress({
       failGeneration(workId, errorMessage);
 
       toast.error(error instanceof Error ? error.message : "설정집 생성 실패");
+    } finally {
+      isGeneratingRef.current = false;
     }
-  }, [workId, workTitle, totalChapters, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest, state.stats]);
+  }, [workId, workTitle, totalChapters, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest]);
 
   // 다이얼로그가 열리면 자동 시작
   useEffect(() => {
@@ -295,9 +321,9 @@ export function GenerationProgress({
     }
   }, [open, state.status, generateBible]);
 
-  // 다이얼로그 닫힐 때 상태 초기화
+  // 다이얼로그 닫힐 때 상태 초기화 (생성 중이면 초기화하지 않음)
   useEffect(() => {
-    if (!open) {
+    if (!open && !isGeneratingRef.current) {
       setState({
         status: "idle",
         currentBatch: 0,
@@ -313,13 +339,24 @@ export function GenerationProgress({
       : 0;
 
   const handleCancel = () => {
-    setShouldCancel(true);
     shouldCancelRef.current = true;
   };
 
+  // 생성 중에는 다이얼로그 닫기 방지
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen && isGeneratingRef.current) {
+        // 생성 중에는 닫기 무시
+        return;
+      }
+      onOpenChange(nextOpen);
+    },
+    [onOpenChange]
+  );
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md" onPointerDownOutside={(e) => { if (isGeneratingRef.current) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (isGeneratingRef.current) e.preventDefault(); }}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {state.status === "generating" && (
@@ -393,7 +430,7 @@ export function GenerationProgress({
           )}
 
           {/* 재시도 상태 표시 */}
-          {state.status === "generating" && state.retryCount && state.retryCount > 0 && (
+          {state.status === "generating" && state.retryCount != null && state.retryCount > 0 && (
             <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-700 dark:text-amber-400">
               API 서버가 혼잡합니다. 15초 후 자동으로 재시도합니다...
             </div>

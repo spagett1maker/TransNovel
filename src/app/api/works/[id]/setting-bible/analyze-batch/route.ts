@@ -2,13 +2,12 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { Prisma } from "@prisma/client";
+
 import { authOptions } from "@/lib/auth";
 import { db, dbTransaction } from "@/lib/db";
 import {
   analyzeBatch,
-  mergeAnalysisResults,
-  createEmptyAnalysisResult,
-  type BibleAnalysisResult,
 } from "@/lib/bible-generator";
 
 // Vercel 서버리스 함수 타임아웃 확장 (Pro: 최대 300초)
@@ -97,69 +96,45 @@ export async function POST(
       chapterRange
     );
 
-    // 기존 데이터와 병합
-    const existingData = await db.settingBible.findUnique({
-      where: { workId: id },
-      include: {
-        characters: true,
-        terms: true,
-        events: true,
-      },
-    });
+    const bibleId = work.settingBible!.id;
+    const UPDATE_BATCH_SIZE = 50;
 
-    // 기존 데이터를 BibleAnalysisResult 형식으로 변환
-    const existingResult: BibleAnalysisResult = existingData
-      ? {
-          characters: existingData.characters.map((c) => ({
-            nameOriginal: c.nameOriginal,
-            nameKorean: c.nameKorean,
-            nameHanja: c.nameHanja || undefined,
-            titles: c.titles,
-            aliases: c.aliases,
-            personality: c.personality || undefined,
-            speechStyle: c.speechStyle || undefined,
-            role: c.role,
-            description: c.description || undefined,
-            relationships: c.relationships as Record<string, string> | undefined,
-            firstAppearance: c.firstAppearance || undefined,
-          })),
-          terms: existingData.terms.map((t) => ({
-            original: t.original,
-            translated: t.translated,
-            category: t.category,
-            note: t.note || undefined,
-            context: t.context || undefined,
-            firstAppearance: t.firstAppearance || undefined,
-          })),
-          events: existingData.events.map((e) => ({
-            title: e.title,
-            description: e.description,
-            chapterStart: e.chapterStart,
-            chapterEnd: e.chapterEnd || undefined,
-            eventType: e.eventType,
-            importance: e.importance,
-            isForeshadowing: e.isForeshadowing,
-            foreshadowNote: e.foreshadowNote || undefined,
-            involvedCharacters: e.involvedCharacterIds,
-          })),
-          translationNotes: existingData.translationGuide || "",
-        }
-      : createEmptyAnalysisResult();
+    // DB 업데이트: bulk fetch → partition → bulk write (N+1 방지)
+    // 대규모 설정집(수천 엔티티)의 bulk 연산에 120초 타임아웃 필요
+    const txResult = await dbTransaction(async (tx) => {
+      // ── 캐릭터 bulk upsert ──
+      const existingChars = await tx.character.findMany({
+        where: { bibleId },
+      });
+      const charMap = new Map(existingChars.map((c) => [c.nameOriginal, c]));
+      let maxSortOrder = existingChars.reduce((max, c) => Math.max(max, c.sortOrder), -1);
 
-    const mergedResult = mergeAnalysisResults(existingResult, analysisResult);
+      const charsToUpdate: Array<{ id: string; data: Parameters<typeof tx.character.update>[0]["data"] }> = [];
+      const charsToCreate: Prisma.CharacterCreateManyInput[] = [];
 
-    // DB 업데이트 (트랜잭션 - 30초 타임아웃)
-    await dbTransaction(async (tx) => {
-      // 기존 데이터 삭제
-      await tx.character.deleteMany({ where: { bibleId: work.settingBible!.id } });
-      await tx.settingTerm.deleteMany({ where: { bibleId: work.settingBible!.id } });
-      await tx.timelineEvent.deleteMany({ where: { bibleId: work.settingBible!.id } });
-
-      // 새 데이터 삽입
-      if (mergedResult.characters.length > 0) {
-        await tx.character.createMany({
-          data: mergedResult.characters.map((c, index) => ({
-            bibleId: work.settingBible!.id,
+      for (const c of analysisResult.characters) {
+        if (!c.nameOriginal) continue;
+        const existing = charMap.get(c.nameOriginal);
+        if (existing) {
+          charsToUpdate.push({
+            id: existing.id,
+            data: {
+              nameKorean: c.nameKorean || existing.nameKorean,
+              nameHanja: c.nameHanja ?? existing.nameHanja,
+              titles: [...new Set([...existing.titles, ...c.titles])],
+              aliases: [...new Set([...existing.aliases, ...c.aliases])],
+              personality: c.personality ?? existing.personality,
+              speechStyle: c.speechStyle ?? existing.speechStyle,
+              role: c.role || existing.role,
+              description: c.description ?? existing.description,
+              relationships: c.relationships ?? (existing.relationships as Record<string, string> | undefined),
+              firstAppearance: existing.firstAppearance ?? c.firstAppearance,
+            },
+          });
+        } else {
+          maxSortOrder++;
+          charsToCreate.push({
+            bibleId,
             nameOriginal: c.nameOriginal,
             nameKorean: c.nameKorean,
             nameHanja: c.nameHanja,
@@ -171,29 +146,101 @@ export async function POST(
             description: c.description,
             relationships: c.relationships,
             firstAppearance: c.firstAppearance,
-            sortOrder: index,
-          })),
-        });
+            sortOrder: maxSortOrder,
+          });
+        }
       }
 
-      if (mergedResult.terms.length > 0) {
-        await tx.settingTerm.createMany({
-          data: mergedResult.terms.map((t) => ({
-            bibleId: work.settingBible!.id,
+      if (charsToCreate.length > 0) {
+        await tx.character.createMany({ data: charsToCreate, skipDuplicates: true });
+      }
+      for (let i = 0; i < charsToUpdate.length; i += UPDATE_BATCH_SIZE) {
+        await Promise.all(
+          charsToUpdate.slice(i, i + UPDATE_BATCH_SIZE).map(({ id, data }) =>
+            tx.character.update({ where: { id }, data })
+          )
+        );
+      }
+
+      // ── 용어 bulk upsert ──
+      const existingTerms = await tx.settingTerm.findMany({
+        where: { bibleId },
+      });
+      const termMap = new Map(existingTerms.map((t) => [t.original, t]));
+
+      const termsToUpdate: Array<{ id: string; data: Parameters<typeof tx.settingTerm.update>[0]["data"] }> = [];
+      const termsToCreate: Prisma.SettingTermCreateManyInput[] = [];
+
+      for (const t of analysisResult.terms) {
+        if (!t.original) continue;
+        const existing = termMap.get(t.original);
+        if (existing) {
+          termsToUpdate.push({
+            id: existing.id,
+            data: {
+              translated: t.translated || existing.translated,
+              category: t.category || existing.category,
+              note: t.note ?? existing.note,
+              context: t.context ?? existing.context,
+              firstAppearance: existing.firstAppearance ?? t.firstAppearance,
+            },
+          });
+        } else {
+          termsToCreate.push({
+            bibleId,
             original: t.original,
             translated: t.translated,
             category: t.category,
             note: t.note,
             context: t.context,
             firstAppearance: t.firstAppearance,
-          })),
-        });
+          });
+        }
       }
 
-      if (mergedResult.events.length > 0) {
-        await tx.timelineEvent.createMany({
-          data: mergedResult.events.map((e) => ({
-            bibleId: work.settingBible!.id,
+      if (termsToCreate.length > 0) {
+        await tx.settingTerm.createMany({ data: termsToCreate, skipDuplicates: true });
+      }
+      for (let i = 0; i < termsToUpdate.length; i += UPDATE_BATCH_SIZE) {
+        await Promise.all(
+          termsToUpdate.slice(i, i + UPDATE_BATCH_SIZE).map(({ id, data }) =>
+            tx.settingTerm.update({ where: { id }, data })
+          )
+        );
+      }
+
+      // ── 이벤트 bulk upsert ──
+      const existingEvents = await tx.timelineEvent.findMany({
+        where: { bibleId },
+      });
+      const eventMap = new Map(existingEvents.map((e) => [`${e.title}_${e.chapterStart}`, e]));
+
+      const eventsToUpdate: Array<{ id: string; data: Parameters<typeof tx.timelineEvent.update>[0]["data"] }> = [];
+      const eventsToCreate: Prisma.TimelineEventCreateManyInput[] = [];
+
+      for (const e of analysisResult.events) {
+        if (!e.title || !e.description) continue;
+        const key = `${e.title}_${e.chapterStart}`;
+        const existing = eventMap.get(key);
+        if (existing) {
+          eventsToUpdate.push({
+            id: existing.id,
+            data: {
+              description: e.description || existing.description,
+              chapterEnd: e.chapterEnd ?? existing.chapterEnd,
+              eventType: e.eventType || existing.eventType,
+              importance: e.importance || existing.importance,
+              isForeshadowing: e.isForeshadowing,
+              foreshadowNote: e.foreshadowNote ?? existing.foreshadowNote,
+              involvedCharacterIds: [...new Set([
+                ...existing.involvedCharacterIds,
+                ...e.involvedCharacters,
+              ])],
+            },
+          });
+        } else {
+          eventsToCreate.push({
+            bibleId,
             title: e.title,
             description: e.description,
             chapterStart: e.chapterStart,
@@ -203,8 +250,19 @@ export async function POST(
             isForeshadowing: e.isForeshadowing,
             foreshadowNote: e.foreshadowNote,
             involvedCharacterIds: e.involvedCharacters,
-          })),
-        });
+          });
+        }
+      }
+
+      if (eventsToCreate.length > 0) {
+        await tx.timelineEvent.createMany({ data: eventsToCreate, skipDuplicates: true });
+      }
+      for (let i = 0; i < eventsToUpdate.length; i += UPDATE_BATCH_SIZE) {
+        await Promise.all(
+          eventsToUpdate.slice(i, i + UPDATE_BATCH_SIZE).map(({ id, data }) =>
+            tx.timelineEvent.update({ where: { id }, data })
+          )
+        );
       }
 
       // 설정집 메타데이터 업데이트
@@ -214,29 +272,38 @@ export async function POST(
       );
 
       await tx.settingBible.update({
-        where: { id: work.settingBible!.id },
+        where: { id: bibleId },
         data: {
           status: "DRAFT",
           analyzedChapters: newAnalyzedChapters,
-          translationGuide: mergedResult.translationNotes,
+          ...(analysisResult.translationNotes
+            ? { translationGuide: analysisResult.translationNotes }
+            : {}),
           generatedAt: new Date(),
         },
       });
 
-      // 작품 상태 업데이트
       await tx.work.update({
         where: { id },
         data: { status: "BIBLE_DRAFT" },
       });
-    });
+
+      // 트랜잭션 내에서 카운트 계산 (별도 COUNT 쿼리 불필요)
+      return {
+        charCount: existingChars.length + charsToCreate.length,
+        termCount: existingTerms.length + termsToCreate.length,
+        eventCount: existingEvents.length + eventsToCreate.length,
+        analyzedChapters: newAnalyzedChapters,
+      };
+    }, { timeout: 120000 });
 
     return NextResponse.json({
       success: true,
-      analyzedChapters: chapterRange.end,
+      analyzedChapters: txResult.analyzedChapters,
       stats: {
-        characters: mergedResult.characters.length,
-        terms: mergedResult.terms.length,
-        events: mergedResult.events.length,
+        characters: txResult.charCount,
+        terms: txResult.termCount,
+        events: txResult.eventCount,
       },
     });
   } catch (error) {

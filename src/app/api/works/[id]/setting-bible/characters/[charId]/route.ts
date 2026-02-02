@@ -34,7 +34,7 @@ export async function GET(
 
     const work = await db.work.findUnique({
       where: { id },
-      select: { authorId: true },
+      include: { settingBible: { select: { id: true } } },
     });
 
     if (!work || work.authorId !== session.user.id) {
@@ -45,7 +45,7 @@ export async function GET(
       where: { id: charId },
     });
 
-    if (!character) {
+    if (!character || !work.settingBible || character.bibleId !== work.settingBible.id) {
       return NextResponse.json({ error: "인물을 찾을 수 없습니다." }, { status: 404 });
     }
 

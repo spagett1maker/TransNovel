@@ -1,11 +1,11 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, CharacterRole, TermCategory } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 
-// GET /api/works/[id]/setting-bible - 설정집 조회
+// GET /api/works/[id]/setting-bible - 설정집 조회 (페이지네이션 지원)
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -27,26 +27,109 @@ export async function GET(
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
+    const url = new URL(req.url);
+    const tab = url.searchParams.get("tab"); // "characters" | "terms" | "events" | null
+    const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(url.searchParams.get("pageSize") || "100", 10) || 100));
+    const search = url.searchParams.get("search") || "";
+    const filter = url.searchParams.get("filter") || "all";
+
     const bible = await db.settingBible.findUnique({
       where: { workId: id },
-      include: {
-        characters: {
-          orderBy: [{ role: "asc" }, { sortOrder: "asc" }],
-        },
-        terms: {
-          orderBy: [{ category: "asc" }, { original: "asc" }],
-        },
-        events: {
-          orderBy: [{ chapterStart: "asc" }, { importance: "desc" }],
-        },
-      },
     });
 
     if (!bible) {
       return NextResponse.json({ bible: null });
     }
 
-    return NextResponse.json({ bible });
+    // tab이 없으면 메타데이터 + 카운트만 반환 (가벼운 응답)
+    if (!tab) {
+      const [characterCount, termCount, eventCount] = await Promise.all([
+        db.character.count({ where: { bibleId: bible.id } }),
+        db.settingTerm.count({ where: { bibleId: bible.id } }),
+        db.timelineEvent.count({ where: { bibleId: bible.id } }),
+      ]);
+
+      return NextResponse.json({
+        bible: {
+          ...bible,
+          characterCount,
+          termCount,
+          eventCount,
+        },
+      });
+    }
+
+    const skip = (page - 1) * pageSize;
+
+    // 탭별 페이지네이션 데이터 반환
+    if (tab === "characters") {
+      const where: Prisma.CharacterWhereInput = { bibleId: bible.id };
+      if (search) {
+        where.OR = [
+          { nameKorean: { contains: search, mode: "insensitive" } },
+          { nameOriginal: { contains: search, mode: "insensitive" } },
+        ];
+      }
+      if (filter !== "all") {
+        where.role = filter as CharacterRole;
+      }
+
+      const [characters, total] = await Promise.all([
+        db.character.findMany({
+          where,
+          orderBy: [{ role: "asc" }, { sortOrder: "asc" }],
+          skip,
+          take: pageSize,
+        }),
+        db.character.count({ where }),
+      ]);
+
+      return NextResponse.json({ characters, total, page, pageSize });
+    }
+
+    if (tab === "terms") {
+      const where: Prisma.SettingTermWhereInput = { bibleId: bible.id };
+      if (search) {
+        where.OR = [
+          { original: { contains: search, mode: "insensitive" } },
+          { translated: { contains: search, mode: "insensitive" } },
+        ];
+      }
+      if (filter !== "all") {
+        where.category = filter as TermCategory;
+      }
+
+      const [terms, total] = await Promise.all([
+        db.settingTerm.findMany({
+          where,
+          orderBy: [{ category: "asc" }, { original: "asc" }],
+          skip,
+          take: pageSize,
+        }),
+        db.settingTerm.count({ where }),
+      ]);
+
+      return NextResponse.json({ terms, total, page, pageSize });
+    }
+
+    if (tab === "events") {
+      const where: Prisma.TimelineEventWhereInput = { bibleId: bible.id };
+
+      const [events, total] = await Promise.all([
+        db.timelineEvent.findMany({
+          where,
+          orderBy: [{ chapterStart: "asc" }, { importance: "desc" }],
+          skip,
+          take: pageSize,
+        }),
+        db.timelineEvent.count({ where }),
+      ]);
+
+      return NextResponse.json({ events, total, page, pageSize });
+    }
+
+    return NextResponse.json({ error: "유효하지 않은 tab 파라미터입니다." }, { status: 400 });
   } catch (error) {
     console.error("Failed to fetch setting bible:", error);
     return NextResponse.json(

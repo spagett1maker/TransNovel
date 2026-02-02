@@ -32,35 +32,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 토큰 추정 (CJK 문자는 대략 1.5 토큰, 영문은 4자당 1토큰)
-function estimateTokens(text: string): number {
-  const cjkPattern = /[\u4e00-\u9fff\u3400-\u4dbf\uac00-\ud7af\u3040-\u309f\u30a0-\u30ff]/g;
-  const cjkMatches = text.match(cjkPattern);
-  const cjkCount = cjkMatches?.length ?? 0;
-  const nonCjkCount = text.length - cjkCount;
-  return Math.ceil(cjkCount * 1.5 + nonCjkCount * 0.25);
-}
-
 // 배치당 고정 챕터 수 (10챕터 × ~3000자 = ~30,000자, Gemini 20~30초 처리)
 const CHAPTERS_PER_BATCH = 10;
 
 /**
- * 챕터 목록을 고정 크기 배치로 분할
+ * 챕터 번호 목록을 고정 크기 배치로 분할
  * @returns 각 배치에 포함될 챕터 번호 배열의 배열
  */
 export function getOptimalBatchPlan(
-  chapters: { number: number; contentLength: number }[]
+  chapterNumbers: number[]
 ): number[][] {
   const batches: number[][] = [];
 
-  for (let i = 0; i < chapters.length; i += CHAPTERS_PER_BATCH) {
-    batches.push(
-      chapters.slice(i, i + CHAPTERS_PER_BATCH).map((ch) => ch.number)
-    );
+  for (let i = 0; i < chapterNumbers.length; i += CHAPTERS_PER_BATCH) {
+    batches.push(chapterNumbers.slice(i, i + CHAPTERS_PER_BATCH));
   }
 
   log("getOptimalBatchPlan", {
-    totalChapters: chapters.length,
+    totalChapters: chapterNumbers.length,
     totalBatches: batches.length,
     chaptersPerBatch: CHAPTERS_PER_BATCH,
   });
@@ -633,10 +622,8 @@ export function mergeAnalysisResults(
     }
   }
 
-  // 번역 노트 병합
-  const translationNotes = [existing.translationNotes, newResult.translationNotes]
-    .filter(Boolean)
-    .join("\n\n");
+  // 번역 노트: 새 배치의 노트가 있으면 교체, 없으면 기존 유지
+  const translationNotes = newResult.translationNotes || existing.translationNotes;
 
   return {
     characters: Array.from(characterMap.values()),

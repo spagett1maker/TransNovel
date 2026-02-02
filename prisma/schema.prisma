@@ -512,6 +512,7 @@ model TimelineEvent {
 
   @@index([bibleId])
   @@index([chapterStart])
+  @@unique([bibleId, title, chapterStart])
 }
 
 // ============================================

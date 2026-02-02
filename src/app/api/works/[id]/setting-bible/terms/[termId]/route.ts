@@ -27,7 +27,7 @@ export async function GET(
 
     const work = await db.work.findUnique({
       where: { id },
-      select: { authorId: true },
+      include: { settingBible: { select: { id: true } } },
     });
 
     if (!work || work.authorId !== session.user.id) {
@@ -38,7 +38,7 @@ export async function GET(
       where: { id: termId },
     });
 
-    if (!term) {
+    if (!term || !work.settingBible || term.bibleId !== work.settingBible.id) {
       return NextResponse.json({ error: "용어를 찾을 수 없습니다." }, { status: 404 });
     }
 

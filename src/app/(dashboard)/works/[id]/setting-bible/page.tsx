@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Loader2,
   RefreshCw,
@@ -20,7 +22,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -104,7 +105,8 @@ interface TimelineEvent {
   involvedCharacterIds: string[];
 }
 
-interface SettingBible {
+// 메타 정보 (카운트 포함, 엔티티 데이터 미포함)
+interface BibleMeta {
   id: string;
   status: BibleStatus;
   version: number;
@@ -112,10 +114,12 @@ interface SettingBible {
   analyzedChapters: number;
   generatedAt: string | null;
   confirmedAt: string | null;
-  characters: Character[];
-  terms: Term[];
-  events: TimelineEvent[];
+  characterCount: number;
+  termCount: number;
+  eventCount: number;
 }
+
+const PAGE_SIZE = 100;
 
 const ROLE_FILTER_OPTIONS = [
   { value: "all", label: "전체 역할" },
@@ -142,20 +146,35 @@ export default function SettingBiblePage() {
   const searchParams = useSearchParams();
   const workId = params.id as string;
 
-  // URL에서 탭 파라미터 읽기 (기본값: characters)
   const initialTab = searchParams.get("tab") || "characters";
 
-  const [bible, setBible] = useState<SettingBible | null>(null);
+  // 메타 정보 (가벼운 데이터)
+  const [bible, setBible] = useState<BibleMeta | null>(null);
   const [totalChapters, setTotalChapters] = useState(0);
   const [workTitle, setWorkTitle] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+
+  // 탭별 페이지네이션 데이터
+  const [characters, setCharacters] = useState<{ items: Character[]; total: number }>({ items: [], total: 0 });
+  const [terms, setTerms] = useState<{ items: Term[]; total: number }>({ items: [], total: 0 });
+  const [events, setEvents] = useState<{ items: TimelineEvent[]; total: number }>({ items: [], total: 0 });
+  const [isTabLoading, setIsTabLoading] = useState(false);
 
   // UI 상태
   const [activeTab, setActiveTab] = useState(initialTab);
   const [characterSearch, setCharacterSearch] = useState("");
   const [characterRoleFilter, setCharacterRoleFilter] = useState("all");
+  const [characterPage, setCharacterPage] = useState(1);
   const [termSearch, setTermSearch] = useState("");
   const [termCategoryFilter, setTermCategoryFilter] = useState("all");
+  const [termPage, setTermPage] = useState(1);
+  const [eventPage, setEventPage] = useState(1);
+
+  // 검색 디바운스
+  const charSearchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const termSearchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [debouncedCharSearch, setDebouncedCharSearch] = useState("");
+  const [debouncedTermSearch, setDebouncedTermSearch] = useState("");
 
   // 다이얼로그 상태
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
@@ -175,8 +194,27 @@ export default function SettingBiblePage() {
   const activeGenerationJob = getJobByWorkId(workId);
   const isGenerating = activeGenerationJob?.status === "generating";
 
-  // 데이터 로드
-  const fetchBible = useCallback(async () => {
+  // 검색 디바운스 처리
+  useEffect(() => {
+    if (charSearchTimerRef.current) clearTimeout(charSearchTimerRef.current);
+    charSearchTimerRef.current = setTimeout(() => {
+      setDebouncedCharSearch(characterSearch);
+      setCharacterPage(1);
+    }, 300);
+    return () => { if (charSearchTimerRef.current) clearTimeout(charSearchTimerRef.current); };
+  }, [characterSearch]);
+
+  useEffect(() => {
+    if (termSearchTimerRef.current) clearTimeout(termSearchTimerRef.current);
+    termSearchTimerRef.current = setTimeout(() => {
+      setDebouncedTermSearch(termSearch);
+      setTermPage(1);
+    }, 300);
+    return () => { if (termSearchTimerRef.current) clearTimeout(termSearchTimerRef.current); };
+  }, [termSearch]);
+
+  // 메타 데이터 로드 (가벼운 요청)
+  const fetchBibleMeta = useCallback(async () => {
     try {
       const [bibleRes, statusRes, workRes] = await Promise.all([
         fetch(`/api/works/${workId}/setting-bible`),
@@ -210,31 +248,72 @@ export default function SettingBiblePage() {
     }
   }, [workId]);
 
+  // 탭별 데이터 로드 (페이지네이션)
+  const fetchTabData = useCallback(async (tab: string, page: number, search: string, filter: string) => {
+    if (!bible) return;
+    setIsTabLoading(true);
+    try {
+      const params = new URLSearchParams({
+        tab,
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
+      });
+      if (search) params.set("search", search);
+      if (filter !== "all") params.set("filter", filter);
+
+      const res = await fetch(`/api/works/${workId}/setting-bible?${params}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (tab === "characters") {
+        setCharacters({ items: data.characters || [], total: data.total || 0 });
+      } else if (tab === "terms") {
+        setTerms({ items: data.terms || [], total: data.total || 0 });
+      } else if (tab === "events") {
+        setEvents({ items: data.events || [], total: data.total || 0 });
+      }
+    } catch (error) {
+      console.error(`Failed to fetch ${tab} data:`, error);
+    } finally {
+      setIsTabLoading(false);
+    }
+  }, [workId, bible]);
+
+  // 생성 완료 시 콜백
+  const handleGenerationComplete = useCallback(async () => {
+    await fetchBibleMeta();
+  }, [fetchBibleMeta]);
+
+  // 초기 로드
   useEffect(() => {
-    fetchBible();
-  }, [fetchBible]);
+    fetchBibleMeta();
+  }, [fetchBibleMeta]);
 
-  // 필터링된 캐릭터
-  const filteredCharacters = bible?.characters.filter((char) => {
-    const matchesSearch =
-      !characterSearch ||
-      char.nameKorean.toLowerCase().includes(characterSearch.toLowerCase()) ||
-      char.nameOriginal.toLowerCase().includes(characterSearch.toLowerCase());
-    const matchesRole =
-      characterRoleFilter === "all" || char.role === characterRoleFilter;
-    return matchesSearch && matchesRole;
-  }) || [];
+  // 탭/페이지/필터 변경 시 데이터 로드
+  useEffect(() => {
+    if (!bible) return;
+    if (activeTab === "characters") {
+      fetchTabData("characters", characterPage, debouncedCharSearch, characterRoleFilter);
+    }
+  }, [bible, activeTab, characterPage, debouncedCharSearch, characterRoleFilter, fetchTabData]);
 
-  // 필터링된 용어
-  const filteredTerms = bible?.terms.filter((term) => {
-    const matchesSearch =
-      !termSearch ||
-      term.original.toLowerCase().includes(termSearch.toLowerCase()) ||
-      term.translated.toLowerCase().includes(termSearch.toLowerCase());
-    const matchesCategory =
-      termCategoryFilter === "all" || term.category === termCategoryFilter;
-    return matchesSearch && matchesCategory;
-  }) || [];
+  useEffect(() => {
+    if (!bible) return;
+    if (activeTab === "terms") {
+      fetchTabData("terms", termPage, debouncedTermSearch, termCategoryFilter);
+    }
+  }, [bible, activeTab, termPage, debouncedTermSearch, termCategoryFilter, fetchTabData]);
+
+  useEffect(() => {
+    if (!bible) return;
+    if (activeTab === "timeline") {
+      fetchTabData("events", eventPage, "", "all");
+    }
+  }, [bible, activeTab, eventPage, fetchTabData]);
+
+  // 필터 변경 시 페이지 리셋
+  useEffect(() => { setCharacterPage(1); }, [characterRoleFilter]);
+  useEffect(() => { setTermPage(1); }, [termCategoryFilter]);
 
   // 핸들러
   const handleDeleteCharacter = async () => {
@@ -252,11 +331,10 @@ export default function SettingBiblePage() {
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 
-      // Optimistic: remove from local state immediately
-      setBible((prev) =>
-        prev ? { ...prev, characters: prev.characters.filter((c) => c.id !== deletingCharacterId) } : prev
-      );
       toast.success("인물이 삭제되었습니다.");
+      // 탭 데이터 + 메타(카운트) 새로고침
+      fetchBibleMeta();
+      fetchTabData("characters", characterPage, debouncedCharSearch, characterRoleFilter);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "삭제에 실패했습니다.");
     } finally {
@@ -280,11 +358,9 @@ export default function SettingBiblePage() {
         throw new Error(error.error || "삭제에 실패했습니다.");
       }
 
-      // Optimistic: remove from local state immediately
-      setBible((prev) =>
-        prev ? { ...prev, terms: prev.terms.filter((t) => t.id !== deletingTermId) } : prev
-      );
       toast.success("용어가 삭제되었습니다.");
+      fetchBibleMeta();
+      fetchTabData("terms", termPage, debouncedTermSearch, termCategoryFilter);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "삭제에 실패했습니다.");
     } finally {
@@ -414,11 +490,41 @@ export default function SettingBiblePage() {
           totalChapters={totalChapters}
           open={showGenerationProgress}
           onOpenChange={setShowGenerationProgress}
-          onComplete={fetchBible}
+          onComplete={handleGenerationComplete}
         />
       </div>
     );
   }
+
+  // 페이지네이션 컴포넌트
+  const PaginationControls = ({ page, total, pageSize, onPageChange }: { page: number; total: number; pageSize: number; onPageChange: (p: number) => void }) => {
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages <= 1) return null;
+
+    const start = (page - 1) * pageSize + 1;
+    const end = Math.min(page * pageSize, total);
+
+    return (
+      <div className="flex items-center justify-between mt-4 pt-4 border-t">
+        <span className="text-sm text-muted-foreground">
+          {total.toLocaleString()}개 중 {start.toLocaleString()}-{end.toLocaleString()}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
+            <ChevronLeft className="h-4 w-4" />
+            이전
+          </Button>
+          <span className="text-sm tabular-nums">
+            {page} / {totalPages}
+          </span>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+            다음
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-6xl">
@@ -542,21 +648,21 @@ export default function SettingBiblePage() {
             <Users className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs text-muted-foreground uppercase tracking-wider">인물</span>
           </div>
-          <p className="text-2xl font-semibold tabular-nums">{bible.characters.length}</p>
+          <p className="text-2xl font-semibold tabular-nums">{bible.characterCount.toLocaleString()}</p>
         </div>
         <div className="stat-card">
           <div className="flex items-center gap-2 mb-1">
             <FileText className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs text-muted-foreground uppercase tracking-wider">용어</span>
           </div>
-          <p className="text-2xl font-semibold tabular-nums">{bible.terms.length}</p>
+          <p className="text-2xl font-semibold tabular-nums">{bible.termCount.toLocaleString()}</p>
         </div>
         <div className="stat-card">
           <div className="flex items-center gap-2 mb-1">
             <Clock className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs text-muted-foreground uppercase tracking-wider">이벤트</span>
           </div>
-          <p className="text-2xl font-semibold tabular-nums">{bible.events.length}</p>
+          <p className="text-2xl font-semibold tabular-nums">{bible.eventCount.toLocaleString()}</p>
         </div>
       </div>
 
@@ -575,15 +681,15 @@ export default function SettingBiblePage() {
         <TabsList className="mb-6">
           <TabsTrigger value="characters" className="gap-2">
             <Users className="h-4 w-4" />
-            인물 DB ({bible.characters.length})
+            인물 DB ({bible.characterCount.toLocaleString()})
           </TabsTrigger>
           <TabsTrigger value="terms" className="gap-2">
             <FileText className="h-4 w-4" />
-            용어집 ({bible.terms.length})
+            용어집 ({bible.termCount.toLocaleString()})
           </TabsTrigger>
           <TabsTrigger value="timeline" className="gap-2">
             <Clock className="h-4 w-4" />
-            타임라인 ({bible.events.length})
+            타임라인 ({bible.eventCount.toLocaleString()})
           </TabsTrigger>
           <TabsTrigger value="guide">번역 가이드</TabsTrigger>
         </TabsList>
@@ -616,24 +722,36 @@ export default function SettingBiblePage() {
           </div>
 
           {/* Character Grid */}
-          {filteredCharacters.length === 0 ? (
+          {isTabLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Spinner size="md" />
+            </div>
+          ) : characters.items.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               {characterSearch || characterRoleFilter !== "all"
                 ? "검색 결과가 없습니다"
                 : "등록된 인물이 없습니다"}
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredCharacters.map((char) => (
-                <CharacterCard
-                  key={char.id}
-                  character={char}
-                  onEdit={setEditingCharacter}
-                  onDelete={setDeletingCharacterId}
-                  readOnly={isReadOnly}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {characters.items.map((char) => (
+                  <CharacterCard
+                    key={char.id}
+                    character={char}
+                    onEdit={setEditingCharacter}
+                    onDelete={setDeletingCharacterId}
+                    readOnly={isReadOnly}
+                  />
+                ))}
+              </div>
+              <PaginationControls
+                page={characterPage}
+                total={characters.total}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCharacterPage}
+              />
+            </>
           )}
         </TabsContent>
 
@@ -664,17 +782,45 @@ export default function SettingBiblePage() {
             </Select>
           </div>
 
-          <TermTable
-            terms={filteredTerms}
-            onEdit={setEditingTerm}
-            onDelete={setDeletingTermId}
-            readOnly={isReadOnly}
-          />
+          {isTabLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Spinner size="md" />
+            </div>
+          ) : (
+            <>
+              <TermTable
+                terms={terms.items}
+                onEdit={setEditingTerm}
+                onDelete={setDeletingTermId}
+                readOnly={isReadOnly}
+              />
+              <PaginationControls
+                page={termPage}
+                total={terms.total}
+                pageSize={PAGE_SIZE}
+                onPageChange={setTermPage}
+              />
+            </>
+          )}
         </TabsContent>
 
         {/* Timeline Tab */}
         <TabsContent value="timeline">
-          <TimelineView events={bible.events} />
+          {isTabLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Spinner size="md" />
+            </div>
+          ) : (
+            <>
+              <TimelineView events={events.items} />
+              <PaginationControls
+                page={eventPage}
+                total={events.total}
+                pageSize={PAGE_SIZE}
+                onPageChange={setEventPage}
+              />
+            </>
+          )}
         </TabsContent>
 
         {/* Guide Tab */}
@@ -722,7 +868,10 @@ export default function SettingBiblePage() {
         workId={workId}
         open={!!editingCharacter}
         onOpenChange={(open) => !open && setEditingCharacter(null)}
-        onSaved={fetchBible}
+        onSaved={() => {
+          fetchBibleMeta();
+          fetchTabData("characters", characterPage, debouncedCharSearch, characterRoleFilter);
+        }}
       />
 
       <TermEditDialog
@@ -730,7 +879,10 @@ export default function SettingBiblePage() {
         workId={workId}
         open={!!editingTerm}
         onOpenChange={(open) => !open && setEditingTerm(null)}
-        onSaved={fetchBible}
+        onSaved={() => {
+          fetchBibleMeta();
+          fetchTabData("terms", termPage, debouncedTermSearch, termCategoryFilter);
+        }}
       />
 
       <GenerationProgress
@@ -739,24 +891,23 @@ export default function SettingBiblePage() {
         totalChapters={totalChapters}
         open={showGenerationProgress}
         onOpenChange={setShowGenerationProgress}
-        onComplete={fetchBible}
+        onComplete={handleGenerationComplete}
       />
 
       <ConfirmDialog
         workId={workId}
         stats={{
-          characters: bible.characters.length,
-          terms: bible.terms.length,
-          events: bible.events.length,
+          characters: bible.characterCount,
+          terms: bible.termCount,
+          events: bible.eventCount,
         }}
         open={showConfirmDialog}
         onOpenChange={setShowConfirmDialog}
         onConfirmed={() => {
-          // Optimistic: mark as confirmed immediately
           setBible((prev) =>
             prev ? { ...prev, status: "CONFIRMED" as BibleStatus } : prev
           );
-          fetchBible();
+          fetchBibleMeta();
           router.refresh();
         }}
       />

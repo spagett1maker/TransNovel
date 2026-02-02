@@ -34,8 +34,8 @@ export async function GET(
 
     // NaN 체크 및 범위 제한
     const page = Number.isNaN(pageRaw) ? 1 : Math.max(1, pageRaw);
-    // all=true면 2000, 아니면 최대 100 (DoS 방지)
-    const maxLimit = fetchAll ? 2000 : 100;
+    // all=true면 10000, 아니면 최대 100 (DoS 방지)
+    const maxLimit = fetchAll ? 10000 : 100;
     const limit = Number.isNaN(limitRaw) ? 50 : Math.min(maxLimit, Math.max(1, limitRaw));
     const statusParam = searchParams.get("status"); // 선택적 상태 필터
 
