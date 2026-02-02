@@ -5,13 +5,26 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Trash2,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { ChapterStatus } from "@prisma/client";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -31,11 +44,37 @@ interface ChapterListProps {
   workId: string;
   chapters: Chapter[];
   itemsPerPage?: number;
+  canDelete?: boolean;
 }
 
-export function ChapterList({ workId, chapters = [], itemsPerPage = 30 }: ChapterListProps) {
+export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelete = false }: ChapterListProps) {
   const [currentPage, setCurrentPage] = useState(1);
+  const [deletingChapter, setDeletingChapter] = useState<Chapter | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const router = useRouter();
   const { getJobByWorkId } = useTranslation();
+
+  const handleDeleteChapter = async () => {
+    if (!deletingChapter) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/works/${workId}/chapters/${deletingChapter.number}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "삭제에 실패했습니다");
+        return;
+      }
+      toast.success(`${deletingChapter.number}화가 삭제되었습니다`);
+      setDeletingChapter(null);
+      router.refresh();
+    } catch {
+      toast.error("삭제에 실패했습니다");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // 현재 작품의 번역 작업 확인
   const job = getJobByWorkId(workId);
@@ -123,6 +162,18 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30 }: Chapte
                   <Badge variant={chapterStatus.variant} className="text-xs">
                     {chapterStatus.label}
                   </Badge>
+                )}
+                {canDelete && !isCurrentlyTranslating && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeletingChapter(chapter);
+                    }}
+                    className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 )}
                 <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
                   보기 →
@@ -221,6 +272,30 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30 }: Chapte
           </span>
         </div>
       )}
+
+      {/* 챕터 삭제 확인 다이얼로그 */}
+      <AlertDialog open={!!deletingChapter} onOpenChange={() => { if (!isDeleting) setDeletingChapter(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>회차 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{deletingChapter?.number}화{deletingChapter?.title ? ` - ${deletingChapter.title}` : ""}</strong>를 삭제하시겠습니까?
+              <br />
+              원문, 번역본, 스냅샷이 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteChapter}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

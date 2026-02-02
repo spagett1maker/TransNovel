@@ -12,12 +12,17 @@ import {
   XCircle,
   ExternalLink,
   Inbox,
+  Pencil,
   Send,
+  Trash2,
 } from "lucide-react";
 
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +34,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface PortfolioItem {
   id: string;
@@ -67,9 +79,13 @@ interface Listing {
   id: string;
   title: string;
   description: string;
+  requirements: string | null;
   status: string;
   budgetMin: number | null;
   budgetMax: number | null;
+  deadline: string | null;
+  chapterStart: number | null;
+  chapterEnd: number | null;
   createdAt: string;
   _count: {
     applications: number;
@@ -163,6 +179,85 @@ export default function WorkListingsPage() {
       }
     } catch {
       toast.error("게시에 실패했습니다");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const [editingListing, setEditingListing] = useState<Listing | null>(null);
+  const [editForm, setEditForm] = useState({
+    title: "",
+    description: "",
+    requirements: "",
+    budgetMin: "",
+    budgetMax: "",
+  });
+  const [deletingListingId, setDeletingListingId] = useState<string | null>(null);
+
+  const openEditDialog = (listing: Listing) => {
+    setEditForm({
+      title: listing.title,
+      description: listing.description,
+      requirements: listing.requirements || "",
+      budgetMin: listing.budgetMin?.toString() || "",
+      budgetMax: listing.budgetMax?.toString() || "",
+    });
+    setEditingListing(listing);
+  };
+
+  const handleEditListing = async () => {
+    if (!editingListing) return;
+    setActionLoading(editingListing.id);
+    try {
+      const payload: Record<string, unknown> = {
+        title: editForm.title,
+        description: editForm.description,
+        requirements: editForm.requirements || undefined,
+      };
+      if (editForm.budgetMin) payload.budgetMin = parseInt(editForm.budgetMin, 10);
+      else payload.budgetMin = null;
+      if (editForm.budgetMax) payload.budgetMax = parseInt(editForm.budgetMax, 10);
+      else payload.budgetMax = null;
+
+      const res = await fetch(`/api/listings/${editingListing.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        toast.success("공고가 수정되었습니다");
+        setEditingListing(null);
+        await fetchData();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "수정에 실패했습니다");
+      }
+    } catch {
+      toast.error("수정에 실패했습니다");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteListing = async () => {
+    if (!deletingListingId) return;
+    setActionLoading(deletingListingId);
+    try {
+      const res = await fetch(`/api/listings/${deletingListingId}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        toast.success("공고가 삭제되었습니다");
+        setDeletingListingId(null);
+        await fetchData();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || "삭제에 실패했습니다");
+      }
+    } catch {
+      toast.error("삭제에 실패했습니다");
     } finally {
       setActionLoading(null);
     }
@@ -262,6 +357,27 @@ export default function WorkListingsPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      {!["IN_PROGRESS", "COMPLETED"].includes(listing.status) && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(listing)}
+                            disabled={actionLoading === listing.id}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeletingListingId(listing.id)}
+                            disabled={actionLoading === listing.id}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      )}
                       {listing.status === "DRAFT" && (
                         <Button
                           size="sm"
@@ -483,6 +599,98 @@ export default function WorkListingsPage() {
           })}
         </div>
       )}
+
+      {/* 공고 수정 다이얼로그 */}
+      <Dialog open={!!editingListing} onOpenChange={() => setEditingListing(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>공고 수정</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-title">제목</Label>
+              <Input
+                id="edit-title"
+                value={editForm.title}
+                onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">설명</Label>
+              <Textarea
+                id="edit-description"
+                value={editForm.description}
+                onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                rows={4}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-requirements">요구사항</Label>
+              <Textarea
+                id="edit-requirements"
+                value={editForm.requirements}
+                onChange={(e) => setEditForm((f) => ({ ...f, requirements: e.target.value }))}
+                rows={2}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-budgetMin">최소 예산 (원)</Label>
+                <Input
+                  id="edit-budgetMin"
+                  type="number"
+                  value={editForm.budgetMin}
+                  onChange={(e) => setEditForm((f) => ({ ...f, budgetMin: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-budgetMax">최대 예산 (원)</Label>
+                <Input
+                  id="edit-budgetMax"
+                  type="number"
+                  value={editForm.budgetMax}
+                  onChange={(e) => setEditForm((f) => ({ ...f, budgetMax: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingListing(null)}>
+              취소
+            </Button>
+            <Button
+              onClick={handleEditListing}
+              disabled={actionLoading === editingListing?.id || !editForm.title || !editForm.description}
+            >
+              {actionLoading === editingListing?.id ? "저장 중..." : "저장"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 공고 삭제 확인 다이얼로그 */}
+      <AlertDialog open={!!deletingListingId} onOpenChange={() => setDeletingListingId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>공고 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 공고를 삭제하시겠습니까? 대기 중인 지원서는 자동으로 거절 처리됩니다. 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionLoading === deletingListingId}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteListing}
+              disabled={actionLoading === deletingListingId}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {actionLoading === deletingListingId ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

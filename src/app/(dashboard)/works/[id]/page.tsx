@@ -8,6 +8,7 @@ import { ChapterList } from "@/components/chapters/chapter-list";
 import { DownloadDialog } from "@/components/download/download-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteWorkButton } from "@/components/works/delete-work-button";
 import { QuickActions } from "@/components/works/quick-actions";
 import { TranslationActionButton } from "@/components/works/translation-action-button";
 import { WorkPageRefresher } from "@/components/works/work-page-refresher";
@@ -310,6 +311,7 @@ export default async function WorkDetailPage({
                 wordCount: ch.wordCount,
               }))}
               itemsPerPage={10}
+              canDelete={isAuthor}
             />
           )}
         </section>
@@ -429,6 +431,13 @@ export default async function WorkDetailPage({
                 workId={work.id}
                 currentEditor={work.editor}
               />
+            </div>
+          )}
+
+          {/* 프로젝트 삭제 */}
+          {isAuthor && (
+            <div className="pt-4 border-t border-border">
+              <DeleteWorkButton workId={work.id} workTitle={work.titleKo} />
             </div>
           )}
         </aside>

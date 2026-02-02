@@ -222,13 +222,25 @@ export function EditorProvider({
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ editedContent }),
+          body: JSON.stringify({
+            editedContent,
+            _updatedAt: chapter.updatedAt,
+          }),
         }
       );
 
       if (!response.ok) {
         const error = await response.json();
-        toast.error(error.error || "저장에 실패했습니다");
+        if (error.code === "CONFLICT") {
+          toast.error("다른 사용자가 이미 수정했습니다. 페이지를 새로고침해주세요.", {
+            action: {
+              label: "새로고침",
+              onClick: () => fetchData(),
+            },
+          });
+        } else {
+          toast.error(error.error || "저장에 실패했습니다");
+        }
         return;
       }
 
@@ -241,7 +253,7 @@ export function EditorProvider({
     } finally {
       setIsSaving(false);
     }
-  }, [chapter, editor, workId, chapterNum, isEditable]);
+  }, [chapter, editor, workId, chapterNum, isEditable, fetchData]);
 
   // Status change handler
   const handleStatusChange = useCallback(
@@ -251,7 +263,10 @@ export function EditorProvider({
       setIsSaving(true);
       try {
         // 읽기 전용 모드에서는 상태만 전송 (콘텐츠 수정 제외)
-        const payload: Record<string, unknown> = { status: newStatus };
+        const payload: Record<string, unknown> = {
+          status: newStatus,
+          _updatedAt: chapter.updatedAt,
+        };
         if (isEditable) {
           const editedContent = editor.getHTML();
           payload.editedContent = editedContent || chapter.translatedContent;
@@ -268,7 +283,16 @@ export function EditorProvider({
 
         if (!response.ok) {
           const error = await response.json();
-          toast.error(error.error || "상태 변경에 실패했습니다.");
+          if (error.code === "CONFLICT") {
+            toast.error("다른 사용자가 이미 수정했습니다. 페이지를 새로고침해주세요.", {
+              action: {
+                label: "새로고침",
+                onClick: () => fetchData(),
+              },
+            });
+          } else {
+            toast.error(error.error || "상태 변경에 실패했습니다.");
+          }
           return;
         }
 
@@ -283,7 +307,7 @@ export function EditorProvider({
         setIsSaving(false);
       }
     },
-    [chapter, editor, workId, chapterNum, isEditable, onChapterStatusChange]
+    [chapter, editor, workId, chapterNum, isEditable, onChapterStatusChange, fetchData]
   );
 
   const value: EditorContextType = {
