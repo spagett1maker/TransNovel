@@ -34,7 +34,7 @@ const logError = (...args: unknown[]) => {
 // Vercel Pro 플랜: 최대 300초 (5분) 함수 실행 시간
 // 챕터 전체 번역을 위해 타임아웃 대폭 증가
 const API_TIMEOUT_MS = 180000; // 180초 (3분) - 긴 챕터 대응
-const RATE_LIMIT_RPM = 15; // 분당 최대 요청 수 (순차 처리에 적합, Cron 전환 시 증가 예정)
+const RATE_LIMIT_RPM = 60; // 분당 최대 요청 수 (Cron 병렬 처리용, Gemini 1500 RPM 대비 4% 사용)
 const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
 
 // 청크 레벨 재시도 설정
