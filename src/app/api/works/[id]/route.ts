@@ -239,6 +239,11 @@ export async function DELETE(
       );
     }
 
+    // 모든 관련 번역 작업 삭제 (상태 무관 - COMPLETED/FAILED 포함)
+    await db.activeTranslationJob.deleteMany({
+      where: { workId: id },
+    });
+
     await db.work.delete({ where: { id } });
 
     revalidateTag(`user-${session.user.id}-stats`, { expire: 0 });

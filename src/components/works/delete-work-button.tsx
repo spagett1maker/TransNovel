@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/contexts/translation-context";
 
 interface DeleteWorkButtonProps {
   workId: string;
@@ -24,6 +25,7 @@ interface DeleteWorkButtonProps {
 
 export function DeleteWorkButton({ workId, workTitle }: DeleteWorkButtonProps) {
   const router = useRouter();
+  const { removeJob, getJobByWorkId } = useTranslation();
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -42,6 +44,12 @@ export function DeleteWorkButton({ workId, workTitle }: DeleteWorkButtonProps) {
         setError(data.error || "삭제에 실패했습니다.");
         setIsDeleting(false);
         return;
+      }
+
+      // 관련 번역 작업 Context에서 제거 (모달 무한루프 방지)
+      const existingJob = getJobByWorkId(workId);
+      if (existingJob) {
+        removeJob(existingJob.jobId);
       }
 
       router.push("/works");

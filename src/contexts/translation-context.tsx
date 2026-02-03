@@ -116,6 +116,19 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           // 권한 없음 - 폴링 중지
           return false;
         }
+        if (response.status === 404) {
+          // 작품이 삭제됨 - 폴링 중지 및 상태 정리
+          console.log("[TranslationContext] 작품이 삭제됨, 폴링 중지:", workId);
+          setJobs((prev) => {
+            const newJobs = new Map(prev);
+            const jobToRemove = Array.from(prev.values()).find(j => j.workId === workId);
+            if (jobToRemove) {
+              newJobs.delete(jobToRemove.jobId);
+            }
+            return newJobs;
+          });
+          return false;
+        }
         return true; // 다른 에러는 계속 폴링
       }
 
