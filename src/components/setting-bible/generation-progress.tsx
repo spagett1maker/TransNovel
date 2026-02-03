@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Loader2, CheckCircle2, XCircle, Sparkles } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Sparkles, CloudOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,28 +25,17 @@ interface GenerationProgressProps {
   onComplete: () => void | Promise<void>;
 }
 
-interface GenerationState {
-  status: "idle" | "generating" | "completed" | "failed";
-  currentBatch: number;
+// 서버 작업 상태
+interface JobStatus {
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
   totalBatches: number;
+  currentBatchIndex: number;
   analyzedChapters: number;
-  error?: string;
-  retryCount?: number;
-  stats?: {
-    characters: number;
-    terms: number;
-    events: number;
-  };
+  errorMessage?: string | null;
+  lastError?: string | null;
 }
 
-// 배치 재시도 설정 (Vercel Pro 최적화)
-const BATCH_MAX_RETRIES = 3;
-const BATCH_RETRY_DELAY_MS = 15000; // 15초 (빠른 재시도)
-const BATCH_INTERVAL_DELAY_MS = 1000; // 배치 간 1초 대기 (Gemini 자체 rate limit 활용)
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const POLL_INTERVAL_MS = 3000;
 
 export function GenerationProgress({
   workId,
@@ -56,406 +45,236 @@ export function GenerationProgress({
   onOpenChange,
   onComplete,
 }: GenerationProgressProps) {
-  const [state, setState] = useState<GenerationState>({
-    status: "idle",
-    currentBatch: 0,
-    totalBatches: 0,
-    analyzedChapters: 0,
-  });
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [stats, setStats] = useState<{ characters: number; terms: number; events: number } | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const hasCompletedRef = useRef(false);
 
-  const shouldCancelRef = useRef(false);
-  const statsRef = useRef<GenerationState["stats"]>(undefined);
-  const isGeneratingRef = useRef(false);
+  const { registerJob, cancelGeneration } = useBibleGeneration();
 
-  // 전역 상태 관리
-  const {
-    startGeneration,
-    updateProgress,
-    completeGeneration,
-    failGeneration,
-    cancelGeneration,
-    isCancelRequested,
-    clearCancelRequest,
-  } = useBibleGeneration();
+  // Polling 시작
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
 
-  // 외부 취소 요청 감시
-  useEffect(() => {
-    if (isCancelRequested(workId)) {
-      console.log("[GenerationProgress] 외부 취소 요청 감지");
-      shouldCancelRef.current = true;
-      clearCancelRequest(workId);
-    }
-  }, [workId, isCancelRequested, clearCancelRequest]);
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/works/${workId}/setting-bible/status`);
+        if (!res.ok) return;
+        const data = await res.json();
 
-  // 페이지 이탈 방지 (생성 중일 때)
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (state.status === "generating") {
-        e.preventDefault();
-        e.returnValue = "설정집 분석이 진행 중입니다. 페이지를 벗어나면 분석이 중단됩니다.";
-        return e.returnValue;
+        if (data.stats) setStats(data.stats);
+
+        const serverJob = data.job as JobStatus | null;
+        if (!serverJob) return;
+
+        setJobStatus(serverJob);
+
+        if (serverJob.status === "COMPLETED" && !hasCompletedRef.current) {
+          hasCompletedRef.current = true;
+          stopPolling();
+          toast.success("설정집 생성이 완료되었습니다!");
+          await onComplete();
+        } else if (serverJob.status === "FAILED") {
+          stopPolling();
+        } else if (serverJob.status === "CANCELLED") {
+          stopPolling();
+        }
+      } catch {
+        // 네트워크 에러 무시 (다음 poll에서 재시도)
       }
     };
 
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [state.status]);
+    poll();
+    pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workId, onComplete]);
 
-  const generateBible = useCallback(async () => {
-    // 이미 실행 중이면 중복 실행 방지
-    if (isGeneratingRef.current) return;
-    isGeneratingRef.current = true;
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
-    setState((prev) => ({ ...prev, status: "generating", error: undefined }));
-    shouldCancelRef.current = false;
-    clearCancelRequest(workId);
+  // 생성 시작
+  const startGeneration = useCallback(async () => {
+    setIsStarting(true);
+    setLocalError(null);
+    hasCompletedRef.current = false;
 
     try {
-      // 1. 설정집 초기화 (이미 존재하면 resume 모드)
-      let isResume = false;
-      const initResponse = await fetch(`/api/works/${workId}/setting-bible`, {
-        method: "POST",
-      });
+      const result = await registerJob(workId, workTitle, totalChapters);
 
-      if (!initResponse.ok) {
-        const error = await initResponse.json();
-        if (error.error?.includes("이미")) {
-          isResume = true; // 기존 설정집이 있으면 이어서 분석
-        } else {
-          throw new Error(error.error || "설정집 초기화 실패");
-        }
-      }
-
-      // 2. 배치 계획 가져옴 (resume 시 이미 분석된 회차 건너뛰기)
-      let batchPlan: number[][] = [];
-      let skippedChapters = 0;
-      try {
-        const resumeParam = isResume ? "&resume=true" : "";
-        const planRes = await fetch(`/api/works/${workId}/setting-bible/batch-plan?${resumeParam}`);
-        if (planRes.ok) {
-          const planData = await planRes.json();
-
-          // 이미 전체 분석 완료된 경우
-          if (planData.alreadyComplete) {
-            toast.success("이미 모든 회차가 분석되었습니다.");
-            setState((prev) => ({ ...prev, status: "completed" }));
-            completeGeneration(workId, statsRef.current);
-            await onComplete();
-            return;
-          }
-
-          batchPlan = planData.batches;
-          skippedChapters = planData.skippedChapters || 0;
-        }
-      } catch {
-        // batch-plan 실패 시 fallback
-      }
-
-      // fallback: batch-plan API 실패 시 기존 방식 (10개 고정 배치)
-      if (batchPlan.length === 0) {
-        let actualChapterNumbers: number[] = [];
-        try {
-          const chaptersRes = await fetch(`/api/works/${workId}/chapters?all=true&limit=10000`);
-          if (chaptersRes.ok) {
-            const chaptersData = await chaptersRes.json();
-            const chapters = chaptersData.chapters || chaptersData;
-            actualChapterNumbers = (chapters as { number: number }[])
-              .map((ch: { number: number }) => ch.number)
-              .sort((a: number, b: number) => a - b);
-          }
-        } catch {
-          // 실패 시 fallback
-        }
-
-        if (actualChapterNumbers.length === 0) {
-          throw new Error("회차 목록을 가져올 수 없습니다. 페이지를 새로고침 후 다시 시도해주세요.");
-        }
-
-        // 10개씩 고정 배치 (fallback)
-        const fallbackBatchSize = 10;
-        for (let i = 0; i < actualChapterNumbers.length; i += fallbackBatchSize) {
-          batchPlan.push(actualChapterNumbers.slice(i, i + fallbackBatchSize));
-        }
-      }
-
-      const totalBatches = batchPlan.length;
-      const actualTotal = batchPlan.reduce((sum, b) => sum + b.length, 0);
-
-      // 전역 상태에 작업 시작 알림
-      startGeneration(workId, workTitle, actualTotal, totalBatches);
-
-      setState((prev) => ({
-        ...prev,
-        totalBatches,
-        analyzedChapters: skippedChapters > 0 ? skippedChapters : prev.analyzedChapters,
-      }));
-
-      if (skippedChapters > 0) {
-        console.log(`[GenerationProgress] 이어서 분석: ${skippedChapters}회차 건너뜀, 남은 ${actualTotal}회차 분석`);
-      }
-
-      // 배치별로 분석 실행
-      for (let batch = 0; batch < totalBatches; batch++) {
-        if (shouldCancelRef.current) {
-          setState((prev) => ({
-            ...prev,
-            status: "failed",
-            error: "사용자에 의해 취소됨",
-          }));
-          cancelGeneration(workId);
-          return;
-        }
-
-        const chapterNumbers = batchPlan[batch];
-
-        setState((prev) => ({
-          ...prev,
-          currentBatch: batch + 1,
-          retryCount: 0,
-        }));
-
-        // 전역 상태 업데이트
-        updateProgress(workId, {
-          currentBatch: batch + 1,
-          retryCount: 0,
-        });
-
-        // 배치 재시도 로직
-        let batchSuccess = false;
-        let lastError: Error | null = null;
-
-        for (let retry = 0; retry < BATCH_MAX_RETRIES; retry++) {
-          if (shouldCancelRef.current) break;
-
-          try {
-            if (retry > 0) {
-              setState((prev) => ({ ...prev, retryCount: retry }));
-              updateProgress(workId, { retryCount: retry });
-              console.log(`[GenerationProgress] 배치 ${batch + 1} 재시도 ${retry}/${BATCH_MAX_RETRIES}, ${BATCH_RETRY_DELAY_MS / 1000}초 대기...`);
-              await sleep(BATCH_RETRY_DELAY_MS);
-            }
-
-            const response = await fetch(
-              `/api/works/${workId}/setting-bible/analyze-batch`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ chapterNumbers }),
-              }
-            );
-
-            if (!response.ok) {
-              const error = await response.json().catch(() => ({}));
-              throw new Error(error.error || "분석 실패");
-            }
-
-            const result = await response.json();
-
-            statsRef.current = result.stats;
-            setState((prev) => ({
-              ...prev,
-              analyzedChapters: result.analyzedChapters,
-              stats: result.stats,
-              retryCount: 0,
-            }));
-
-            // 전역 상태 업데이트
-            updateProgress(workId, {
-              analyzedChapters: result.analyzedChapters,
-              stats: result.stats,
-              retryCount: 0,
-            });
-
-            batchSuccess = true;
-            break; // 성공하면 재시도 루프 종료
-          } catch (error) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            console.error(`[GenerationProgress] 배치 ${batch + 1} 시도 ${retry + 1} 실패:`, lastError.message);
-          }
-        }
-
-        if (!batchSuccess && lastError) {
-          throw lastError;
-        }
-
-        // 다음 배치 전 딜레이 (API 부하 방지)
-        if (batch < totalBatches - 1) {
-          console.log(`[GenerationProgress] 다음 배치 전 ${BATCH_INTERVAL_DELAY_MS / 1000}초 대기...`);
-          await sleep(BATCH_INTERVAL_DELAY_MS);
-        }
-      }
-
-      setState((prev) => ({
-        ...prev,
-        status: "completed",
-      }));
-
-      // 전역 상태에 완료 알림 (ref로 최신 stats 참조)
-      completeGeneration(workId, statsRef.current);
-
-      toast.success("설정집 생성이 완료되었습니다!");
-      // onComplete (fetchBible)을 await하여 데이터가 로드된 후 UI 갱신
-      await onComplete();
-    } catch (error) {
-      console.error("Bible generation error:", error);
-      const errorMessage = error instanceof Error ? error.message : "알 수 없는 오류";
-      setState((prev) => ({
-        ...prev,
-        status: "failed",
-        error: errorMessage,
-      }));
-
-      // 전역 상태에 실패 알림
-      failGeneration(workId, errorMessage);
-
-      toast.error(error instanceof Error ? error.message : "설정집 생성 실패");
-    } finally {
-      isGeneratingRef.current = false;
-    }
-  }, [workId, workTitle, totalChapters, onComplete, startGeneration, updateProgress, completeGeneration, failGeneration, cancelGeneration, clearCancelRequest]);
-
-  // 다이얼로그가 열리면 자동 시작
-  useEffect(() => {
-    if (open && state.status === "idle") {
-      generateBible();
-    }
-  }, [open, state.status, generateBible]);
-
-  // 다이얼로그 닫힐 때 상태 초기화 (생성 중이면 초기화하지 않음)
-  useEffect(() => {
-    if (!open && !isGeneratingRef.current) {
-      setState({
-        status: "idle",
-        currentBatch: 0,
-        totalBatches: 0,
-        analyzedChapters: 0,
-      });
-    }
-  }, [open]);
-
-  const progressPercent =
-    state.totalBatches > 0
-      ? Math.round((state.currentBatch / state.totalBatches) * 100)
-      : 0;
-
-  const handleCancel = () => {
-    shouldCancelRef.current = true;
-  };
-
-  // 생성 중에는 다이얼로그 닫기 방지
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      if (!nextOpen && isGeneratingRef.current) {
-        // 생성 중에는 닫기 무시
+      if (result === null) {
+        // 이미 전부 분석됨
+        toast.success("이미 모든 회차가 분석되었습니다.");
+        await onComplete();
         return;
       }
-      onOpenChange(nextOpen);
-    },
-    [onOpenChange]
-  );
+
+      // polling 시작
+      startPolling();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "작업 생성에 실패했습니다.";
+      setLocalError(msg);
+      toast.error(msg);
+    } finally {
+      setIsStarting(false);
+    }
+  }, [workId, workTitle, totalChapters, registerJob, startPolling, onComplete]);
+
+  // 다이얼로그 열리면 자동 시작
+  useEffect(() => {
+    if (open && !jobStatus && !isStarting) {
+      startGeneration();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // 다이얼로그 닫힐 때 polling 정지 + 상태 초기화
+  useEffect(() => {
+    if (!open) {
+      stopPolling();
+      // 완료/실패 상태가 아닐 때만 초기화 (닫아도 서버에서 계속 처리됨)
+      if (jobStatus?.status !== "COMPLETED" && jobStatus?.status !== "FAILED") {
+        // 초기화하지 않음 — 다시 열면 polling 재개
+      }
+    }
+  }, [open, jobStatus?.status, stopPolling]);
+
+  // 클린업
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  const handleCancel = async () => {
+    stopPolling();
+    await cancelGeneration(workId);
+    toast.info("설정집 생성이 취소되었습니다.");
+    onOpenChange(false);
+  };
+
+  const isActive = jobStatus?.status === "PENDING" || jobStatus?.status === "IN_PROGRESS";
+  const isCompleted = jobStatus?.status === "COMPLETED";
+  const isFailed = jobStatus?.status === "FAILED";
+
+  const progressPercent = jobStatus && jobStatus.totalBatches > 0
+    ? Math.round((jobStatus.currentBatchIndex / jobStatus.totalBatches) * 100)
+    : 0;
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md" onPointerDownOutside={(e) => { if (isGeneratingRef.current) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (isGeneratingRef.current) e.preventDefault(); }}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {state.status === "generating" && (
+            {(isStarting || isActive) && (
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
             )}
-            {state.status === "completed" && (
+            {isCompleted && (
               <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             )}
-            {state.status === "failed" && (
+            {isFailed && (
               <XCircle className="h-5 w-5 text-destructive" />
             )}
-            {state.status === "idle" && (
+            {!jobStatus && !isStarting && !localError && (
               <Sparkles className="h-5 w-5 text-primary" />
+            )}
+            {localError && (
+              <CloudOff className="h-5 w-5 text-destructive" />
             )}
             설정집 생성
           </DialogTitle>
           <DialogDescription>
-            {state.status === "generating" && state.retryCount != null && state.retryCount > 0
-              ? `재시도 중... (${state.retryCount}/${BATCH_MAX_RETRIES})`
-              : state.status === "generating" && "AI가 원문을 분석하고 있습니다..."}
-            {state.status === "completed" && "설정집 생성이 완료되었습니다."}
-            {state.status === "failed" && "설정집 생성에 실패했습니다."}
-            {state.status === "idle" && "설정집 생성을 준비중입니다..."}
+            {isStarting && "설정집 생성을 준비 중입니다..."}
+            {isActive && "AI가 원문을 분석하고 있습니다..."}
+            {isCompleted && "설정집 생성이 완료되었습니다."}
+            {isFailed && "설정집 생성에 실패했습니다."}
+            {localError && localError}
+            {!jobStatus && !isStarting && !localError && "설정집 생성을 준비 중입니다..."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="py-4 space-y-4">
           {/* 진행률 바 */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span>분석 진행률</span>
-              <span className="tabular-nums">
-                {state.currentBatch}/{state.totalBatches} 배치 ({progressPercent}%)
-              </span>
+          {jobStatus && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>분석 진행률</span>
+                <span className="tabular-nums">
+                  {jobStatus.currentBatchIndex}/{jobStatus.totalBatches} 배치 ({progressPercent}%)
+                </span>
+              </div>
+              <Progress value={progressPercent} className="h-2" />
             </div>
-            <Progress value={progressPercent} className="h-2" />
-          </div>
+          )}
 
           {/* 분석 상태 */}
-          <div className="flex justify-between text-sm text-muted-foreground">
-            <span>분석된 회차</span>
-            <span className="tabular-nums">
-              {state.analyzedChapters}/{totalChapters}화
-            </span>
-          </div>
+          {jobStatus && (
+            <div className="flex justify-between text-sm text-muted-foreground">
+              <span>분석된 회차</span>
+              <span className="tabular-nums">
+                {jobStatus.analyzedChapters}/{totalChapters}화
+              </span>
+            </div>
+          )}
 
           {/* 통계 */}
-          {state.stats && (
+          {stats && (
             <div className="grid grid-cols-3 gap-2 p-3 bg-muted rounded-lg">
               <div className="text-center">
-                <div className="text-lg font-semibold">{state.stats.characters}</div>
+                <div className="text-lg font-semibold">{stats.characters}</div>
                 <div className="text-xs text-muted-foreground">인물</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-semibold">{state.stats.terms}</div>
+                <div className="text-lg font-semibold">{stats.terms}</div>
                 <div className="text-xs text-muted-foreground">용어</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-semibold">{state.stats.events}</div>
+                <div className="text-lg font-semibold">{stats.events}</div>
                 <div className="text-xs text-muted-foreground">이벤트</div>
               </div>
             </div>
           )}
 
-          {/* 페이지 이탈 주의 안내 */}
-          {state.status === "generating" && (
+          {/* 백그라운드 안내 */}
+          {isActive && (
             <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg text-sm text-primary">
-              <p className="font-medium">분석 중 이 페이지를 벗어나지 마세요</p>
-              <p className="mt-1 text-xs text-primary/80">페이지를 닫거나 이동하면 분석이 중단됩니다.</p>
-            </div>
-          )}
-
-          {/* 재시도 상태 표시 */}
-          {state.status === "generating" && state.retryCount != null && state.retryCount > 0 && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-700 dark:text-amber-400">
-              API 서버가 혼잡합니다. 15초 후 자동으로 재시도합니다...
+              <p className="font-medium">백그라운드에서 계속 진행됩니다</p>
+              <p className="mt-1 text-xs text-primary/80">이 창을 닫거나 페이지를 이동해도 서버에서 자동으로 분석이 계속됩니다.</p>
             </div>
           )}
 
           {/* 에러 메시지 */}
-          {state.error && (
+          {(isFailed || localError) && (
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
-              <p className="font-medium">{state.error}</p>
-              {state.error.includes("503") || state.error.includes("overload") ? (
-                <p className="mt-1 text-xs">AI 서버가 과부하 상태입니다. 잠시 후 다시 시도해주세요.</p>
-              ) : null}
+              <p className="font-medium">
+                {jobStatus?.errorMessage || jobStatus?.lastError || localError}
+              </p>
             </div>
           )}
         </div>
 
         <DialogFooter>
-          {state.status === "generating" && (
+          {isActive && (
             <Button variant="outline" onClick={handleCancel}>
               취소
             </Button>
           )}
-          {(state.status === "completed" || state.status === "failed") && (
+          {isActive && (
+            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+              닫기
+            </Button>
+          )}
+          {(isCompleted || isFailed || (!isActive && !isStarting)) && (
             <Button onClick={() => onOpenChange(false)}>
               확인
+            </Button>
+          )}
+          {isFailed && (
+            <Button onClick={startGeneration}>
+              재시도
             </Button>
           )}
         </DialogFooter>

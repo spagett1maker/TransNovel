@@ -190,7 +190,7 @@ export default function SettingBiblePage() {
   const [guideDirty, setGuideDirty] = useState(false);
 
   // 전역 설정집 생성 상태
-  const { getJobByWorkId, cancelGeneration } = useBibleGeneration();
+  const { getJobByWorkId, cancelGeneration, startPolling } = useBibleGeneration();
   const activeGenerationJob = getJobByWorkId(workId);
   const isGenerating = activeGenerationJob?.status === "generating";
 
@@ -234,6 +234,11 @@ export default function SettingBiblePage() {
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         setTotalChapters(statusData.totalChapters || 0);
+
+        // 서버에 활성 작업이 있으면 자동으로 polling 시작
+        if (statusData.job && (statusData.job.status === "PENDING" || statusData.job.status === "IN_PROGRESS")) {
+          startPolling(workId, "", statusData.totalChapters || 0);
+        }
       }
 
       if (workRes.ok) {

@@ -41,6 +41,14 @@ enum BibleStatus {
   CONFIRMED
 }
 
+enum BibleJobStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
 enum CharacterRole {
   PROTAGONIST
   ANTAGONIST
@@ -200,6 +208,7 @@ model Work {
   glossary     GlossaryItem[]
   creators     Creator[]
   settingBible SettingBible?
+  bibleJobs    BibleGenerationJob[]
 
   // 매칭 시스템 관계
   listings  ProjectListing[]
@@ -513,6 +522,40 @@ model TimelineEvent {
   @@index([bibleId])
   @@index([chapterStart])
   @@unique([bibleId, title, chapterStart])
+}
+
+// ============================================
+// 설정집 생성 작업 큐 (Bible Generation Job Queue)
+// ============================================
+
+model BibleGenerationJob {
+  id     String @id @default(cuid())
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  userId String
+
+  status            BibleJobStatus @default(PENDING)
+  batchPlan         Json           // number[][] — 생성 시 계산해서 저장
+  totalBatches      Int
+  currentBatchIndex Int            @default(0)
+  analyzedChapters  Int            @default(0)
+
+  retryCount   Int     @default(0)
+  maxRetries   Int     @default(3)
+  errorMessage String? @db.Text
+  lastError    String? @db.Text
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // 낙관적 잠금 (cron 중복 실행 방지)
+  lockedAt DateTime?
+  lockedBy String?
+
+  @@index([status])
+  @@index([workId])
 }
 
 // ============================================

@@ -48,11 +48,30 @@ export async function GET(
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
+    // 활성 작업 조회 (가장 최근 것)
+    const activeJob = await db.bibleGenerationJob.findFirst({
+      where: { workId: id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        totalBatches: true,
+        currentBatchIndex: true,
+        analyzedChapters: true,
+        errorMessage: true,
+        lastError: true,
+        createdAt: true,
+        startedAt: true,
+        completedAt: true,
+      },
+    });
+
     if (!work.settingBible) {
       return NextResponse.json({
         exists: false,
         workStatus: work.status,
         totalChapters: work._count.chapters,
+        job: activeJob ?? null,
       });
     }
 
@@ -69,6 +88,7 @@ export async function GET(
         terms: work.settingBible._count.terms,
         events: work.settingBible._count.events,
       },
+      job: activeJob ?? null,
     });
   } catch (error) {
     console.error("Failed to fetch setting bible status:", error);

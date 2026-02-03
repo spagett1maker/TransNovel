@@ -32,7 +32,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 배치당 고정 챕터 수 (10챕터 × ~3000자 = ~30,000자, Gemini 20~30초 처리)
+// 배치당 고정 챕터 수 (10챕터 × ~3000자 = ~30,000자, Gemini 20~40초 처리)
 const CHAPTERS_PER_BATCH = 10;
 
 /**
