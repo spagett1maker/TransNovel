@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle, X, XCircle, ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
+import { CheckCircle, X, XCircle, ChevronDown, ChevronUp, StopCircle } from "lucide-react";
 import { Spinner, ButtonSpinner } from "@/components/ui/spinner";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,17 +14,14 @@ import { cn } from "@/lib/utils";
 function JobCard({
   job,
   onRemove,
-  onPause,
-  onResume,
+  onCancel,
 }: {
   job: TranslationJobSummary;
   onRemove: () => void;
-  onPause: () => Promise<void>;
-  onResume: () => Promise<void>;
+  onCancel: () => Promise<void>;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [isPausing, setIsPausing] = useState(false);
-  const [isResuming, setIsResuming] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const overallProgress =
     job.totalChapters > 0
@@ -33,24 +30,14 @@ function JobCard({
 
   const isCompleted = job.status === "COMPLETED";
   const isFailed = job.status === "FAILED";
-  const isPaused = job.status === "PAUSED";
   const isActive = job.status === "PENDING" || job.status === "IN_PROGRESS";
 
-  const handlePause = async () => {
-    setIsPausing(true);
+  const handleCancel = async () => {
+    setIsCancelling(true);
     try {
-      await onPause();
+      await onCancel();
     } finally {
-      setIsPausing(false);
-    }
-  };
-
-  const handleResume = async () => {
-    setIsResuming(true);
-    try {
-      await onResume();
-    } finally {
-      setIsResuming(false);
+      setIsCancelling(false);
     }
   };
 
@@ -62,9 +49,7 @@ function JobCard({
           ? "bg-status-success/5 border-status-success/30"
           : isFailed
             ? "bg-status-error/5 border-status-error/30"
-            : isPaused
-              ? "bg-status-warning/5 border-status-warning/30"
-              : "bg-status-progress/5 border-status-progress/30 translation-progress-card active"
+            : "bg-status-progress/5 border-status-progress/30 translation-progress-card active"
       )}
     >
       {/* Header */}
@@ -77,8 +62,6 @@ function JobCard({
             <CheckCircle className="h-4 w-4 text-status-success shrink-0" aria-label="완료" />
           ) : isFailed ? (
             <XCircle className="h-4 w-4 text-status-error shrink-0" aria-label="실패" />
-          ) : isPaused ? (
-            <Pause className="h-4 w-4 text-status-warning shrink-0" aria-label="일시정지" />
           ) : (
             <Spinner size="md" label="번역 진행 중..." className="text-status-progress shrink-0" />
           )}
@@ -89,43 +72,39 @@ function JobCard({
                 ? "text-status-success"
                 : isFailed
                   ? "text-status-error"
-                  : isPaused
-                    ? "text-status-warning"
-                    : "text-status-progress"
+                  : "text-status-progress"
             )}
           >
             {isCompleted
               ? "번역 완료"
               : isFailed
                 ? "번역 실패"
-                : isPaused
-                  ? "일시정지됨"
-                  : "번역 중..."}
+                : "번역 중..."}
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {/* 일시정지 버튼 - 진행 중일 때만 표시 */}
+          {/* 취소 버튼 - 진행 중일 때만 표시 */}
           {isActive && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5 hover:bg-status-warning/20"
-              disabled={isPausing}
+              className="h-5 w-5 hover:bg-status-error/20"
+              disabled={isCancelling}
               onClick={(e) => {
                 e.stopPropagation();
-                handlePause();
+                handleCancel();
               }}
-              title="일시정지"
+              title="취소"
             >
-              {isPausing ? (
-                <Spinner size="sm" label="일시정지 중" className="text-status-warning" />
+              {isCancelling ? (
+                <Spinner size="sm" label="취소 중" className="text-status-error" />
               ) : (
-                <Pause className="h-3 w-3 text-status-warning" />
+                <StopCircle className="h-3 w-3 text-status-error" />
               )}
             </Button>
           )}
-          {/* 닫기 버튼 - 완료, 실패, 일시정지 상태에서 표시 */}
-          {(isCompleted || isFailed || isPaused) && (
+          {/* 닫기 버튼 - 완료, 실패 상태에서 표시 */}
+          {(isCompleted || isFailed) && (
             <Button
               variant="ghost"
               size="icon"
@@ -158,9 +137,7 @@ function JobCard({
                 ? "text-status-success"
                 : isFailed
                   ? "text-status-error"
-                  : isPaused
-                    ? "text-status-warning"
-                    : "text-status-progress"
+                  : "text-status-progress"
             )}
           >
             {job.workTitle}
@@ -176,9 +153,7 @@ function JobCard({
                     ? "text-status-success"
                     : isFailed
                       ? "text-status-error"
-                      : isPaused
-                        ? "text-status-warning"
-                        : "text-status-progress"
+                      : "text-status-progress"
                 )}
               >
                 전체 진행률
@@ -190,9 +165,7 @@ function JobCard({
                     ? "text-status-success/80"
                     : isFailed
                       ? "text-status-error/80"
-                      : isPaused
-                        ? "text-status-warning/80"
-                        : "text-status-progress/80"
+                      : "text-status-progress/80"
                 )}
               >
                 {job.completedChapters}/{job.totalChapters}
@@ -206,9 +179,7 @@ function JobCard({
                   ? "[&>div]:bg-status-success"
                   : isFailed
                     ? "[&>div]:bg-status-error"
-                    : isPaused
-                      ? "[&>div]:bg-status-warning"
-                      : "[&>div]:bg-status-progress"
+                    : "[&>div]:bg-status-progress"
               )}
             />
           </div>
@@ -236,29 +207,6 @@ function JobCard({
               프로젝트 보기 →
             </Link>
           )}
-
-          {/* Resume Button for Paused Jobs */}
-          {isPaused && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleResume}
-              disabled={isResuming}
-              className="w-full h-7 text-[10px] border-status-warning/30 text-status-warning hover:bg-status-warning/10"
-            >
-              {isResuming ? (
-                <>
-                  <ButtonSpinner className="text-status-warning" />
-                  재개 중...
-                </>
-              ) : (
-                <>
-                  <Play className="mr-1 h-3 w-3" />
-                  번역 재개
-                </>
-              )}
-            </Button>
-          )}
         </div>
       )}
     </div>
@@ -266,43 +214,19 @@ function JobCard({
 }
 
 export function TranslationMonitor() {
-  const { jobs, removeJob, pauseJob } = useTranslation();
+  const { jobs, removeJob, cancelJob } = useTranslation();
 
   if (jobs.length === 0) {
     return null;
   }
 
-  // 일시정지 핸들러
-  const handlePause = async (jobId: string) => {
-    const success = await pauseJob(jobId);
+  // 취소 핸들러
+  const handleCancel = async (workId: string) => {
+    const success = await cancelJob(workId);
     if (success) {
-      toast.success("번역이 일시정지되었습니다.");
+      toast.info("번역 작업이 취소되었습니다.");
     } else {
-      toast.error("일시정지에 실패했습니다.");
-    }
-  };
-
-  // 재개 핸들러 - 일시정지된 작업의 남은 챕터를 새 작업으로 시작
-  const handleResume = async (job: TranslationJobSummary) => {
-    try {
-      // 남은 챕터 번호 조회
-      const pendingChapters = job.totalChapters - job.completedChapters;
-      if (pendingChapters <= 0) {
-        toast.error("재개할 챕터가 없습니다.");
-        return;
-      }
-
-      // 작업 제거
-      await removeJob(job.jobId);
-
-      // 새 번역 시작을 위해 작품 페이지로 이동 안내
-      toast.success(
-        `${pendingChapters}개 챕터 남음. 작품 페이지에서 번역을 다시 시작해주세요.`,
-        { duration: 5000 }
-      );
-    } catch (error) {
-      console.error("재개 실패:", error);
-      toast.error("재개에 실패했습니다.");
+      toast.error("작업 취소에 실패했습니다.");
     }
   };
 
@@ -313,8 +237,7 @@ export function TranslationMonitor() {
           key={job.jobId}
           job={job}
           onRemove={() => removeJob(job.jobId)}
-          onPause={() => handlePause(job.jobId)}
-          onResume={() => handleResume(job)}
+          onCancel={() => handleCancel(job.workId)}
         />
       ))}
     </div>

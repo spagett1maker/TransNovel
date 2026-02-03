@@ -34,8 +34,18 @@ const logError = (...args: unknown[]) => {
 // Vercel Pro 플랜: 최대 300초 (5분) 함수 실행 시간
 // 챕터 전체 번역을 위해 타임아웃 대폭 증가
 const API_TIMEOUT_MS = 180000; // 180초 (3분) - 긴 챕터 대응
-const RATE_LIMIT_RPM = 10; // 분당 최대 요청 수 (안정성을 위해 10으로 제한)
+const RATE_LIMIT_RPM = 15; // 분당 최대 요청 수 (순차 처리에 적합, Cron 전환 시 증가 예정)
 const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
+
+// 청크 레벨 재시도 설정
+const CHUNK_MAX_RETRIES = 3; // 청크별 최대 재시도 횟수
+
+// 모델 우선순위 (fallback) - 설정집 분석과 동일
+const MODEL_PRIORITY = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+];
 
 // 실패 임계값 설정
 const MAX_CONSECUTIVE_FAILURES = 5; // 연속 실패 허용 횟수 (기존 3 -> 5)
@@ -317,6 +327,46 @@ export interface TranslationContext {
   glossary?: Array<{ original: string; translated: string; note?: string }>;
   characters?: CharacterInfo[];
   translationGuide?: string;
+}
+
+/**
+ * 챕터 내용에 등장하는 용어와 인물만 필터링하여 최적화된 컨텍스트 반환
+ * 토큰 사용량 약 30-50% 절감
+ */
+function filterContextForContent(context: TranslationContext, content: string): TranslationContext {
+  const filteredContext = { ...context };
+
+  // 용어집 필터링: 원문에 등장하는 용어만 포함
+  if (context.glossary && context.glossary.length > 0) {
+    filteredContext.glossary = context.glossary.filter(term =>
+      content.includes(term.original)
+    );
+    log("용어집 필터링", {
+      original: context.glossary.length,
+      filtered: filteredContext.glossary.length,
+      reduction: `${((1 - filteredContext.glossary.length / context.glossary.length) * 100).toFixed(1)}%`,
+    });
+  }
+
+  // 인물 정보 필터링: 원문에 등장하는 인물만 포함
+  // 단, 주인공/적대자는 항상 포함 (일관성 유지)
+  if (context.characters && context.characters.length > 0) {
+    filteredContext.characters = context.characters.filter(char => {
+      // 주인공/적대자는 항상 포함
+      if (char.role === "PROTAGONIST" || char.role === "ANTAGONIST") {
+        return true;
+      }
+      // 조연은 원문에 등장하는 경우만 포함
+      return content.includes(char.nameOriginal);
+    });
+    log("인물 필터링", {
+      original: context.characters.length,
+      filtered: filteredContext.characters.length,
+      reduction: `${((1 - filteredContext.characters.length / context.characters.length) * 100).toFixed(1)}%`,
+    });
+  }
+
+  return filteredContext;
 }
 
 // 장르별 번역 스타일 가이드
@@ -611,24 +661,21 @@ function analyzeError(error: unknown): TranslationError {
   );
 }
 
-export async function translateText(
+/**
+ * 단일 모델로 청크 번역 시도
+ */
+async function tryTranslateChunkWithModel(
+  modelName: string,
   content: string,
-  context: TranslationContext,
-  maxRetries: number = 5
+  systemPrompt: string,
+  maxRetries: number
 ): Promise<string> {
-  log("translateText 시작", { contentLength: content.length, title: context.titleKo });
-
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-  });
-
-  const systemPrompt = buildSystemPrompt(context);
-  log("시스템 프롬프트 생성 완료, 길이:", systemPrompt.length);
+  const model = genAI.getGenerativeModel({ model: modelName });
 
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    log(`번역 시도 ${attempt + 1}/${maxRetries}`);
+    log(`[${modelName}] 청크 번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
       // 0. Circuit Breaker 확인
       circuitBreaker.check();
@@ -669,17 +716,17 @@ ${content}
           },
         }),
         API_TIMEOUT_MS,
-        "번역 API 호출"
+        "청크 번역 API 호출"
       );
 
       const elapsed = Date.now() - startTime;
-      log(`API 응답 수신 (${elapsed}ms 소요)`);
+      log(`[${modelName}] 청크 번역 API 응답 수신 (${elapsed}ms 소요)`);
 
       const response = result.response;
       const text = response.text();
 
       if (!text || text.trim().length === 0) {
-        logError("빈 응답 수신됨");
+        logError(`[${modelName}] 빈 응답 수신됨`);
         throw new TranslationError(
           "AI가 빈 응답을 반환했습니다.",
           "EMPTY_RESPONSE",
@@ -687,16 +734,15 @@ ${content}
         );
       }
 
-      log("번역 성공, 결과 길이:", text.length);
+      log(`[${modelName}] 청크 번역 성공, 결과 길이:`, text.length);
       circuitBreaker.onSuccess();
       return text;
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      logError(`번역 시도 ${attempt + 1} 실패:`, {
+      logError(`[${modelName}] 청크 번역 시도 ${attempt + 1} 실패:`, {
         code: lastError.code,
         message: lastError.message,
-        retryable: lastError.retryable,
       });
 
       // Circuit Breaker 실패 보고 (AUTH/MODEL 에러는 즉시 차단)
@@ -708,6 +754,12 @@ ${content}
       // Rate limit 에러 시 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
         rateLimiter.onRateLimitError();
+      }
+
+      // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw
+      const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
+      if (is503) {
+        throw lastError;
       }
 
       // 재시도 불가능한 오류는 즉시 실패
@@ -726,17 +778,60 @@ ${content}
 
         const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
         const waitMs = addJitter(backoffMs);
-        log(`${Math.round(waitMs)}ms 후 재시도... (attempt ${attempt + 1})`);
+        log(`[${modelName}] ${Math.round(waitMs)}ms 후 재시도...`);
         await delay(waitMs);
       }
     }
   }
 
-  // 모든 재시도 실패
-  logError("모든 재시도 실패");
+  throw lastError || new TranslationError(
+    `${modelName} 청크 번역 실패`,
+    "MAX_RETRIES",
+    false
+  );
+}
+
+/**
+ * 청크 번역 (모델 Fallback 지원)
+ */
+export async function translateText(
+  content: string,
+  context: TranslationContext,
+  maxRetries: number = 5
+): Promise<string> {
+  log("translateText 시작", { contentLength: content.length, title: context.titleKo });
+
+  // 프롬프트 최적화: 청크에 등장하는 용어/인물만 포함
+  const filteredContext = filterContextForContent(context, content);
+  const systemPrompt = buildSystemPrompt(filteredContext);
+  log("시스템 프롬프트 생성 완료 (필터링 적용), 길이:", systemPrompt.length);
+
+  let lastError: TranslationError | null = null;
+
+  // 모델 순서대로 시도 (Fallback)
+  for (const modelName of MODEL_PRIORITY) {
+    try {
+      log(`청크 번역 모델 시도: ${modelName}`);
+      return await tryTranslateChunkWithModel(modelName, content, systemPrompt, maxRetries);
+    } catch (error) {
+      lastError = error instanceof TranslationError ? error : analyzeError(error);
+      logError(`청크 번역 모델 ${modelName} 실패:`, lastError.message);
+
+      // 503/overloaded 에러면 다음 모델로
+      const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
+      if (!is503 && !lastError.retryable) {
+        throw lastError;
+      }
+
+      log(`다음 모델로 fallback...`);
+    }
+  }
+
+  // 모든 모델 실패
+  logError("청크 번역 모든 모델 실패");
   throw lastError || new TranslationError(
     "번역에 실패했습니다. 다시 시도해주세요.",
-    "MAX_RETRIES",
+    "ALL_MODELS_FAILED",
     false
   );
 }
@@ -773,12 +868,119 @@ function maxCharsForTokenBudget(sampleText: string, tokenBudget: number): number
 }
 
 // 동적 청크 임계값 계산 (최소 8000자 보장)
-function getChunkThreshold(text: string): number {
+export function getChunkThreshold(text: string): number {
   return Math.max(8000, maxCharsForTokenBudget(text, TARGET_CHUNK_TOKENS));
 }
 
-function getChunkSize(text: string): number {
+export function getChunkSize(text: string): number {
   return Math.max(8000, maxCharsForTokenBudget(text, TARGET_CHUNK_TOKENS));
+}
+
+// 대형 챕터 임계값 (이 이상이면 점진적 처리 필요)
+export const LARGE_CHAPTER_THRESHOLD = 40000; // 약 10청크 이상
+
+// Cron당 처리할 최대 청크 수 (3청크 × ~30초 = ~90초, 안전 마진 확보)
+export const CHUNKS_PER_CRON_CALL = 3;
+
+// 대형 챕터 진행 상태 타입
+export interface LargeChapterProgress {
+  isLargeChapter: true;
+  totalChunks: number;
+  processedChunks: number;
+  partialResults: string[];
+}
+
+// 대형 챕터 점진적 번역 결과
+export interface IncrementalTranslationResult {
+  complete: boolean;
+  translatedContent?: string; // complete가 true일 때만
+  progress?: LargeChapterProgress; // complete가 false일 때
+}
+
+/**
+ * 대형 챕터를 점진적으로 번역 (Cron당 N개 청크씩)
+ * - 설정집의 배치 처리 패턴과 동일한 접근
+ * - 각 Cron 호출에서 제한된 청크만 처리
+ * - 진행 상태를 반환하여 DB에 저장 가능
+ */
+export async function translateLargeChapterIncrementally(
+  content: string,
+  context: TranslationContext,
+  existingProgress?: LargeChapterProgress | null,
+  maxRetries: number = 5
+): Promise<IncrementalTranslationResult> {
+  const dynamicChunkSize = getChunkSize(content);
+  const allChunks = splitIntoChunks(content, dynamicChunkSize);
+
+  log("translateLargeChapterIncrementally 시작", {
+    contentLength: content.length,
+    totalChunks: allChunks.length,
+    existingProcessedChunks: existingProgress?.processedChunks ?? 0,
+  });
+
+  // 기존 진행 상태 확인
+  const startChunkIndex = existingProgress?.processedChunks ?? 0;
+  const partialResults = existingProgress?.partialResults ?? [];
+
+  // 이미 완료된 경우
+  if (startChunkIndex >= allChunks.length) {
+    return {
+      complete: true,
+      translatedContent: partialResults.join("\n\n"),
+    };
+  }
+
+  // 이번 Cron에서 처리할 청크 범위
+  const endChunkIndex = Math.min(startChunkIndex + CHUNKS_PER_CRON_CALL, allChunks.length);
+  const chunksToProcess = allChunks.slice(startChunkIndex, endChunkIndex);
+
+  log(`청크 처리 시작: ${startChunkIndex + 1}~${endChunkIndex}/${allChunks.length}`);
+
+  // 청크 순차 처리 (번역 순서 유지 필요)
+  const newResults: string[] = [];
+  for (let i = 0; i < chunksToProcess.length; i++) {
+    const chunkIndex = startChunkIndex + i;
+    log(`청크 ${chunkIndex + 1}/${allChunks.length} 번역 중...`);
+
+    try {
+      const translated = await translateText(chunksToProcess[i], context, maxRetries);
+      newResults.push(translated);
+    } catch (error) {
+      const errorMsg = error instanceof TranslationError
+        ? error.message
+        : error instanceof Error ? error.message : "알 수 없는 오류";
+
+      logError(`청크 ${chunkIndex + 1} 번역 실패:`, errorMsg);
+
+      // 실패한 청크는 원문으로 대체하고 계속 진행
+      newResults.push(`[번역 실패: ${errorMsg}]\n\n${chunksToProcess[i]}`);
+    }
+  }
+
+  // 결과 병합
+  const updatedPartialResults = [...partialResults, ...newResults];
+  const newProcessedChunks = endChunkIndex;
+
+  // 완료 여부 확인
+  if (newProcessedChunks >= allChunks.length) {
+    log(`대형 챕터 번역 완료: 총 ${allChunks.length}개 청크`);
+    return {
+      complete: true,
+      translatedContent: updatedPartialResults.join("\n\n"),
+    };
+  }
+
+  // 아직 남은 청크가 있음
+  log(`대형 챕터 진행 중: ${newProcessedChunks}/${allChunks.length} 청크 완료`);
+  return {
+    complete: false,
+    progress: {
+      isLargeChapter: true,
+      totalChunks: allChunks.length,
+      processedChunks: newProcessedChunks,
+      partialResults: updatedPartialResults,
+    },
+  };
 }
 
 // 대형 챕터 청크 진행률 콜백
@@ -853,24 +1055,20 @@ async function translateLargeChapter(
 }
 
 /**
- * 소형 챕터를 한 번에 번역
+ * 단일 모델로 챕터 번역 시도
  */
-async function translateSingleChapter(
+async function tryTranslateWithModel(
+  modelName: string,
   content: string,
-  context: TranslationContext,
+  systemPrompt: string,
   maxRetries: number
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-  });
-
-  const systemPrompt = buildSystemPrompt(context);
-  log("시스템 프롬프트 생성 완료, 길이:", systemPrompt.length);
+  const model = genAI.getGenerativeModel({ model: modelName });
 
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    log(`챕터 번역 시도 ${attempt + 1}/${maxRetries}`);
+    log(`[${modelName}] 챕터 번역 시도 ${attempt + 1}/${maxRetries}`);
     try {
       // 0. Circuit Breaker 확인
       circuitBreaker.check();
@@ -880,7 +1078,7 @@ async function translateSingleChapter(
 
       const startTime = Date.now();
 
-      // 2. API 호출에 타임아웃 적용 (챕터 전체 번역이므로 긴 타임아웃)
+      // 2. API 호출에 타임아웃 적용
       const result = await withTimeout(
         model.generateContent({
           contents: [
@@ -907,7 +1105,7 @@ ${content}
             temperature: 0.4,
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 65536, // 충분한 출력 토큰 (챕터 전체 대응)
+            maxOutputTokens: 65536,
           },
         }),
         API_TIMEOUT_MS,
@@ -915,13 +1113,12 @@ ${content}
       );
 
       const elapsed = Date.now() - startTime;
-      log(`챕터 번역 API 응답 수신 (${elapsed}ms 소요)`);
+      log(`[${modelName}] 챕터 번역 API 응답 수신 (${elapsed}ms 소요)`);
 
       const response = result.response;
       const text = response.text();
 
       if (!text || text.trim().length === 0) {
-        logError("챕터 번역 빈 응답 수신됨");
         throw new TranslationError(
           "AI가 빈 응답을 반환했습니다.",
           "EMPTY_RESPONSE",
@@ -929,16 +1126,15 @@ ${content}
         );
       }
 
-      log("챕터 번역 성공, 결과 길이:", text.length);
+      log(`[${modelName}] 챕터 번역 성공, 결과 길이:`, text.length);
       circuitBreaker.onSuccess();
       return text;
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      logError(`챕터 번역 시도 ${attempt + 1} 실패:`, {
+      logError(`[${modelName}] 챕터 번역 시도 ${attempt + 1} 실패:`, {
         code: lastError.code,
         message: lastError.message,
-        retryable: lastError.retryable,
       });
 
       // Circuit Breaker 실패 보고
@@ -952,32 +1148,79 @@ ${content}
         rateLimiter.onRateLimitError();
       }
 
+      // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw
+      const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
+      if (is503) {
+        throw lastError;
+      }
+
       // 재시도 불가능한 오류는 즉시 실패
       if (!lastError.retryable) {
         throw lastError;
       }
 
-      // 마지막 시도가 아니면 지수 백오프로 대기 (jitter 포함)
+      // 마지막 시도가 아니면 지수 백오프로 대기
       if (attempt < maxRetries - 1) {
         const baseDelay =
-          lastError.code === "RATE_LIMIT" ? 30000 :  // 30초
-          lastError.code === "TIMEOUT" ? 15000 :     // 15초 (챕터 번역은 더 긴 대기)
-          lastError.code === "CIRCUIT_OPEN" ? 5000 :  // 5초
-          5000;                                       // 5초
+          lastError.code === "RATE_LIMIT" ? 30000 :
+          lastError.code === "TIMEOUT" ? 15000 :
+          lastError.code === "CIRCUIT_OPEN" ? 5000 :
+          5000;
 
-        const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000); // 최대 2분
+        const backoffMs = Math.min(baseDelay * Math.pow(1.5, attempt), 120000);
         const waitMs = addJitter(backoffMs);
-        log(`${Math.round(waitMs)}ms 후 재시도... (attempt ${attempt + 1})`);
+        log(`[${modelName}] ${Math.round(waitMs)}ms 후 재시도...`);
         await delay(waitMs);
       }
     }
   }
 
-  // 모든 재시도 실패
-  logError("챕터 번역 모든 재시도 실패");
+  throw lastError || new TranslationError(
+    `${modelName} 번역 실패`,
+    "MAX_RETRIES",
+    false
+  );
+}
+
+/**
+ * 소형 챕터를 한 번에 번역 (모델 Fallback 지원)
+ */
+async function translateSingleChapter(
+  content: string,
+  context: TranslationContext,
+  maxRetries: number
+): Promise<string> {
+  // 프롬프트 최적화: 챕터에 등장하는 용어/인물만 포함
+  const filteredContext = filterContextForContent(context, content);
+  const systemPrompt = buildSystemPrompt(filteredContext);
+  log("시스템 프롬프트 생성 완료 (필터링 적용), 길이:", systemPrompt.length);
+
+  let lastError: TranslationError | null = null;
+
+  // 모델 순서대로 시도 (Fallback)
+  for (const modelName of MODEL_PRIORITY) {
+    try {
+      log(`모델 시도: ${modelName}`);
+      return await tryTranslateWithModel(modelName, content, systemPrompt, maxRetries);
+    } catch (error) {
+      lastError = error instanceof TranslationError ? error : analyzeError(error);
+      logError(`모델 ${modelName} 실패:`, lastError.message);
+
+      // 503/overloaded 에러면 다음 모델로
+      const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
+      if (!is503 && !lastError.retryable) {
+        throw lastError;
+      }
+
+      log(`다음 모델로 fallback...`);
+    }
+  }
+
+  // 모든 모델 실패
+  logError("챕터 번역 모든 모델 실패");
   throw lastError || new TranslationError(
     "챕터 번역에 실패했습니다. 다시 시도해주세요.",
-    "MAX_RETRIES",
+    "ALL_MODELS_FAILED",
     false
   );
 }
@@ -1034,46 +1277,71 @@ export async function translateChunks(
 
   for (let i = startFromChunk; i < chunks.length; i++) {
     // Rate limiter가 이미 속도를 제어하지만, 추가 안전 딜레이
-    // 500회 × 2청크 = 1000개 요청을 안정적으로 처리하기 위해 2초 딜레이
     if (i > startFromChunk) {
-      const chunkDelay = addJitter(2000); // 2초 + jitter
+      const chunkDelay = addJitter(2000); // 2초 + jitter (순차 처리 안정성)
       await delay(chunkDelay);
     }
 
     log(`청크 ${i + 1}/${chunks.length} 번역 시작`);
-    try {
-      const translated = await translateText(chunks[i], context);
-      results.push(translated);
-      consecutiveFailures = 0; // 성공하면 연속 실패 리셋
 
-      // 콜백에 현재까지의 결과 전달 (중간 저장용)
-      if (onProgress) {
-        await onProgress(i + 1, chunks.length, {
-          index: i,
-          success: true,
-          content: translated,
-        }, results);
+    // 청크 레벨 재시도 로직
+    let chunkSuccess = false;
+    let lastChunkError: TranslationError | null = null;
+
+    for (let chunkRetry = 0; chunkRetry < CHUNK_MAX_RETRIES; chunkRetry++) {
+      try {
+        const translated = await translateText(chunks[i], context);
+        results.push(translated);
+        consecutiveFailures = 0; // 성공하면 연속 실패 리셋
+        chunkSuccess = true;
+
+        // 콜백에 현재까지의 결과 전달 (중간 저장용)
+        if (onProgress) {
+          await onProgress(i + 1, chunks.length, {
+            index: i,
+            success: true,
+            content: translated,
+          }, results);
+        }
+        break; // 성공 시 재시도 루프 탈출
+
+      } catch (error) {
+        lastChunkError = error instanceof TranslationError
+          ? error
+          : analyzeError(error);
+
+        logError(`청크 ${i + 1} 번역 시도 ${chunkRetry + 1}/${CHUNK_MAX_RETRIES} 실패:`, {
+          code: lastChunkError.code,
+          message: lastChunkError.message,
+        });
+
+        // 재시도 불가능한 오류는 즉시 중단
+        if (!lastChunkError.retryable) {
+          log(`청크 ${i + 1}: 재시도 불가능한 오류로 재시도 중단`);
+          break;
+        }
+
+        // 마지막 재시도가 아니면 대기 후 재시도
+        if (chunkRetry < CHUNK_MAX_RETRIES - 1) {
+          const retryDelay = addJitter(5000 * (chunkRetry + 1)); // 5초, 10초, 15초...
+          log(`청크 ${i + 1}: ${Math.round(retryDelay)}ms 후 재시도 (${chunkRetry + 2}/${CHUNK_MAX_RETRIES})`);
+          await delay(retryDelay);
+        }
       }
-    } catch (error) {
-      const translationError = error instanceof TranslationError
-        ? error
-        : analyzeError(error);
+    }
 
-      logError(`청크 ${i + 1} 번역 실패:`, {
-        code: translationError.code,
-        message: translationError.message,
-      });
-
+    // 청크 최종 실패 처리
+    if (!chunkSuccess && lastChunkError) {
       // DB에 에러 로깅
       await logToDb(
-        `청크 ${i + 1}/${chunks.length} 번역 실패: ${translationError.message}`,
-        translationError.code,
+        `청크 ${i + 1}/${chunks.length} 번역 실패 (${CHUNK_MAX_RETRIES}회 재시도 후): ${lastChunkError.message}`,
+        lastChunkError.code,
         i,
-        consecutiveFailures
+        CHUNK_MAX_RETRIES
       );
 
       // 실패한 청크는 원문으로 대체하고 표시
-      results.push(`[번역 실패: ${translationError.message}]\n\n${chunks[i]}`);
+      results.push(`[번역 실패: ${lastChunkError.message}]\n\n${chunks[i]}`);
       failedChunks.push(i);
       consecutiveFailures++;
 
@@ -1081,7 +1349,7 @@ export async function translateChunks(
         await onProgress(i + 1, chunks.length, {
           index: i,
           success: false,
-          error: translationError.message,
+          error: lastChunkError.message,
         }, results);
       }
 
@@ -1110,14 +1378,14 @@ export async function translateChunks(
       }
 
       // 재시도 불가능한 오류가 연속 N회 이상이면 중단
-      if (!translationError.retryable && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      if (!lastChunkError.retryable && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         logError("연속 비재시도 오류로 번역 중단", {
           failedChunks,
           consecutiveFailures,
           threshold: MAX_CONSECUTIVE_FAILURES,
         });
         throw new TranslationError(
-          `연속 오류로 번역 중단: ${translationError.message}`,
+          `연속 오류로 번역 중단: ${lastChunkError.message}`,
           "CONSECUTIVE_FAILURES",
           false
         );

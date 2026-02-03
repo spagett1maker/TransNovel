@@ -55,8 +55,7 @@ interface TranslationContextType {
   removeAllCompleted: () => void;
   refreshJobs: () => Promise<void>;
   getJobByWorkId: (workId: string) => TranslationJobSummary | undefined;
-  pauseJob: (jobId: string) => Promise<boolean>;
-  resumeJob: (jobId: string) => Promise<{ success: boolean; error?: string }>;
+  cancelJob: (workId: string) => Promise<boolean>;
   // 클라이언트 측 번역 상태 업데이트 (translate/page.tsx에서 사용)
   updateClientProgress: (
     workId: string,
@@ -79,329 +78,144 @@ const TranslationContext = createContext<TranslationContextType | undefined>(
   undefined
 );
 
+// 폴링 간격 (3초)
+const POLLING_INTERVAL_MS = 3000;
+
 export function TranslationProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [jobs, setJobs] = useState<Map<string, TranslationJobSummary>>(
     new Map()
   );
-  const jobsRef = useRef<Map<string, TranslationJobSummary>>(jobs);
-  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
   const isInitializedRef = useRef(false);
 
-  // jobs 상태가 변경될 때마다 ref 업데이트
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
+  // 폴링 중인 workId 추적
+  const pollingWorkIdsRef = useRef<Set<string>>(new Set());
+  const pollingIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // SSE 연결 종료 함수 (먼저 선언)
-  const disconnectSSE = useCallback((jobId: string) => {
-    const es = eventSourcesRef.current.get(jobId);
-    if (es) {
-      console.log("[TranslationContext] SSE 연결 종료:", jobId);
-      es.close();
-      eventSourcesRef.current.delete(jobId);
+  // workId에 대한 폴링 중지
+  const stopPolling = useCallback((workId: string) => {
+    const intervalId = pollingIntervalsRef.current.get(workId);
+    if (intervalId) {
+      clearInterval(intervalId);
+      pollingIntervalsRef.current.delete(workId);
     }
+    pollingWorkIdsRef.current.delete(workId);
+    console.log("[TranslationContext] 폴링 중지:", workId);
   }, []);
 
-  // SSE 재연결 시도 횟수 추적
-  const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
-  const reconnectTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  // 서버 확인 후 재연결 사이클 횟수 추적 (무한 루프 방지)
-  const serverCheckCountRef = useRef<Map<string, number>>(new Map());
-  const MAX_RECONNECT_ATTEMPTS = 5;
-  const MAX_SERVER_CHECK_CYCLES = 3; // 서버 확인 → 재연결 사이클 최대 3회
-  const RECONNECT_DELAY = 3000; // 3초
-
-  // SSE 연결 함수
-  const connectSSE = useCallback((jobId: string, isReconnect: boolean = false) => {
-    if (eventSourcesRef.current.has(jobId)) {
-      console.log("[TranslationContext] SSE 이미 연결됨:", jobId);
-      return;
-    }
-
-    const attempts = reconnectAttemptsRef.current.get(jobId) || 0;
-    if (isReconnect) {
-      console.log(`[TranslationContext] SSE 재연결 시도 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS}):`, jobId);
-    } else {
-      console.log("[TranslationContext] SSE 연결 시작:", jobId);
-      reconnectAttemptsRef.current.set(jobId, 0); // 새 연결 시 카운터 리셋
-    }
-
-    const es = new EventSource(`/api/translation/stream?jobId=${jobId}`);
-    eventSourcesRef.current.set(jobId, es);
-
-    es.onmessage = (event) => {
-      try {
-        // keepalive 핑 무시
-        if (event.data.startsWith(":")) return;
-
-        const data = JSON.parse(event.data);
-        console.log("[TranslationContext] SSE 이벤트:", data.type, jobId);
-
-        setJobs((prev) => {
-          const newJobs = new Map(prev);
-          const job = newJobs.get(jobId);
-          if (!job) return prev;
-
-          switch (data.type) {
-            case "job_started": {
-              const totalChapters = data.data.totalChapters ?? job.totalChapters;
-              newJobs.set(jobId, {
-                ...job,
-                status: "IN_PROGRESS",
-                totalChapters,
-                currentChapter: data.data.currentChapter
-                  ? { number: data.data.currentChapter.number }
-                  : undefined,
-                progress: calculateProgress(job.completedChapters, totalChapters),
-              });
-              break;
-            }
-
-            case "chapter_started":
-              newJobs.set(jobId, {
-                ...job,
-                currentChapter: {
-                  number: data.data.chapterNumber,
-                  totalChunks: data.data.totalChunks,
-                },
-              });
-              break;
-
-            case "chunk_progress":
-              // 대형 챕터의 청크 진행률 업데이트
-              if (data.data.chapterNumber) {
-                newJobs.set(jobId, {
-                  ...job,
-                  currentChapter: {
-                    number: data.data.chapterNumber,
-                    currentChunk: data.data.currentChunk,
-                    totalChunks: data.data.totalChunks,
-                  },
-                });
-              }
-              break;
-
-            case "chapter_completed":
-            case "chapter_partial": {
-              const completedChapters = data.data.completedChapters ?? job.completedChapters + 1;
-              newJobs.set(jobId, {
-                ...job,
-                completedChapters,
-                currentChapter: undefined,
-                progress: calculateProgress(completedChapters, job.totalChapters),
-              });
-              break;
-            }
-
-            case "chapter_failed":
-              newJobs.set(jobId, {
-                ...job,
-                failedChapters: data.data.failedChapters ?? job.failedChapters + 1,
-                currentChapter: undefined,
-              });
-              break;
-
-            case "job_paused":
-              newJobs.set(jobId, {
-                ...job,
-                status: "PAUSED",
-                currentChapter: undefined,
-              });
-              break;
-
-            case "job_completed": {
-              const completedChapters = data.data.completedChapters ?? job.totalChapters;
-              newJobs.set(jobId, {
-                ...job,
-                status: "COMPLETED",
-                completedChapters,
-                failedChapters: data.data.failedChapters ?? 0,
-                failedChapterNums: data.data.failedChapterNums ?? [],
-                currentChapter: undefined,
-                progress: calculateProgress(completedChapters, job.totalChapters),
-              });
-              break;
-            }
-
-            case "job_failed": {
-              const failedCompletedChapters = data.data.completedChapters ?? job.completedChapters;
-              newJobs.set(jobId, {
-                ...job,
-                status: "FAILED",
-                completedChapters: failedCompletedChapters,
-                failedChapters: data.data.failedChapters ?? job.failedChapters,
-                failedChapterNums: data.data.failedChapterNums ?? job.failedChapterNums,
-                error: data.data.error,
-                currentChapter: undefined,
-                progress: calculateProgress(failedCompletedChapters, job.totalChapters),
-              });
-              break;
-            }
-          }
-
-          return newJobs;
-        });
-
-        // SSE 연결 종료는 상태 업데이트 후 수행
-        if (data.type === "job_paused" || data.type === "job_completed" || data.type === "job_failed") {
-          const currentEs = eventSourcesRef.current.get(jobId);
-          if (currentEs) {
-            console.log("[TranslationContext] SSE 연결 종료:", jobId);
-            currentEs.close();
-            eventSourcesRef.current.delete(jobId);
-          }
-
-          // 서버 컴포넌트 데이터 갱신 (대시보드 통계, 작품 목록 등)
-          router.refresh();
+  // 단일 작업 상태 조회 및 업데이트
+  const fetchJobStatus = useCallback(async (workId: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/works/${workId}/translate/job`);
+      if (!response.ok) {
+        if (response.status === 401) {
+          console.log("[TranslationContext] 세션 미설정");
+          return false;
         }
-      } catch (e) {
-        console.error("[TranslationContext] SSE 파싱 에러:", e);
-      }
-    };
-
-    es.onopen = () => {
-      // 연결 성공 시 재연결 카운터 리셋
-      console.log("[TranslationContext] SSE 연결 성공:", jobId);
-      reconnectAttemptsRef.current.set(jobId, 0);
-      serverCheckCountRef.current.delete(jobId); // 서버 확인 사이클도 리셋
-    };
-
-    es.onerror = (err) => {
-      console.error("[TranslationContext] SSE 에러:", jobId, err);
-
-      // 연결 정리
-      const currentEs = eventSourcesRef.current.get(jobId);
-      if (currentEs) {
-        currentEs.close();
-        eventSourcesRef.current.delete(jobId);
-      }
-
-      // 현재 작업 상태 확인 (ref 사용)
-      const currentJob = jobsRef.current.get(jobId);
-
-      // 이미 완료/실패/일시정지 상태면 재연결 안함
-      if (!currentJob || currentJob.status === "COMPLETED" || currentJob.status === "FAILED" || currentJob.status === "PAUSED") {
-        return;
-      }
-
-      // 재연결 시도
-      const attempts = reconnectAttemptsRef.current.get(jobId) || 0;
-      if (attempts < MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttemptsRef.current.set(jobId, attempts + 1);
-        console.log(`[TranslationContext] ${RECONNECT_DELAY}ms 후 재연결 예정 (${attempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
-
-        // 기존 타임아웃이 있으면 정리
-        const existingTimeout = reconnectTimeoutsRef.current.get(jobId);
-        if (existingTimeout) {
-          clearTimeout(existingTimeout);
+        if (response.status === 403) {
+          // 권한 없음 - 폴링 중지
+          return false;
         }
+        return true; // 다른 에러는 계속 폴링
+      }
 
-        const timeoutId = setTimeout(() => {
-          reconnectTimeoutsRef.current.delete(jobId);
-          // 재연결 전 상태 다시 확인 (ref 사용)
-          const job = jobsRef.current.get(jobId);
-          if (job && (job.status === "PENDING" || job.status === "IN_PROGRESS")) {
-            connectSSE(jobId, true);
-          }
-        }, RECONNECT_DELAY);
-        reconnectTimeoutsRef.current.set(jobId, timeoutId);
-      } else {
-        // 최대 재연결 시도 초과 - 서버에서 상태 확인 후 처리
-        console.error("[TranslationContext] 최대 재연결 시도 초과, 서버 상태 확인:", jobId);
-        reconnectAttemptsRef.current.delete(jobId);
+      const data = await response.json();
+      const serverJob = data.activeJob;
 
-        // 서버 확인 사이클 횟수 체크 (무한 루프 방지)
-        const serverCheckCount = (serverCheckCountRef.current.get(jobId) || 0) + 1;
-        serverCheckCountRef.current.set(jobId, serverCheckCount);
-
-        if (serverCheckCount > MAX_SERVER_CHECK_CYCLES) {
-          console.error("[TranslationContext] 서버 확인 사이클 초과, 연결 포기:", jobId);
-          serverCheckCountRef.current.delete(jobId);
+      if (!serverJob) {
+        // 활성 작업이 없으면 최근 완료/실패 작업 확인
+        if (data.recentJob) {
           setJobs((prev) => {
             const newJobs = new Map(prev);
-            const job = newJobs.get(jobId);
-            if (job) {
-              newJobs.set(jobId, {
-                ...job,
-                status: "FAILED",
-                error: "서버 연결이 불안정합니다. 페이지를 새로고침해주세요.",
+            const existingJob = Array.from(prev.values()).find(j => j.workId === workId);
+            if (existingJob) {
+              newJobs.set(existingJob.jobId, {
+                ...existingJob,
+                status: data.recentJob.status,
+                completedChapters: data.recentJob.completedChapters ?? existingJob.completedChapters,
+                failedChapters: data.recentJob.failedChapters ?? existingJob.failedChapters,
+                failedChapterNums: data.recentJob.failedChapterNums ?? [],
+                error: data.recentJob.errorMessage,
+                progress: calculateProgress(
+                  data.recentJob.completedChapters ?? existingJob.completedChapters,
+                  existingJob.totalChapters
+                ),
               });
             }
             return newJobs;
           });
           router.refresh();
-          return;
         }
-
-        // 서버에서 실제 상태 확인
-        fetch(`/api/translation/active`)
-          .then(res => res.json())
-          .then(data => {
-            const serverJob = data.jobs?.find((j: { jobId: string }) => j.jobId === jobId);
-            if (serverJob) {
-              // 서버에 작업이 있으면 상태 동기화
-              setJobs((prev) => {
-                const newJobs = new Map(prev);
-                newJobs.set(jobId, {
-                  ...serverJob,
-                  failedChapterNums: serverJob.failedChapterNums ?? [],
-                  currentChapter: serverJob.currentChapter
-                    ? {
-                        number: serverJob.currentChapter.number,
-                        currentChunk: serverJob.currentChapter.currentChunk,
-                        totalChunks: serverJob.currentChapter.totalChunks,
-                      }
-                    : undefined,
-                  createdAt: new Date(serverJob.createdAt),
-                  updatedAt: serverJob.updatedAt ? new Date(serverJob.updatedAt) : undefined,
-                  progress: calculateProgress(serverJob.completedChapters, serverJob.totalChapters),
-                });
-                return newJobs;
-              });
-
-              // 진행 중이면 다시 연결 시도
-              if (serverJob.status === "IN_PROGRESS" || serverJob.status === "PENDING") {
-                reconnectAttemptsRef.current.set(jobId, 0);
-                const existingTimeout = reconnectTimeoutsRef.current.get(jobId);
-                if (existingTimeout) {
-                  clearTimeout(existingTimeout);
-                }
-                const timeoutId = setTimeout(() => {
-                  reconnectTimeoutsRef.current.delete(jobId);
-                  connectSSE(jobId, true);
-                }, RECONNECT_DELAY);
-                reconnectTimeoutsRef.current.set(jobId, timeoutId);
-              } else {
-                // 터미널 상태면 사이클 카운터 정리
-                serverCheckCountRef.current.delete(jobId);
-              }
-            } else {
-              // 서버에 작업이 없으면 실패 처리
-              serverCheckCountRef.current.delete(jobId);
-              setJobs((prev) => {
-                const newJobs = new Map(prev);
-                const job = newJobs.get(jobId);
-                if (job) {
-                  newJobs.set(jobId, {
-                    ...job,
-                    status: "FAILED",
-                    error: "연결 끊김 - 작업을 찾을 수 없습니다",
-                  });
-                }
-                return newJobs;
-              });
-            }
-          })
-          .catch(() => {
-            // 네트워크 오류 시 일단 유지 (다음 refreshJobs에서 복구)
-            console.error("[TranslationContext] 서버 상태 확인 실패");
-          });
+        return false; // 폴링 중지
       }
-    };
-  }, []);
 
-  // 서버에서 활성 작업 복구
+      // 작업 상태 업데이트
+      setJobs((prev) => {
+        const newJobs = new Map(prev);
+        const existingJob = Array.from(prev.values()).find(j => j.workId === workId);
+
+        const updatedJob: TranslationJobSummary = {
+          jobId: serverJob.jobId,
+          workId,
+          workTitle: existingJob?.workTitle || "",
+          status: serverJob.status,
+          totalChapters: serverJob.totalChapters,
+          completedChapters: serverJob.completedChapters,
+          failedChapters: serverJob.failedChapters,
+          failedChapterNums: serverJob.failedChapterNums ?? [],
+          error: serverJob.errorMessage || serverJob.lastError,
+          createdAt: existingJob?.createdAt || new Date(serverJob.startedAt || Date.now()),
+          updatedAt: new Date(serverJob.updatedAt),
+          progress: calculateProgress(serverJob.completedChapters, serverJob.totalChapters),
+        };
+
+        newJobs.set(serverJob.jobId, updatedJob);
+        return newJobs;
+      });
+
+      // 터미널 상태면 폴링 중지
+      if (serverJob.status === "COMPLETED" || serverJob.status === "FAILED" || serverJob.status === "CANCELLED") {
+        router.refresh();
+        return false;
+      }
+
+      return true; // 계속 폴링
+    } catch (error) {
+      console.error("[TranslationContext] 작업 상태 조회 에러:", error);
+      return true; // 네트워크 오류 시 계속 폴링
+    }
+  }, [router]);
+
+  // workId에 대한 폴링 시작
+  const startPolling = useCallback((workId: string) => {
+    if (pollingWorkIdsRef.current.has(workId)) {
+      console.log("[TranslationContext] 이미 폴링 중:", workId);
+      return;
+    }
+
+    console.log("[TranslationContext] 폴링 시작:", workId);
+    pollingWorkIdsRef.current.add(workId);
+
+    // 즉시 한 번 조회
+    fetchJobStatus(workId).then((shouldContinue) => {
+      if (!shouldContinue) {
+        stopPolling(workId);
+        return;
+      }
+
+      // 폴링 인터벌 설정
+      const intervalId = setInterval(async () => {
+        const shouldContinue = await fetchJobStatus(workId);
+        if (!shouldContinue) {
+          stopPolling(workId);
+        }
+      }, POLLING_INTERVAL_MS);
+
+      pollingIntervalsRef.current.set(workId, intervalId);
+    });
+  }, [fetchJobStatus, stopPolling]);
+
+  // 서버에서 활성 작업 복구 (초기화 시)
   const refreshJobs = useCallback(async () => {
     try {
       console.log("[TranslationContext] 서버에서 작업 목록 조회");
@@ -409,8 +223,6 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       if (!response.ok) {
         if (response.status === 401) {
           console.log("[TranslationContext] 세션 미설정, 작업 목록 조회 스킵");
-        } else {
-          console.error("[TranslationContext] 작업 목록 조회 실패:", response.status);
         }
         return;
       }
@@ -420,7 +232,6 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 
       if (data.jobs && Array.isArray(data.jobs)) {
         const newJobs = new Map<string, TranslationJobSummary>();
-        const jobsToConnect: string[] = [];
 
         data.jobs.forEach(
           (job: {
@@ -432,11 +243,6 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             completedChapters: number;
             failedChapters: number;
             failedChapterNums?: number[];
-            currentChapter?: {
-              number: number;
-              currentChunk?: number;
-              totalChunks?: number;
-            };
             error?: string;
             createdAt: string;
             updatedAt?: string;
@@ -444,79 +250,43 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             newJobs.set(job.jobId, {
               ...job,
               failedChapterNums: job.failedChapterNums ?? [],
-              currentChapter: job.currentChapter
-                ? {
-                    number: job.currentChapter.number,
-                    currentChunk: job.currentChapter.currentChunk,
-                    totalChunks: job.currentChapter.totalChunks,
-                  }
-                : undefined,
               createdAt: new Date(job.createdAt),
               updatedAt: job.updatedAt ? new Date(job.updatedAt) : undefined,
               progress: calculateProgress(job.completedChapters, job.totalChapters),
             });
 
-            // 진행 중인 작업에 대해 SSE 연결 대기 목록에 추가
-            if (
-              (job.status === "PENDING" || job.status === "IN_PROGRESS") &&
-              !eventSourcesRef.current.has(job.jobId)
-            ) {
-              jobsToConnect.push(job.jobId);
+            // 진행 중인 작업에 대해 폴링 시작
+            if (job.status === "PENDING" || job.status === "IN_PROGRESS") {
+              startPolling(job.workId);
             }
           }
         );
 
         setJobs(newJobs);
-
-        // 상태 업데이트 후 SSE 연결
-        jobsToConnect.forEach((jobId) => {
-          connectSSE(jobId);
-        });
       }
     } catch (error) {
       console.error("[TranslationContext] 작업 목록 조회 에러:", error);
     }
-  }, [connectSSE]);
+  }, [startPolling]);
 
   // 초기 로드 시 서버에서 작업 복구
   useEffect(() => {
     if (!isInitializedRef.current) {
       isInitializedRef.current = true;
-      // setTimeout으로 스케줄링하여 cascading render 방지
       const timeoutId = setTimeout(() => {
         refreshJobs();
       }, 0);
       return () => clearTimeout(timeoutId);
     }
 
-    // 컴포넌트 언마운트 시 모든 SSE 연결 및 타임아웃 정리
-    const currentEventSources = eventSourcesRef.current;
-    const currentTimeouts = reconnectTimeoutsRef.current;
+    // 컴포넌트 언마운트 시 모든 폴링 정리
+    const currentIntervals = pollingIntervalsRef.current;
     return () => {
-      currentEventSources.forEach((es) => es.close());
-      currentEventSources.clear();
-      currentTimeouts.forEach((timeout) => clearTimeout(timeout));
-      currentTimeouts.clear();
+      currentIntervals.forEach((intervalId) => clearInterval(intervalId));
+      currentIntervals.clear();
+      pollingWorkIdsRef.current.clear();
     };
   }, [refreshJobs]);
-
-  // 주기적으로 완료된 작업의 stale EventSource 정리 (메모리 누수 방지)
-  useEffect(() => {
-    const cleanupInterval = setInterval(() => {
-      const currentJobs = jobs;
-      eventSourcesRef.current.forEach((es, jobId) => {
-        const job = currentJobs.get(jobId);
-        // 작업이 완료/실패/일시정지 상태이거나 작업이 없으면 EventSource 정리
-        if (!job || job.status === "COMPLETED" || job.status === "FAILED" || job.status === "PAUSED") {
-          console.log("[TranslationContext] Stale EventSource 정리:", jobId);
-          es.close();
-          eventSourcesRef.current.delete(jobId);
-        }
-      });
-    }, 30000); // 30초마다 정리
-
-    return () => clearInterval(cleanupInterval);
-  }, [jobs]);
 
   // 새 작업 추적 시작
   const startTracking = useCallback(
@@ -547,19 +317,23 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         return newJobs;
       });
 
-      // SSE 연결
-      connectSSE(jobId);
+      // 폴링 시작
+      startPolling(workId);
     },
-    [connectSSE]
+    [startPolling]
   );
 
-  // 특정 작업 추적 중지 (SSE만 종료, 상태는 유지)
+  // 특정 작업 추적 중지
   const stopTracking = useCallback(
     (jobId: string) => {
       console.log("[TranslationContext] 추적 중지:", jobId);
-      disconnectSSE(jobId);
+      // jobId로 workId 찾기
+      const job = Array.from(jobs.values()).find(j => j.jobId === jobId);
+      if (job) {
+        stopPolling(job.workId);
+      }
     },
-    [disconnectSSE]
+    [jobs, stopPolling]
   );
 
   // 작업 제거 (UI에서 닫기)
@@ -567,8 +341,11 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     async (jobId: string) => {
       console.log("[TranslationContext] 작업 제거:", jobId);
 
-      // SSE 연결 종료
-      disconnectSSE(jobId);
+      // jobId로 workId 찾기
+      const job = Array.from(jobs.values()).find(j => j.jobId === jobId);
+      if (job) {
+        stopPolling(job.workId);
+      }
 
       // 로컬 상태에서 제거
       setJobs((prev) => {
@@ -576,17 +353,8 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         newJobs.delete(jobId);
         return newJobs;
       });
-
-      // 서버에서도 제거
-      try {
-        await fetch(`/api/translation/active?jobId=${jobId}`, {
-          method: "DELETE",
-        });
-      } catch (error) {
-        console.error("[TranslationContext] 서버 작업 제거 실패:", error);
-      }
     },
-    [disconnectSSE]
+    [jobs, stopPolling]
   );
 
   // 완료된 작업 모두 제거
@@ -606,17 +374,6 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       completedJobIds.forEach((id) => newJobs.delete(id));
       return newJobs;
     });
-
-    // 서버에서도 제거
-    await Promise.all(
-      completedJobIds.map((jobId) =>
-        fetch(`/api/translation/active?jobId=${jobId}`, {
-          method: "DELETE",
-        }).catch((error) =>
-          console.error("[TranslationContext] 서버 작업 제거 실패:", jobId, error)
-        )
-      )
-    );
   }, [jobs]);
 
   // jobs Map을 배열로 변환 (생성 시간순 정렬) - useMemo로 최적화
@@ -658,76 +415,44 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     [jobsByWorkId]
   );
 
-  // 작업 일시정지
-  const pauseJob = useCallback(async (jobId: string): Promise<boolean> => {
-    console.log("[TranslationContext] 일시정지 요청:", jobId);
+  // 작업 취소 (Cron 기반)
+  const cancelJob = useCallback(async (workId: string): Promise<boolean> => {
+    console.log("[TranslationContext] 취소 요청:", workId);
 
     try {
-      const response = await fetch("/api/translation/pause", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
+      const response = await fetch(`/api/works/${workId}/translate/job`, {
+        method: "DELETE",
       });
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        console.error("[TranslationContext] 일시정지 실패:", data.error);
+        console.error("[TranslationContext] 취소 실패:", data.error);
         return false;
       }
 
+      // 폴링 중지 및 상태 업데이트
+      stopPolling(workId);
+
+      setJobs((prev) => {
+        const newJobs = new Map(prev);
+        const job = Array.from(prev.values()).find(j => j.workId === workId);
+        if (job) {
+          newJobs.set(job.jobId, {
+            ...job,
+            status: "FAILED",
+            error: "사용자에 의해 취소됨",
+          });
+        }
+        return newJobs;
+      });
+
+      router.refresh();
       return true;
     } catch (error) {
-      console.error("[TranslationContext] 일시정지 에러:", error);
+      console.error("[TranslationContext] 취소 에러:", error);
       return false;
     }
-  }, []);
-
-  // 작업 재개
-  const resumeJob = useCallback(
-    async (jobId: string): Promise<{ success: boolean; error?: string }> => {
-      console.log("[TranslationContext] 재개 요청:", jobId);
-
-      try {
-        const response = await fetch("/api/translation/resume", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          console.error("[TranslationContext] 재개 실패:", data.error);
-          return { success: false, error: data.error };
-        }
-
-        const data = await response.json();
-
-        // 재개 성공 시 SSE 연결 시작 (기존 jobId 재사용)
-        connectSSE(jobId);
-
-        // 작업 상태를 IN_PROGRESS로 업데이트
-        setJobs((prev) => {
-          const newJobs = new Map(prev);
-          const job = newJobs.get(jobId);
-          if (job) {
-            newJobs.set(jobId, {
-              ...job,
-              status: "IN_PROGRESS",
-              totalChapters: data.totalChapters || job.totalChapters,
-              progress: calculateProgress(job.completedChapters, data.totalChapters || job.totalChapters),
-            });
-          }
-          return newJobs;
-        });
-
-        return { success: true };
-      } catch (error) {
-        console.error("[TranslationContext] 재개 에러:", error);
-        return { success: false, error: "네트워크 오류가 발생했습니다." };
-      }
-    },
-    [connectSSE]
-  );
+  }, [stopPolling, router]);
 
   // 클라이언트 측 번역 상태 업데이트 (translate/page.tsx에서 사용)
   const updateClientProgress = useCallback(
@@ -795,8 +520,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
         removeAllCompleted,
         refreshJobs,
         getJobByWorkId,
-        pauseJob,
-        resumeJob,
+        cancelJob,
         updateClientProgress,
         removeClientJob,
       }}

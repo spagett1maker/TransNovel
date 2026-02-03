@@ -357,7 +357,7 @@ model TranslationLog {
   @@index([workId, createdAt]) // 작품별 로그 조회용
 }
 
-// 활성 번역 작업 (서버리스 환경 지원 - DB 기반)
+// 활성 번역 작업 (Cron 기반 - 서버리스 환경 지원)
 model ActiveTranslationJob {
   id    String @id @default(cuid())
   jobId String @unique // 클라이언트 식별용 ID
@@ -368,10 +368,20 @@ model ActiveTranslationJob {
   userEmail String?
 
   // 상태
-  status           String  @default("PENDING") // PENDING, IN_PROGRESS, PAUSED, COMPLETED, FAILED
+  status           String  @default("PENDING") // PENDING, IN_PROGRESS, PAUSED, COMPLETED, FAILED, CANCELLED
   isPauseRequested Boolean @default(false)
 
-  // 진행률
+  // Cron 배치 처리 (설정집 생성과 동일한 패턴)
+  batchPlan         Json? // number[][] — 챕터 번호 배치 계획
+  totalBatches      Int   @default(0)
+  currentBatchIndex Int   @default(0) // 0-based, == totalBatches면 완료
+
+  // 재시도 로직
+  retryCount Int @default(0)
+  maxRetries Int @default(5)
+  lastError  String? @db.Text
+
+  // 진행률 (클라이언트 표시용)
   totalChapters     Int
   completedChapters Int @default(0)
   failedChapters    Int @default(0)
@@ -385,14 +395,26 @@ model ActiveTranslationJob {
   // [{ number, chapterId, status, currentChunk, totalChunks, error? }]
   chaptersProgress Json?
 
+  // 실패한 챕터 번호 목록
+  failedChapterNums Int[] @default([])
+
+  // 자동 실패 복구 (완료 후 실패 챕터 자동 재시도)
+  autoRetryCount    Int   @default(0) // 최대 2회
+  maxAutoRetries    Int   @default(2)
+
   // 에러 정보
   errorMessage String? @db.Text
 
-  // 시간 정보
-  startedAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // 낙관적 잠금 (Cron 중복 실행 방지)
+  lockedAt DateTime?
+  lockedBy String?
 
-  @@index([workId, status]) // 작품당 활성 작업 조회용 (앱 레벨에서 중복 방지)
+  // 시간 정보
+  startedAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([workId, status]) // 작품당 활성 작업 조회용
   @@index([workId])
   @@index([userId])
   @@index([status])

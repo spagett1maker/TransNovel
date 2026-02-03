@@ -7,8 +7,6 @@ import {
   ChevronDown,
   X,
   Zap,
-  Pause,
-  Play,
   CheckCircle,
   XCircle,
   Minus,
@@ -46,43 +44,29 @@ interface UnifiedJob {
 function TranslationJobItem({
   job,
   onRemove,
-  onPause,
-  onResume,
+  onCancel,
   isFirst = false,
 }: {
   job: TranslationJobSummary;
   onRemove: () => void;
-  onPause: () => Promise<void>;
-  onResume: () => Promise<void>;
+  onCancel: () => Promise<void>;
   isFirst?: boolean;
 }) {
-  const [isPausing, setIsPausing] = useState(false);
-  const [isResuming, setIsResuming] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const isCompleted = job.status === "COMPLETED";
   const isFailed = job.status === "FAILED";
-  const isPaused = job.status === "PAUSED";
   const isActive = job.status === "PENDING" || job.status === "IN_PROGRESS";
 
   const displayProgress = job.progress;
 
-  const handlePause = async (e: React.MouseEvent) => {
+  const handleCancel = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsPausing(true);
+    setIsCancelling(true);
     try {
-      await onPause();
+      await onCancel();
     } finally {
-      setIsPausing(false);
-    }
-  };
-
-  const handleResume = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsResuming(true);
-    try {
-      await onResume();
-    } finally {
-      setIsResuming(false);
+      setIsCancelling(false);
     }
   };
 
@@ -99,19 +83,13 @@ function TranslationJobItem({
       text: "text-status-error",
       progressBar: "[&>div]:bg-status-error",
     },
-    paused: {
-      text: "text-status-warning",
-      progressBar: "[&>div]:bg-status-warning",
-    },
   };
 
   const currentStyle = isCompleted
     ? statusStyles.completed
     : isFailed
       ? statusStyles.failed
-      : isPaused
-        ? statusStyles.paused
-        : statusStyles.active;
+      : statusStyles.active;
 
   return (
     <div
@@ -132,8 +110,6 @@ function TranslationJobItem({
             <CheckCircle className="h-4 w-4 text-status-success shrink-0" />
           ) : isFailed ? (
             <XCircle className="h-4 w-4 text-status-error shrink-0" />
-          ) : isPaused ? (
-            <Pause className="h-4 w-4 text-status-warning shrink-0" />
           ) : (
             <Spinner size="sm" label="번역 중" className="text-blue-500 shrink-0" />
           )}
@@ -186,11 +162,6 @@ function TranslationJobItem({
               {job.error || "번역 중 오류 발생"}
             </span>
           )}
-          {isPaused && (
-            <span className={currentStyle.text}>
-              {job.completedChapters}/{job.totalChapters}화 완료 후 일시정지
-            </span>
-          )}
         </div>
 
         {/* 액션 버튼들 */}
@@ -199,43 +170,23 @@ function TranslationJobItem({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-2 text-xs hover:bg-status-warning/20 text-status-warning"
-              disabled={isPausing}
-              onClick={handlePause}
-              title="일시정지"
+              className="h-6 px-2 text-xs hover:bg-status-error/20 text-status-error"
+              disabled={isCancelling}
+              onClick={handleCancel}
+              title="취소"
             >
-              {isPausing ? (
-                <ButtonSpinner className="text-status-warning" />
+              {isCancelling ? (
+                <ButtonSpinner className="text-status-error" />
               ) : (
                 <>
-                  <Pause className="h-3 w-3 mr-1" />
-                  일시정지
+                  <StopCircle className="h-3 w-3 mr-1" />
+                  취소
                 </>
               )}
             </Button>
           )}
 
-          {isPaused && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs hover:bg-status-success/20 text-status-success"
-              disabled={isResuming}
-              onClick={handleResume}
-              title="재개"
-            >
-              {isResuming ? (
-                <ButtonSpinner className="text-status-success" />
-              ) : (
-                <>
-                  <Play className="h-3 w-3 mr-1" />
-                  재개
-                </>
-              )}
-            </Button>
-          )}
-
-          {(isCompleted || isFailed || isPaused) && (
+          {(isCompleted || isFailed) && (
             <Button
               variant="ghost"
               size="icon"
@@ -409,8 +360,7 @@ export function GlobalTranslationIndicator() {
   const {
     jobs: translationJobs,
     removeJob: removeTranslationJob,
-    pauseJob,
-    resumeJob,
+    cancelJob,
   } = useTranslation();
 
   const {
@@ -559,36 +509,17 @@ export function GlobalTranslationIndicator() {
     }
   }, [bibleJobs, removeBibleJob]);
 
-  // 일시정지 핸들러
-  const handlePause = useCallback(
-    async (jobId: string) => {
-      const success = await pauseJob(jobId);
+  // 번역 취소 핸들러
+  const handleCancelTranslation = useCallback(
+    async (workId: string) => {
+      const success = await cancelJob(workId);
       if (success) {
-        toast.success("번역이 일시정지되었습니다.");
+        toast.info("번역 작업이 취소되었습니다.");
       } else {
-        toast.error("일시정지에 실패했습니다.");
+        toast.error("작업 취소에 실패했습니다.");
       }
     },
-    [pauseJob]
-  );
-
-  // 재개 핸들러
-  const handleResume = useCallback(
-    async (job: TranslationJobSummary) => {
-      const pendingChapters = job.totalChapters - job.completedChapters;
-      if (pendingChapters <= 0) {
-        toast.error("재개할 챕터가 없습니다.");
-        return;
-      }
-
-      const result = await resumeJob(job.jobId);
-      if (result.success) {
-        toast.success(`${pendingChapters}개 챕터 번역을 재개합니다.`);
-      } else {
-        toast.error(result.error || "재개에 실패했습니다.");
-      }
-    },
-    [resumeJob]
+    [cancelJob]
   );
 
   // 설정집 생성 취소 핸들러
@@ -703,8 +634,7 @@ export function GlobalTranslationIndicator() {
                 job={job.translationJob}
                 isFirst={index === 0}
                 onRemove={() => removeTranslationJob(job.translationJob!.jobId)}
-                onPause={() => handlePause(job.translationJob!.jobId)}
-                onResume={() => handleResume(job.translationJob!)}
+                onCancel={() => handleCancelTranslation(job.translationJob!.workId)}
               />
             ) : job.type === "bible" && job.bibleJob ? (
               <BibleJobItem

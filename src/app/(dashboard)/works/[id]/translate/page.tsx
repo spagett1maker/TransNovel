@@ -129,7 +129,7 @@ const ChapterCell = memo(function ChapterCell({
 // 서버 측 번역 진행률 모니터 (간소화)
 function ServerTranslationProgress({
   job,
-  onPause,
+  onCancel,
   onComplete,
   onRetry,
 }: {
@@ -143,7 +143,7 @@ function ServerTranslationProgress({
     currentChapter?: { number: number; currentChunk?: number; totalChunks?: number };
     error?: string;
   };
-  onPause: () => void;
+  onCancel: () => void;
   onComplete: () => void;
   onRetry: (chapterNumbers: number[]) => void;
 }) {
@@ -202,9 +202,9 @@ function ServerTranslationProgress({
             </span>
             <span className="text-lg font-bold tabular-nums">{totalProgress}%</span>
             {isActive && (
-              <Button variant="outline" size="sm" onClick={onPause}>
-                <Pause className="h-4 w-4 mr-1" />
-                정지
+              <Button variant="outline" size="sm" onClick={onCancel}>
+                <XCircle className="h-4 w-4 mr-1" />
+                취소
               </Button>
             )}
           </div>
@@ -292,7 +292,7 @@ export default function TranslatePage() {
   const params = useParams();
   const workId = params.id as string;
 
-  const { getJobByWorkId, startTracking, pauseJob, removeJob } = useTranslation();
+  const { getJobByWorkId, startTracking, cancelJob, removeJob } = useTranslation();
 
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
@@ -445,11 +445,10 @@ export default function TranslatePage() {
         removeJob(job.jobId);
       }
 
-      const response = await fetch("/api/translation", {
+      const response = await fetch(`/api/works/${workId}/translate/job`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workId,
           chapterNumbers: sortedChapterNumbers,
         }),
       });
@@ -471,16 +470,16 @@ export default function TranslatePage() {
     }
   };
 
-  const handlePause = useCallback(async () => {
+  const handleCancel = useCallback(async () => {
     if (job) {
-      const success = await pauseJob(job.jobId);
+      const success = await cancelJob(workId);
       if (success) {
-        toast.info("번역을 일시정지하고 있습니다...");
+        toast.info("번역 작업이 취소되었습니다.");
       } else {
-        toast.error("일시정지에 실패했습니다.");
+        toast.error("작업 취소에 실패했습니다.");
       }
     }
-  }, [job, pauseJob]);
+  }, [job, cancelJob, workId]);
 
   const handleTranslationComplete = useCallback(() => {
     setSelectedChapters(new Set());
@@ -580,7 +579,7 @@ export default function TranslatePage() {
           {job && (
             <ServerTranslationProgress
               job={job}
-              onPause={handlePause}
+              onCancel={handleCancel}
               onComplete={handleTranslationComplete}
               onRetry={handleRetryFailed}
             />

@@ -46,10 +46,27 @@ export async function GET(req: Request) {
   let lockedJobId: string | null = null;
 
   try {
-    // 원자적 잠금 획득: findFirst + updateMany 대신 한 번에 처리
-    // Race condition 방지를 위해 updateMany로 직접 잠금 시도
+    // 먼저 잠금 가능한 작업 하나를 조회
+    const candidateJob = await db.bibleGenerationJob.findFirst({
+      where: {
+        status: { in: ["PENDING", "IN_PROGRESS"] },
+        OR: [
+          { lockedAt: null },
+          { lockedAt: { lt: staleThreshold } },
+        ],
+      },
+      select: { id: true },
+      orderBy: { createdAt: "asc" }, // 오래된 작업 우선
+    });
+
+    if (!candidateJob) {
+      return NextResponse.json({ message: "No pending jobs or all locked" });
+    }
+
+    // 해당 작업에 대해서만 원자적 잠금 시도
     const lockResult = await db.bibleGenerationJob.updateMany({
       where: {
+        id: candidateJob.id,
         status: { in: ["PENDING", "IN_PROGRESS"] },
         OR: [
           { lockedAt: null },
@@ -63,20 +80,18 @@ export async function GET(req: Request) {
     });
 
     if (lockResult.count === 0) {
-      return NextResponse.json({ message: "No pending jobs or all locked" });
+      // 다른 인스턴스가 먼저 잠금을 획득함
+      return NextResponse.json({ message: "Job acquired by another instance" });
     }
 
-    // 잠금 획득한 job 조회 (lockedBy로 확인)
-    const job = await db.bibleGenerationJob.findFirst({
-      where: {
-        lockedBy: instanceId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-      },
+    // 잠금 획득한 job 상세 조회
+    const job = await db.bibleGenerationJob.findUnique({
+      where: { id: candidateJob.id },
       select: {
         id: true,
         workId: true,
         status: true,
-        batchPlan: true, // 필요한 배치만 추출할 예정
+        batchPlan: true,
         totalBatches: true,
         currentBatchIndex: true,
         analyzedChapters: true,
@@ -86,8 +101,7 @@ export async function GET(req: Request) {
     });
 
     if (!job) {
-      // 다른 인스턴스가 먼저 가져갔거나 상태 변경됨
-      return NextResponse.json({ message: "Job acquired by another instance" });
+      return NextResponse.json({ message: "Job not found after lock" });
     }
 
     lockedJobId = job.id;

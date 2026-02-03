@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/bible-generation",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/translation",
+      "schedule": "* * * * *"
     }
   ]
 }

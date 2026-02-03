@@ -10,9 +10,19 @@ import { translationLogger } from "@/lib/translation-logger";
 import { canTransitionWorkStatus } from "@/lib/work-status";
 import { WorkStatus } from "@prisma/client";
 
+// Vercel Pro: 최대 300초 함수 실행 시간
+export const maxDuration = 300;
+
 // 챕터 크기 제한 (안전 마진 포함)
 const MAX_CHAPTER_SIZE = 500000; // 50만 자 (약 100KB)
 const WARN_CHAPTER_SIZE = 200000; // 20만 자 경고
+
+// 병렬 처리 비활성화
+// 이유:
+// 1. after()는 300초 타임아웃 → 대규모 번역에 Cron 전환 필요
+// 2. chaptersProgress 동시 업데이트 시 race condition 발생
+// TODO: 설정집처럼 Cron 기반으로 전환 후 병렬 처리 활성화
+const PARALLEL_CHAPTER_COUNT = 1; // 순차 처리 (안전)
 
 // ============================================
 // 사용자별 Rate Limiting (DB 기반 — 서버리스 인스턴스 간 공유)
@@ -123,26 +133,16 @@ async function processTranslation(
   // 실패한 챕터 번호 추적
   const failedChapterNums: number[] = [];
 
-  for (let chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
-    const chapter = chapters[chapterIndex];
+  // 단일 챕터 번역 처리 함수
+  async function translateSingleChapter(
+    chapter: { id: string; number: number },
+    chapterIndex: number
+  ): Promise<{ success: boolean; chapterNumber: number; duration: number }> {
     const chapterStartTime = Date.now();
-
-    // 일시정지 요청 확인
-    if (await translationManager.checkAndPause(jobId)) {
-      log("[Translation]", "작업이 일시정지됨, 루프 종료");
-      return; // 루프 종료
-    }
 
     log("[Translation]", `========== 챕터 ${chapter.number} 시작 (${chapterIndex + 1}/${chapters.length}) ==========`);
 
-    // Rate limit 방지: 첫 번째 챕터가 아니면 챕터 간 딜레이 추가
-    if (chapterIndex > 0) {
-      const chapterDelay = 3000; // 챕터 간 3초 딜레이 (API 안정성)
-      log("[Translation]", `챕터 간 딜레이: ${chapterDelay}ms`);
-      await new Promise(resolve => setTimeout(resolve, chapterDelay));
-    }
-
-    // 메모리 최적화: 챕터 원문을 한 건씩 DB에서 로드 (iteration 끝나면 GC 가능)
+    // 메모리 최적화: 챕터 원문을 한 건씩 DB에서 로드
     const chapterData = await db.chapter.findUnique({
       where: { id: chapter.id },
       select: { originalContent: true },
@@ -150,105 +150,142 @@ async function processTranslation(
     if (!chapterData) {
       log("[Translation]", `챕터 ${chapter.number} DB에서 찾을 수 없음, 스킵`);
       await translationManager.completeChapter(jobId, chapter.number);
-      continue;
+      return { success: true, chapterNumber: chapter.number, duration: Date.now() - chapterStartTime };
     }
 
     log("[Translation]", `챕터 ${chapter.number} 처리 시작`, {
       contentLength: chapterData.originalContent.length
     });
 
-    try {
-      // 중복 번역 방지: PENDING 상태인 경우에만 TRANSLATING으로 변경 (atomic update)
-      const updateResult = await db.chapter.updateMany({
-        where: {
-          id: chapter.id,
-          status: "PENDING",
-        },
-        data: { status: "TRANSLATING" },
-      });
+    // 중복 번역 방지: PENDING 상태인 경우에만 TRANSLATING으로 변경 (atomic update)
+    const updateResult = await db.chapter.updateMany({
+      where: {
+        id: chapter.id,
+        status: "PENDING",
+      },
+      data: { status: "TRANSLATING" },
+    });
 
-      // 업데이트된 행이 없으면 다른 작업이 이미 번역 중
-      if (updateResult.count === 0) {
-        log("[Translation]", `챕터 ${chapter.number} 이미 다른 작업에서 처리 중, 스킵`);
-        await translationManager.completeChapter(jobId, chapter.number);
-        continue;
-      }
-
-      // 챕터 시작 알림 (청크 없이 챕터 단위로만 추적)
-      await translationManager.startChapter(jobId, chapter.number, 1); // totalChunks = 1
-      await translationLogger.logChapterStart(jobId, workId, chapter.id, chapter.number, 1, { userId, userEmail });
-
-      // 챕터 번역 (대형 챕터는 자동 청크 분할)
-      log("[Translation]", `챕터 ${chapter.number} 번역 API 호출`);
-      const translatedContent = await translateChapter(
-        chapterData.originalContent,
-        context,
-        5, // maxRetries
-        // 대형 챕터 청크 진행률 콜백: DB updatedAt 갱신 + 청크 진행률 추적
-        async (currentChunk, totalChunks) => {
-          log("[Translation]", `챕터 ${chapter.number} 청크 진행: ${currentChunk}/${totalChunks}`);
-          await translationManager.updateChunkProgress(jobId, chapter.number, currentChunk, totalChunks);
-        }
-      );
-
-      log("[Translation]", `챕터 ${chapter.number} 번역 완료`, {
-        originalLength: chapterData.originalContent.length,
-        translatedLength: translatedContent.length,
-      });
-
-      // 번역 결과 저장
-      await db.chapter.update({
-        where: { id: chapter.id },
-        data: {
-          translatedContent,
-          status: "TRANSLATED",
-          translationMeta: Prisma.JsonNull,
-        },
-      });
-
-      // 챕터 완료 알림
-      const chapterDuration = Date.now() - chapterStartTime;
+    // 업데이트된 행이 없으면 다른 작업이 이미 번역 중
+    if (updateResult.count === 0) {
+      log("[Translation]", `챕터 ${chapter.number} 이미 다른 작업에서 처리 중, 스킵`);
       await translationManager.completeChapter(jobId, chapter.number);
-      await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, 0, { userId, userEmail });
-
-      log("[Translation]", `========== 챕터 ${chapter.number} 완료 (${chapterDuration}ms) ==========`);
-
-    } catch (error) {
-      log("[Translation]", `========== 챕터 ${chapter.number} 실패 ==========`);
-      log("[Translation]", `에러 상세`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-
-      // 에러 메시지 추출
-      let errorMessage = "번역 실패";
-      let errorCode = "UNKNOWN";
-      if (error instanceof TranslationError) {
-        errorMessage = error.message;
-        errorCode = error.code;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-
-      // 상태 되돌리기 (TRANSLATING인 경우에만)
-      await db.chapter.updateMany({
-        where: {
-          id: chapter.id,
-          status: "TRANSLATING",
-        },
-        data: { status: "PENDING" },
-      });
-
-      // 챕터 실패 알림 및 로깅
-      await translationManager.failChapter(jobId, chapter.number, errorMessage);
-      failedChapterNums.push(chapter.number);
-
-      await translationLogger.logChapterFailed(jobId, chapter.number, errorCode, errorMessage, {
-        userId,
-        userEmail,
-        errorStack: error instanceof Error ? error.stack : undefined,
-      });
+      return { success: true, chapterNumber: chapter.number, duration: Date.now() - chapterStartTime };
     }
+
+    // 챕터 시작 알림 (청크 없이 챕터 단위로만 추적)
+    await translationManager.startChapter(jobId, chapter.number, 1);
+    await translationLogger.logChapterStart(jobId, workId, chapter.id, chapter.number, 1, { userId, userEmail });
+
+    // 챕터 번역 (대형 챕터는 자동 청크 분할)
+    log("[Translation]", `챕터 ${chapter.number} 번역 API 호출`);
+    const translatedContent = await translateChapter(
+      chapterData.originalContent,
+      context,
+      5, // maxRetries
+      // 대형 챕터 청크 진행률 콜백
+      async (currentChunk, totalChunks) => {
+        log("[Translation]", `챕터 ${chapter.number} 청크 진행: ${currentChunk}/${totalChunks}`);
+        await translationManager.updateChunkProgress(jobId, chapter.number, currentChunk, totalChunks);
+      }
+    );
+
+    log("[Translation]", `챕터 ${chapter.number} 번역 완료`, {
+      originalLength: chapterData.originalContent.length,
+      translatedLength: translatedContent.length,
+    });
+
+    // 번역 결과 저장
+    await db.chapter.update({
+      where: { id: chapter.id },
+      data: {
+        translatedContent,
+        status: "TRANSLATED",
+        translationMeta: Prisma.JsonNull,
+      },
+    });
+
+    // 챕터 완료 알림
+    const chapterDuration = Date.now() - chapterStartTime;
+    await translationManager.completeChapter(jobId, chapter.number);
+    await translationLogger.logChapterComplete(jobId, chapter.number, chapterDuration, 0, { userId, userEmail });
+
+    log("[Translation]", `========== 챕터 ${chapter.number} 완료 (${chapterDuration}ms) ==========`);
+
+    return { success: true, chapterNumber: chapter.number, duration: chapterDuration };
+  }
+
+  // 병렬 배치 처리
+  for (let batchStart = 0; batchStart < chapters.length; batchStart += PARALLEL_CHAPTER_COUNT) {
+    // 일시정지 요청 확인 (배치 시작 전)
+    if (await translationManager.checkAndPause(jobId)) {
+      log("[Translation]", "작업이 일시정지됨, 루프 종료");
+      return;
+    }
+
+    // 현재 배치에서 처리할 챕터들
+    const batchChapters = chapters.slice(batchStart, batchStart + PARALLEL_CHAPTER_COUNT);
+    log("[Translation]", `배치 시작: ${batchStart + 1}~${batchStart + batchChapters.length}/${chapters.length} (${batchChapters.length}개 병렬 처리)`);
+
+    // 배치 간 딜레이 (첫 배치 제외)
+    if (batchStart > 0) {
+      const batchDelay = 2000; // 배치 간 2초 딜레이
+      log("[Translation]", `배치 간 딜레이: ${batchDelay}ms`);
+      await new Promise(resolve => setTimeout(resolve, batchDelay));
+    }
+
+    // 병렬로 챕터 번역 실행
+    const batchResults = await Promise.allSettled(
+      batchChapters.map((chapter, idx) =>
+        translateSingleChapter(chapter, batchStart + idx)
+      )
+    );
+
+    // 결과 처리
+    for (let i = 0; i < batchResults.length; i++) {
+      const result = batchResults[i];
+      const chapter = batchChapters[i];
+
+      if (result.status === "rejected") {
+        const error = result.reason;
+        log("[Translation]", `========== 챕터 ${chapter.number} 실패 ==========`);
+        log("[Translation]", `에러 상세`, {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+
+        // 에러 메시지 추출
+        let errorMessage = "번역 실패";
+        let errorCode = "UNKNOWN";
+        if (error instanceof TranslationError) {
+          errorMessage = error.message;
+          errorCode = error.code;
+        } else if (error instanceof Error) {
+          errorMessage = error.message;
+        }
+
+        // 상태 되돌리기 (TRANSLATING인 경우에만)
+        await db.chapter.updateMany({
+          where: {
+            id: chapter.id,
+            status: "TRANSLATING",
+          },
+          data: { status: "PENDING" },
+        });
+
+        // 챕터 실패 알림 및 로깅
+        await translationManager.failChapter(jobId, chapter.number, errorMessage);
+        failedChapterNums.push(chapter.number);
+
+        await translationLogger.logChapterFailed(jobId, chapter.number, errorCode, errorMessage, {
+          userId,
+          userEmail,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+    }
+
+    log("[Translation]", `배치 완료: ${batchStart + 1}~${batchStart + batchChapters.length}/${chapters.length}`);
   }
 
   // 작업 완료
