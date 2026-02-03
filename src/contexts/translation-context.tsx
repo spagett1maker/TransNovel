@@ -18,7 +18,7 @@ export interface TranslationJobSummary {
   jobId: string;
   workId: string;
   workTitle: string;
-  status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED";
+  status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED" | "CANCELLED";
   totalChapters: number;
   completedChapters: number;
   failedChapters: number;
@@ -61,7 +61,7 @@ interface TranslationContextType {
     workId: string,
     workTitle: string,
     progress: {
-      status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED";
+      status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
       totalChapters: number;
       completedChapters: number;
       failedChapters: number;
@@ -188,6 +188,14 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 
       // 터미널 상태면 폴링 중지
       if (serverJob.status === "COMPLETED" || serverJob.status === "FAILED" || serverJob.status === "CANCELLED") {
+        // CANCELLED 상태는 Context에서 즉시 제거 (모달 표시 방지)
+        if (serverJob.status === "CANCELLED") {
+          setJobs((prev) => {
+            const newJobs = new Map(prev);
+            newJobs.delete(serverJob.jobId);
+            return newJobs;
+          });
+        }
         router.refresh();
         return false;
       }
@@ -473,7 +481,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       workId: string,
       workTitle: string,
       progress: {
-        status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED";
+        status: "PENDING" | "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED";
         totalChapters: number;
         completedChapters: number;
         failedChapters: number;

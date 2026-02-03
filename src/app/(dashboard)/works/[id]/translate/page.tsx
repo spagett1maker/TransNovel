@@ -171,6 +171,7 @@ function ServerTranslationProgress({
     COMPLETED: { icon: <CheckCircle2 className="h-4 w-4" />, label: "완료", color: "text-status-success" },
     PAUSED: { icon: <Pause className="h-4 w-4" />, label: "일시정지", color: "text-status-warning" },
     FAILED: { icon: <XCircle className="h-4 w-4" />, label: isPartialFailure ? "부분 완료" : "실패", color: isPartialFailure ? "text-status-warning" : "text-status-error" },
+    CANCELLED: { icon: <XCircle className="h-4 w-4" />, label: "취소됨", color: "text-muted-foreground" },
   };
 
   const config = statusConfig[job.status] || statusConfig.PENDING;
@@ -575,8 +576,8 @@ export default function TranslatePage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* 번역 진행 모니터 */}
-          {job && (
+          {/* 번역 진행 모니터 - CANCELLED 상태는 제외 */}
+          {job && job.status !== "CANCELLED" && (
             <ServerTranslationProgress
               job={job}
               onCancel={handleCancel}
