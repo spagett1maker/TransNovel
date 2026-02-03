@@ -135,6 +135,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Work or bible not found" });
     }
 
+    // 클로저에서 사용할 bibleId 저장 (TypeScript null 체크 통과)
+    const bibleId = work.settingBible.id;
+
     // 현재 처리할 배치만 추출 (메모리 최적화)
     const fullBatchPlan = job.batchPlan as number[][];
 
@@ -202,7 +205,7 @@ export async function GET(req: Request) {
       batchesToProcess.map((chapterNumbers, idx) =>
         processBibleBatch(
           job.workId,
-          work.settingBible.id,
+          bibleId,
           chapterNumbers,
           workInfo,
           analyzedChapters
