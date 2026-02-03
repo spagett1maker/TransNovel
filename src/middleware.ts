@@ -13,6 +13,7 @@ const PUBLIC_PATHS = [
 const PUBLIC_API_PATHS = [
   "/api/auth",
   "/api/auth/check-email",
+  "/api/cron",
 ];
 
 export async function middleware(req: NextRequest) {
