@@ -28,7 +28,15 @@ async function releaseLock(jobId: string) {
 export async function GET(req: Request) {
   // Vercel Cron 인증 검증
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const expected = `Bearer ${process.env.CRON_SECRET}`;
+  console.log("[Cron] Auth debug:", {
+    hasAuthHeader: !!authHeader,
+    authHeaderPrefix: authHeader?.substring(0, 15),
+    hasCronSecret: !!process.env.CRON_SECRET,
+    cronSecretLength: process.env.CRON_SECRET?.length,
+    match: authHeader === expected,
+  });
+  if (authHeader !== expected) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
