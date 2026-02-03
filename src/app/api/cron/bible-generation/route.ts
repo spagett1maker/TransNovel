@@ -7,7 +7,7 @@ import { processBibleBatch } from "@/lib/bible-batch-processor";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-// cron 1회 호출당 최대 배치 수 (배치당 ~50초, 4×50=200초 < maxDuration 300초)
+// cron 1회 호출당 최대 배치 수 (배치당 ~30초, 4×30=120초 < maxDuration 300초, 여유분 180초)
 const MAX_BATCHES_PER_INVOCATION = 4;
 // 잠금 만료 시간 (5분)
 const LOCK_STALE_MS = 5 * 60 * 1000;
@@ -22,6 +22,11 @@ async function releaseLock(jobId: string) {
   } catch {
     // 잠금 해제 실패는 무시 (5분 후 자동 만료)
   }
+}
+
+// batchPlan에서 특정 범위의 배치만 추출 (메모리 최적화)
+function extractBatches(batchPlan: number[][], startIndex: number, count: number): number[][] {
+  return batchPlan.slice(startIndex, startIndex + count);
 }
 
 // GET /api/cron/bible-generation — Vercel Cron에 의해 매 분 호출
@@ -40,26 +45,11 @@ export async function GET(req: Request) {
   let lockedJobId: string | null = null;
 
   try {
-    // 처리할 작업 찾기: PENDING 또는 IN_PROGRESS이고 잠금 안 된(또는 만료된) 작업
-    const job = await db.bibleGenerationJob.findFirst({
-      where: {
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-        OR: [
-          { lockedAt: null },
-          { lockedAt: { lt: staleThreshold } },
-        ],
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    if (!job) {
-      return NextResponse.json({ message: "No pending jobs" });
-    }
-
-    // 낙관적 잠금 획득
+    // 원자적 잠금 획득: findFirst + updateMany 대신 한 번에 처리
+    // Race condition 방지를 위해 updateMany로 직접 잠금 시도
     const lockResult = await db.bibleGenerationJob.updateMany({
       where: {
-        id: job.id,
+        status: { in: ["PENDING", "IN_PROGRESS"] },
         OR: [
           { lockedAt: null },
           { lockedAt: { lt: staleThreshold } },
@@ -72,7 +62,31 @@ export async function GET(req: Request) {
     });
 
     if (lockResult.count === 0) {
-      return NextResponse.json({ message: "Job already locked by another instance" });
+      return NextResponse.json({ message: "No pending jobs or all locked" });
+    }
+
+    // 잠금 획득한 job 조회 (lockedBy로 확인)
+    const job = await db.bibleGenerationJob.findFirst({
+      where: {
+        lockedBy: instanceId,
+        status: { in: ["PENDING", "IN_PROGRESS"] },
+      },
+      select: {
+        id: true,
+        workId: true,
+        status: true,
+        batchPlan: true, // 필요한 배치만 추출할 예정
+        totalBatches: true,
+        currentBatchIndex: true,
+        analyzedChapters: true,
+        retryCount: true,
+        maxRetries: true,
+      },
+    });
+
+    if (!job) {
+      // 다른 인스턴스가 먼저 가져갔거나 상태 변경됨
+      return NextResponse.json({ message: "Job acquired by another instance" });
     }
 
     lockedJobId = job.id;
@@ -95,7 +109,15 @@ export async function GET(req: Request) {
     // 작품 메타데이터 조회 (배치 처리에 필요)
     const work = await db.work.findUnique({
       where: { id: job.workId },
-      include: { settingBible: true },
+      select: {
+        titleKo: true,
+        genres: true,
+        synopsis: true,
+        sourceLanguage: true,
+        settingBible: {
+          select: { id: true },
+        },
+      },
     });
 
     if (!work || !work.settingBible) {
@@ -108,11 +130,18 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null; // 이미 해제됨
+      lockedJobId = null;
       return NextResponse.json({ error: "Work or bible not found" });
     }
 
-    const batchPlan = job.batchPlan as number[][];
+    // 현재 처리할 배치만 추출 (메모리 최적화)
+    const fullBatchPlan = job.batchPlan as number[][];
+    const batchesToProcess = extractBatches(
+      fullBatchPlan,
+      job.currentBatchIndex,
+      MAX_BATCHES_PER_INVOCATION
+    );
+
     const workInfo = {
       title: work.titleKo,
       genres: work.genres,
@@ -122,11 +151,11 @@ export async function GET(req: Request) {
 
     let currentIndex = job.currentBatchIndex;
     let analyzedChapters = job.analyzedChapters;
-    let retryCount = job.retryCount; // 로컬 변수로 추적
+    let retryCount = job.retryCount;
     let processedCount = 0;
 
     // 배치 처리 루프
-    for (let i = 0; i < MAX_BATCHES_PER_INVOCATION && currentIndex < batchPlan.length; i++) {
+    for (const chapterNumbers of batchesToProcess) {
       // 취소 여부 확인 (DB에서 최신 상태 재조회)
       const freshJob = await db.bibleGenerationJob.findUnique({
         where: { id: job.id },
@@ -136,8 +165,6 @@ export async function GET(req: Request) {
       if (!freshJob || freshJob.status === "CANCELLED") {
         break;
       }
-
-      const chapterNumbers = batchPlan[currentIndex];
 
       try {
         const result = await processBibleBatch(
@@ -151,9 +178,9 @@ export async function GET(req: Request) {
         analyzedChapters = result.analyzedChapters;
         currentIndex++;
         processedCount++;
-        retryCount = 0; // 성공 시 리셋
+        retryCount = 0;
 
-        // 진행 상황 업데이트 + 잠금 갱신 + 재시도 카운트 리셋
+        // 진행 상황 업데이트 + 잠금 갱신
         await db.bibleGenerationJob.update({
           where: { id: job.id },
           data: {
@@ -161,7 +188,7 @@ export async function GET(req: Request) {
             analyzedChapters,
             retryCount: 0,
             lastError: null,
-            lockedAt: new Date(), // 잠금 갱신
+            lockedAt: new Date(),
           },
         });
       } catch (error) {
@@ -169,12 +196,11 @@ export async function GET(req: Request) {
         retryCount++;
 
         if (retryCount >= job.maxRetries) {
-          // 최대 재시도 초과 → 실패
           await db.bibleGenerationJob.update({
             where: { id: job.id },
             data: {
               status: "FAILED",
-              errorMessage: `배치 ${currentIndex + 1}/${batchPlan.length} 처리 실패 (${job.maxRetries}회 재시도 후): ${errorMsg}`,
+              errorMessage: `배치 ${currentIndex + 1}/${job.totalBatches} 처리 실패 (${job.maxRetries}회 재시도 후): ${errorMsg}`,
               lastError: errorMsg,
               retryCount,
               lockedAt: null,
@@ -189,7 +215,7 @@ export async function GET(req: Request) {
           });
         }
 
-        // 재시도 남음 → 에러 기록하고 잠금 해제 (다음 cron이 재시도)
+        // 재시도 남음 → 에러 기록하고 잠금 해제
         await db.bibleGenerationJob.update({
           where: { id: job.id },
           data: {
@@ -209,7 +235,7 @@ export async function GET(req: Request) {
     }
 
     // 완료 체크
-    if (currentIndex >= batchPlan.length) {
+    if (currentIndex >= job.totalBatches) {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
         data: {
@@ -220,7 +246,7 @@ export async function GET(req: Request) {
         },
       });
     } else {
-      // 잠금 해제 (다음 cron 호출에서 계속)
+      // 잠금 해제
       await db.bibleGenerationJob.update({
         where: { id: job.id },
         data: {
@@ -236,13 +262,12 @@ export async function GET(req: Request) {
       jobId: job.id,
       processedBatches: processedCount,
       currentBatchIndex: currentIndex,
-      totalBatches: batchPlan.length,
-      completed: currentIndex >= batchPlan.length,
+      totalBatches: job.totalBatches,
+      completed: currentIndex >= job.totalBatches,
     });
   } catch (error) {
     console.error("[Cron] Bible generation error:", error);
 
-    // 예외 발생 시 잠금 해제
     if (lockedJobId) {
       await releaseLock(lockedJobId);
     }

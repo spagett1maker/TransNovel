@@ -89,21 +89,46 @@ function mapServerStatus(status: ServerJobStatus["status"]): BibleGenerationJob[
   }
 }
 
+// 폴링 간격 계산 (점진적 증가: 5초 → 10초 → 30초)
+function getPollingInterval(pollCount: number): number {
+  if (pollCount < 12) return 5000;   // 첫 1분: 5초 간격
+  if (pollCount < 24) return 10000;  // 1-3분: 10초 간격
+  return 30000;                       // 이후: 30초 간격
+}
+
 export function BibleGenerationProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<Map<string, BibleGenerationJob>>(new Map());
-  const pollingIntervals = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const pollingTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const pollCounts = useRef<Map<string, number>>(new Map());
   const [cancelRequests] = useState<Set<string>>(new Set());
 
-  // Polling 시작
+  // Polling 정지
+  const stopPolling = useCallback((workId: string) => {
+    const timeout = pollingTimeouts.current.get(workId);
+    if (timeout) {
+      clearTimeout(timeout);
+      pollingTimeouts.current.delete(workId);
+    }
+    pollCounts.current.delete(workId);
+  }, []);
+
+  // Polling 시작 (점진적 간격 증가)
   const startPolling = useCallback(
     (workId: string, workTitle: string, totalChapters: number) => {
       // 이미 polling 중이면 중복 방지
-      if (pollingIntervals.current.has(workId)) return;
+      if (pollingTimeouts.current.has(workId)) return;
+
+      // 폴 카운트 초기화
+      pollCounts.current.set(workId, 0);
 
       const poll = async () => {
         try {
           const res = await fetch(`/api/works/${workId}/setting-bible/status`);
-          if (!res.ok) return;
+          if (!res.ok) {
+            // 에러 시 다음 poll 예약
+            scheduleNextPoll();
+            return;
+          }
           const data = await res.json();
           const serverJob: ServerJobStatus | null = data.job;
 
@@ -143,35 +168,38 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
           // 완료 또는 실패 시 polling 정지
           if (serverJob.status === "COMPLETED" || serverJob.status === "FAILED") {
             stopPolling(workId);
+            return;
           }
+
+          // 다음 poll 예약
+          scheduleNextPoll();
         } catch (err) {
           console.error("[BibleGeneration] Polling error:", err);
+          // 에러 시에도 다음 poll 예약
+          scheduleNextPoll();
         }
       };
 
-      // 즉시 1회 실행 후 3초 간격
-      poll();
-      const interval = setInterval(poll, 3000);
-      pollingIntervals.current.set(workId, interval);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
+      const scheduleNextPoll = () => {
+        const count = pollCounts.current.get(workId) ?? 0;
+        pollCounts.current.set(workId, count + 1);
+        const interval = getPollingInterval(count);
+        const timeout = setTimeout(poll, interval);
+        pollingTimeouts.current.set(workId, timeout);
+      };
 
-  // Polling 정지
-  const stopPolling = useCallback((workId: string) => {
-    const interval = pollingIntervals.current.get(workId);
-    if (interval) {
-      clearInterval(interval);
-      pollingIntervals.current.delete(workId);
-    }
-  }, []);
+      // 즉시 1회 실행
+      poll();
+    },
+    [stopPolling]
+  );
 
   // 클린업
   useEffect(() => {
     return () => {
-      pollingIntervals.current.forEach((interval) => clearInterval(interval));
-      pollingIntervals.current.clear();
+      pollingTimeouts.current.forEach((timeout) => clearTimeout(timeout));
+      pollingTimeouts.current.clear();
+      pollCounts.current.clear();
     };
   }, []);
 
@@ -242,7 +270,6 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
       next.delete(workId);
       return next;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stopPolling]);
 
   // workId로 찾기
