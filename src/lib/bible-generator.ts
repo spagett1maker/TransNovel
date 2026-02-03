@@ -234,78 +234,96 @@ ${chaptersText}
 function repairJson(jsonStr: string): string {
   let repaired = jsonStr.trim();
 
-  // 열린 괄호와 닫힌 괄호 개수 세기
-  let braceCount = 0;  // {}
-  let bracketCount = 0; // []
-  let inString = false;
-  let escaped = false;
+  // 1단계: 괄호 상태 분석
+  function analyzeJson(str: string) {
+    let braceCount = 0;
+    let bracketCount = 0;
+    let inString = false;
+    let escaped = false;
 
-  for (let i = 0; i < repaired.length; i++) {
-    const char = repaired[i];
-
-    if (escaped) {
-      escaped = false;
-      continue;
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i];
+      if (escaped) { escaped = false; continue; }
+      if (char === '\\') { escaped = true; continue; }
+      if (char === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (char === '{') braceCount++;
+      else if (char === '}') braceCount--;
+      else if (char === '[') bracketCount++;
+      else if (char === ']') bracketCount--;
     }
-
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (char === '{') braceCount++;
-    else if (char === '}') braceCount--;
-    else if (char === '[') bracketCount++;
-    else if (char === ']') bracketCount--;
+    return { braceCount, bracketCount, inString };
   }
 
-  log("JSON 복구: 괄호 불균형", { braceCount, bracketCount, inString });
+  let state = analyzeJson(repaired);
+  log("JSON 복구: 초기 상태", state);
 
-  // 문자열이 열려있으면 닫기
-  if (inString) {
+  // 2단계: 열린 문자열 닫기
+  if (state.inString) {
+    // 문자열 끝에 이스케이프되지 않은 따옴표 추가
     repaired += '"';
+    state = analyzeJson(repaired);
+    log("JSON 복구: 문자열 닫음");
   }
 
-  // 마지막이 쉼표면 제거 (trailing comma)
+  // 3단계: 불완전한 key-value 쌍 제거 (": 로 끝나는 경우)
+  repaired = repaired.replace(/,?\s*"[^"]*":\s*$/, '');
+
+  // 4단계: trailing comma 제거
   repaired = repaired.replace(/,\s*$/, '');
 
-  // 불완전한 객체/배열 닫기
-  // 먼저 현재 컨텍스트를 분석해서 닫아야 할 것들 결정
-  const lastChars = repaired.slice(-50);
+  // 5단계: 불완전한 중첩 객체 처리
+  // 마지막 완전한 항목 이후의 불완전한 객체 제거 시도
+  state = analyzeJson(repaired);
 
-  // characters, terms, events 배열이 열려있을 수 있음
-  if (bracketCount > 0 || braceCount > 0) {
-    // 가장 마지막 요소가 불완전한 객체인지 확인
-    const lastBrace = repaired.lastIndexOf('{');
-    const lastCloseBrace = repaired.lastIndexOf('}');
+  if (state.braceCount > 1 || state.bracketCount > 0) {
+    // 불완전한 마지막 객체/배열 찾아서 제거
+    // 가장 마지막 완전한 객체 끝(})을 찾고, 그 이후의 불완전한 부분 제거
+    let lastCompleteIndex = -1;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
 
-    // 열린 객체가 있고 안 닫혔으면 제거하거나 닫기
-    if (lastBrace > lastCloseBrace) {
-      // 불완전한 마지막 객체 제거
-      const beforeLastObject = repaired.lastIndexOf(',', lastBrace);
-      if (beforeLastObject > 0) {
-        repaired = repaired.substring(0, beforeLastObject);
-        log("JSON 복구: 불완전한 마지막 객체 제거");
+    for (let i = 0; i < repaired.length; i++) {
+      const char = repaired[i];
+      if (esc) { esc = false; continue; }
+      if (char === '\\') { esc = true; continue; }
+      if (char === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+
+      if (char === '{' || char === '[') depth++;
+      else if (char === '}' || char === ']') {
+        depth--;
+        if (depth === 1) {
+          // 배열 내 객체가 완전히 닫힘
+          lastCompleteIndex = i;
+        }
+      }
+    }
+
+    // 마지막 완전한 객체 이후에 불완전한 객체가 있으면 제거
+    if (lastCompleteIndex > 0 && lastCompleteIndex < repaired.length - 10) {
+      const afterComplete = repaired.substring(lastCompleteIndex + 1);
+      // 새 객체가 시작됐는데 안 닫혔으면 제거
+      if (afterComplete.includes('{') && !afterComplete.includes('}')) {
+        const cutPoint = repaired.lastIndexOf(',', repaired.indexOf('{', lastCompleteIndex + 1));
+        if (cutPoint > lastCompleteIndex) {
+          repaired = repaired.substring(0, cutPoint);
+          log("JSON 복구: 불완전한 마지막 객체 제거");
+        }
       }
     }
   }
 
-  // 누락된 닫는 괄호 추가
-  for (let i = 0; i < bracketCount; i++) {
-    repaired += ']';
-  }
-  for (let i = 0; i < braceCount; i++) {
-    repaired += '}';
-  }
+  // 6단계: trailing comma 다시 제거
+  repaired = repaired.replace(/,\s*$/, '');
 
-  // 필수 필드가 없으면 추가
+  // 7단계: 누락된 닫는 괄호 추가
+  state = analyzeJson(repaired);
+  for (let i = 0; i < state.bracketCount; i++) repaired += ']';
+  for (let i = 0; i < state.braceCount; i++) repaired += '}';
+
+  // 8단계: 파싱 테스트 및 필수 필드 보장
   try {
     const test = JSON.parse(repaired);
     if (!test.characters) test.characters = [];
@@ -313,9 +331,51 @@ function repairJson(jsonStr: string): string {
     if (!test.events) test.events = [];
     if (!test.translationNotes) test.translationNotes = "";
     return JSON.stringify(test);
-  } catch {
-    // 그래도 실패하면 최소한의 구조 반환 시도
-    log("JSON 복구: 복구 후에도 파싱 실패, 기본 구조 반환");
+  } catch (e) {
+    log("JSON 복구: 1차 복구 실패, 공격적 복구 시도");
+
+    // 9단계: 공격적 복구 - 마지막 완전한 배열 항목까지만 유지
+    try {
+      // characters, terms, events 배열을 개별적으로 추출 시도
+      const charactersMatch = repaired.match(/"characters"\s*:\s*\[([\s\S]*?)\](?=\s*,?\s*"(?:terms|events|translationNotes)")/);
+      const termsMatch = repaired.match(/"terms"\s*:\s*\[([\s\S]*?)\](?=\s*,?\s*"(?:events|translationNotes)")/);
+      const eventsMatch = repaired.match(/"events"\s*:\s*\[([\s\S]*?)\](?=\s*,?\s*"translationNotes")/);
+      const notesMatch = repaired.match(/"translationNotes"\s*:\s*"([^"]*)"/);
+
+      const result: Record<string, unknown> = {
+        characters: [],
+        terms: [],
+        events: [],
+        translationNotes: notesMatch ? notesMatch[1] : ""
+      };
+
+      // 각 배열 파싱 시도
+      if (charactersMatch) {
+        try {
+          result.characters = JSON.parse('[' + charactersMatch[1] + ']');
+        } catch { /* 빈 배열 유지 */ }
+      }
+      if (termsMatch) {
+        try {
+          result.terms = JSON.parse('[' + termsMatch[1] + ']');
+        } catch { /* 빈 배열 유지 */ }
+      }
+      if (eventsMatch) {
+        try {
+          result.events = JSON.parse('[' + eventsMatch[1] + ']');
+        } catch { /* 빈 배열 유지 */ }
+      }
+
+      log("JSON 복구: 공격적 복구 성공", {
+        characters: (result.characters as unknown[]).length,
+        terms: (result.terms as unknown[]).length,
+        events: (result.events as unknown[]).length
+      });
+
+      return JSON.stringify(result);
+    } catch {
+      log("JSON 복구: 공격적 복구도 실패");
+    }
   }
 
   return repaired;
