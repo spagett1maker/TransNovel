@@ -25,18 +25,6 @@ interface GenerationProgressProps {
   onComplete: () => void | Promise<void>;
 }
 
-// 서버 작업 상태
-interface JobStatus {
-  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
-  totalBatches: number;
-  currentBatchIndex: number;
-  analyzedChapters: number;
-  errorMessage?: string | null;
-  lastError?: string | null;
-}
-
-const POLL_INTERVAL_MS = 3000;
-
 export function GenerationProgress({
   workId,
   workTitle,
@@ -45,58 +33,23 @@ export function GenerationProgress({
   onOpenChange,
   onComplete,
 }: GenerationProgressProps) {
-  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
-  const [stats, setStats] = useState<{ characters: number; terms: number; events: number } | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
   const hasCompletedRef = useRef(false);
 
-  const { registerJob, cancelGeneration } = useBibleGeneration();
+  const { registerJob, cancelGeneration, getJobByWorkId, stopPolling } = useBibleGeneration();
 
-  // Polling 시작
-  const startPolling = useCallback(() => {
-    if (pollRef.current) return;
+  // Context에서 job 상태 가져오기 (context가 polling)
+  const job = getJobByWorkId(workId);
 
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/works/${workId}/setting-bible/status`);
-        if (!res.ok) return;
-        const data = await res.json();
-
-        if (data.stats) setStats(data.stats);
-
-        const serverJob = data.job as JobStatus | null;
-        if (!serverJob) return;
-
-        setJobStatus(serverJob);
-
-        if (serverJob.status === "COMPLETED" && !hasCompletedRef.current) {
-          hasCompletedRef.current = true;
-          stopPolling();
-          toast.success("설정집 생성이 완료되었습니다!");
-          await onComplete();
-        } else if (serverJob.status === "FAILED") {
-          stopPolling();
-        } else if (serverJob.status === "CANCELLED") {
-          stopPolling();
-        }
-      } catch {
-        // 네트워크 에러 무시 (다음 poll에서 재시도)
-      }
-    };
-
-    poll();
-    pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workId, onComplete]);
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+  // 완료 감지
+  useEffect(() => {
+    if (job?.status === "completed" && !hasCompletedRef.current) {
+      hasCompletedRef.current = true;
+      toast.success("설정집 생성이 완료되었습니다!");
+      onComplete();
     }
-  }, []);
+  }, [job?.status, onComplete]);
 
   // 생성 시작
   const startGeneration = useCallback(async () => {
@@ -113,9 +66,7 @@ export function GenerationProgress({
         await onComplete();
         return;
       }
-
-      // polling 시작
-      startPolling();
+      // registerJob 내부에서 startPolling 호출됨
     } catch (err) {
       const msg = err instanceof Error ? err.message : "작업 생성에 실패했습니다.";
       setLocalError(msg);
@@ -123,46 +74,37 @@ export function GenerationProgress({
     } finally {
       setIsStarting(false);
     }
-  }, [workId, workTitle, totalChapters, registerJob, startPolling, onComplete]);
+  }, [workId, workTitle, totalChapters, registerJob, onComplete]);
 
   // 다이얼로그 열리면 자동 시작
   useEffect(() => {
-    if (open && !jobStatus && !isStarting) {
+    if (open && !job && !isStarting && !localError) {
       startGeneration();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 다이얼로그 닫힐 때 polling 정지 + 상태 초기화
+  // 다이얼로그 닫힐 때 (job은 계속 진행됨, polling도 context에서 계속)
   useEffect(() => {
     if (!open) {
-      stopPolling();
-      // 완료/실패 상태가 아닐 때만 초기화 (닫아도 서버에서 계속 처리됨)
-      if (jobStatus?.status !== "COMPLETED" && jobStatus?.status !== "FAILED") {
-        // 초기화하지 않음 — 다시 열면 polling 재개
+      // 완료/실패 시에만 상태 리셋
+      if (job?.status === "completed" || job?.status === "failed") {
+        hasCompletedRef.current = false;
       }
     }
-  }, [open, jobStatus?.status, stopPolling]);
-
-  // 클린업
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
+  }, [open, job?.status]);
 
   const handleCancel = async () => {
-    stopPolling();
     await cancelGeneration(workId);
     toast.info("설정집 생성이 취소되었습니다.");
     onOpenChange(false);
   };
 
-  const isActive = jobStatus?.status === "PENDING" || jobStatus?.status === "IN_PROGRESS";
-  const isCompleted = jobStatus?.status === "COMPLETED";
-  const isFailed = jobStatus?.status === "FAILED";
+  const isActive = job?.status === "generating";
+  const isCompleted = job?.status === "completed";
+  const isFailed = job?.status === "failed";
 
-  const progressPercent = jobStatus && jobStatus.totalBatches > 0
-    ? Math.round((jobStatus.currentBatchIndex / jobStatus.totalBatches) * 100)
-    : 0;
+  const progressPercent = job?.progress ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -178,7 +120,7 @@ export function GenerationProgress({
             {isFailed && (
               <XCircle className="h-5 w-5 text-destructive" />
             )}
-            {!jobStatus && !isStarting && !localError && (
+            {!job && !isStarting && !localError && (
               <Sparkles className="h-5 w-5 text-primary" />
             )}
             {localError && (
@@ -192,18 +134,18 @@ export function GenerationProgress({
             {isCompleted && "설정집 생성이 완료되었습니다."}
             {isFailed && "설정집 생성에 실패했습니다."}
             {localError && localError}
-            {!jobStatus && !isStarting && !localError && "설정집 생성을 준비 중입니다..."}
+            {!job && !isStarting && !localError && "설정집 생성을 준비 중입니다..."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="py-4 space-y-4">
           {/* 진행률 바 */}
-          {jobStatus && (
+          {job && (
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span>분석 진행률</span>
                 <span className="tabular-nums">
-                  {jobStatus.currentBatchIndex}/{jobStatus.totalBatches} 배치 ({progressPercent}%)
+                  {job.currentBatch}/{job.totalBatches} 배치 ({progressPercent}%)
                 </span>
               </div>
               <Progress value={progressPercent} className="h-2" />
@@ -211,28 +153,28 @@ export function GenerationProgress({
           )}
 
           {/* 분석 상태 */}
-          {jobStatus && (
+          {job && (
             <div className="flex justify-between text-sm text-muted-foreground">
               <span>분석된 회차</span>
               <span className="tabular-nums">
-                {jobStatus.analyzedChapters}/{totalChapters}화
+                {job.analyzedChapters}/{totalChapters}화
               </span>
             </div>
           )}
 
           {/* 통계 */}
-          {stats && (
+          {job?.stats && (
             <div className="grid grid-cols-3 gap-2 p-3 bg-muted rounded-lg">
               <div className="text-center">
-                <div className="text-lg font-semibold">{stats.characters}</div>
+                <div className="text-lg font-semibold">{job.stats.characters}</div>
                 <div className="text-xs text-muted-foreground">인물</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-semibold">{stats.terms}</div>
+                <div className="text-lg font-semibold">{job.stats.terms}</div>
                 <div className="text-xs text-muted-foreground">용어</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-semibold">{stats.events}</div>
+                <div className="text-lg font-semibold">{job.stats.events}</div>
                 <div className="text-xs text-muted-foreground">이벤트</div>
               </div>
             </div>
@@ -250,7 +192,7 @@ export function GenerationProgress({
           {(isFailed || localError) && (
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
               <p className="font-medium">
-                {jobStatus?.errorMessage || jobStatus?.lastError || localError}
+                {job?.error || localError}
               </p>
             </div>
           )}
