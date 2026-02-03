@@ -18,10 +18,10 @@ export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 // 병렬 처리할 챕터 수 (AI 호출을 병렬로 실행하여 처리 속도 향상)
-// 5개 병렬: Rate Limit 15 RPM의 1/3 사용 (대형 챕터 청크 처리 여유 확보)
-// 5000회차 기준: 5000 ÷ 5 = 1000분 ≈ 17시간
-// maxDuration=300초 내에 안전하게 완료 가능
-const PARALLEL_CHAPTER_COUNT = 5;
+// Gemini Rate Limit: 1500 RPM → 10개/분은 0.7%만 사용
+// 평균 2000자 챕터 기준: 10개 × ~25초 = 병렬로 ~30초, maxDuration 300초 내 여유
+// 5000회차 기준: 5000 ÷ 10 = 500분 ≈ 8시간
+const PARALLEL_CHAPTER_COUNT = 10;
 // 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
