@@ -157,77 +157,56 @@ interface WorkInfo {
   sourceLanguage: string;
 }
 
-// 설정집 분석 프롬프트 생성
+// 설정집 분석 프롬프트 생성 (JSON 모드 최적화)
 function buildBibleAnalysisPrompt(
   workInfo: WorkInfo,
   chaptersText: string,
   chapterRange: { start: number; end: number }
 ): string {
-  return `당신은 웹소설 설정 분석 전문가입니다. 아래 작품의 ${chapterRange.start}~${chapterRange.end}화 내용을 분석하여 번역에 필요한 설정집(Setting Bible)을 생성해주세요.
+  return `웹소설 번역용 설정집 추출. ${chapterRange.start}~${chapterRange.end}화 분석.
 
-═══════════════════════════════════════════════════════════════
-[작품 정보]
-제목: ${workInfo.title}
-장르: ${workInfo.genres.join(", ")}
-원작 언어: ${workInfo.sourceLanguage}
-줄거리: ${workInfo.synopsis}
-═══════════════════════════════════════════════════════════════
+[작품] ${workInfo.title} | ${workInfo.genres.join(", ")} | ${workInfo.sourceLanguage}
+${workInfo.synopsis ? `줄거리: ${workInfo.synopsis.slice(0, 200)}` : ""}
 
-[분석 요청]
-아래 원문을 읽고 다음 정보를 JSON 형식으로 추출해주세요:
-
-1. **characters** (인물): 등장인물 정보
-   - nameOriginal: 원문 이름 (필수)
-   - nameKorean: 한국어 번역명 (필수)
-   - nameHanja: 한자 표기 (있는 경우)
-   - titles: 직위/칭호 배열
-   - aliases: 별명/이명 배열
-   - personality: 성격 특성
-   - speechStyle: 말투 특징 (번역 시 참고)
-   - role: 역할 (PROTAGONIST, ANTAGONIST, SUPPORTING, MINOR 중 하나)
-   - description: 인물 설명
-   - relationships: 관계 정보 (키: 다른 인물명, 값: 관계 설명)
-   - firstAppearance: 첫 등장 회차 번호
-
-2. **terms** (용어): 번역이 필요한 고유 용어
-   - original: 원문 (필수)
-   - translated: 한국어 번역 (필수)
-   - category: 분류 (CHARACTER, PLACE, ORGANIZATION, RANK_TITLE, SKILL_TECHNIQUE, ITEM, OTHER 중 하나)
-   - note: 번역 시 참고사항
-   - context: 용어가 사용되는 맥락
-   - firstAppearance: 첫 등장 회차 번호
-
-3. **events** (이벤트): 주요 사건 및 복선
-   - title: 이벤트 제목 (필수)
-   - description: 상세 설명 (필수)
-   - chapterStart: 시작 회차 (필수)
-   - chapterEnd: 종료 회차 (진행 중이면 null)
-   - eventType: 유형 (PLOT, CHARACTER_DEV, FORESHADOWING, REVEAL, WORLD_BUILDING 중 하나)
-   - importance: 중요도 (1-5, 5가 가장 중요)
-   - isForeshadowing: 복선 여부
-   - foreshadowNote: 복선 관련 메모 (나중에 밝혀질 내용 힌트)
-   - involvedCharacters: 관련 인물 원문명 배열
-
-4. **translationNotes** (번역 가이드): 전체적인 번역 방향 및 주의사항
-
-═══════════════════════════════════════════════════════════════
-[분석 대상 원문 - ${chapterRange.start}~${chapterRange.end}화]
-═══════════════════════════════════════════════════════════════
-
+[원문]
 ${chaptersText}
 
-═══════════════════════════════════════════════════════════════
-[출력 형식]
-반드시 아래 JSON 형식으로만 출력하세요. 다른 설명 없이 JSON만 출력합니다.
-
-\`\`\`json
+[추출 스키마]
 {
-  "characters": [...],
-  "terms": [...],
-  "events": [...],
-  "translationNotes": "..."
-}
-\`\`\``;
+  "characters": [{
+    "nameOriginal": "원문명(필수)",
+    "nameKorean": "한국어명(필수)",
+    "nameHanja": "한자(선택)",
+    "titles": ["직위/칭호"],
+    "aliases": ["별명"],
+    "personality": "성격",
+    "speechStyle": "말투특징",
+    "role": "PROTAGONIST|ANTAGONIST|SUPPORTING|MINOR",
+    "description": "설명",
+    "relationships": {"인물명": "관계"},
+    "firstAppearance": 회차번호
+  }],
+  "terms": [{
+    "original": "원문(필수)",
+    "translated": "번역(필수)",
+    "category": "PLACE|ORGANIZATION|RANK_TITLE|SKILL_TECHNIQUE|ITEM|OTHER",
+    "note": "참고사항",
+    "context": "맥락",
+    "firstAppearance": 회차번호
+  }],
+  "events": [{
+    "title": "제목(필수)",
+    "description": "설명(필수)",
+    "chapterStart": 시작회차,
+    "chapterEnd": 종료회차,
+    "eventType": "PLOT|CHARACTER_DEV|FORESHADOWING|REVEAL|WORLD_BUILDING",
+    "importance": 1-5,
+    "isForeshadowing": true/false,
+    "foreshadowNote": "복선메모",
+    "involvedCharacters": ["인물원문명"]
+  }],
+  "translationNotes": "번역 시 주의사항"
+}`;
 }
 
 // 불완전한 JSON 복구 시도
@@ -519,7 +498,8 @@ async function tryAnalyzeWithModel(
             temperature: 0.3,
             topP: 0.85,
             topK: 40,
-            maxOutputTokens: 65536, // Gemini 2.5 Flash 최대 출력
+            maxOutputTokens: 16384, // 실측 기반: 배치당 ~1,600토큰, 최악 ~3,400토큰
+            responseMimeType: "application/json", // JSON 모드: 유효한 JSON만 출력
           },
         }),
         180000, // 3분 타임아웃 (Vercel Pro)

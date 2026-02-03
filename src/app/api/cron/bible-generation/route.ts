@@ -8,8 +8,8 @@ export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 // 병렬 처리할 배치 수 (AI 호출을 병렬로 실행하여 처리 속도 향상)
-// 2개 병렬로 DB 쓰기 충돌 최소화하면서 속도 2배 향상
-const PARALLEL_BATCH_COUNT = 2;
+// 3개 병렬: JSON 모드로 안정성 확보 + 속도 3배 향상
+const PARALLEL_BATCH_COUNT = 3;
 // 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
