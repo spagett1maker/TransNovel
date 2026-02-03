@@ -7,8 +7,8 @@ import { processBibleBatch } from "@/lib/bible-batch-processor";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-// cron 1회 호출당 최대 배치 수 (배치당 ~40초, 6×40=240초 < maxDuration 300초)
-const MAX_BATCHES_PER_INVOCATION = 6;
+// cron 1회 호출당 최대 배치 수 (배치당 ~50초, 4×50=200초 < maxDuration 300초)
+const MAX_BATCHES_PER_INVOCATION = 4;
 // 잠금 만료 시간 (5분)
 const LOCK_STALE_MS = 5 * 60 * 1000;
 
