@@ -7,8 +7,9 @@ import { processBibleBatch } from "@/lib/bible-batch-processor";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-// cron 1회 호출당 최대 배치 수 (배치당 ~30초, 4×30=120초 < maxDuration 300초, 여유분 180초)
-const MAX_BATCHES_PER_INVOCATION = 4;
+// 병렬 처리할 배치 수 (AI 호출을 병렬로 실행하여 처리 속도 향상)
+// 2개 병렬로 DB 쓰기 충돌 최소화하면서 속도 2배 향상
+const PARALLEL_BATCH_COUNT = 2;
 // 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -155,7 +156,7 @@ export async function GET(req: Request) {
     const batchesToProcess = extractBatches(
       fullBatchPlan,
       job.currentBatchIndex,
-      MAX_BATCHES_PER_INVOCATION
+      PARALLEL_BATCH_COUNT
     );
 
     // 처리할 배치가 없으면 완료 처리
@@ -183,84 +184,110 @@ export async function GET(req: Request) {
     let currentIndex = job.currentBatchIndex;
     let analyzedChapters = job.analyzedChapters;
     let retryCount = job.retryCount;
-    let processedCount = 0;
 
-    // 배치 처리 루프
-    for (const chapterNumbers of batchesToProcess) {
-      // 취소 여부 확인 (DB에서 최신 상태 재조회)
-      const freshJob = await db.bibleGenerationJob.findUnique({
-        where: { id: job.id },
-        select: { status: true },
-      });
+    // 취소 여부 확인 (병렬 처리 전 1회만)
+    const freshJob = await db.bibleGenerationJob.findUnique({
+      where: { id: job.id },
+      select: { status: true },
+    });
 
-      if (!freshJob || freshJob.status === "CANCELLED") {
-        break;
-      }
+    if (!freshJob || freshJob.status === "CANCELLED") {
+      await releaseLock(job.id);
+      lockedJobId = null;
+      return NextResponse.json({ message: "Job cancelled" });
+    }
 
-      try {
-        const result = await processBibleBatch(
+    // 배치 병렬 처리 (AI 호출 병목 해소)
+    const batchResults = await Promise.allSettled(
+      batchesToProcess.map((chapterNumbers, idx) =>
+        processBibleBatch(
           job.workId,
           work.settingBible.id,
           chapterNumbers,
           workInfo,
           analyzedChapters
+        ).then((result) => ({ idx, result, chapterNumbers }))
+      )
+    );
+
+    // 결과 처리
+    let successCount = 0;
+    let lastError: string | null = null;
+    let maxAnalyzedChapters = analyzedChapters;
+
+    for (const batchResult of batchResults) {
+      if (batchResult.status === "fulfilled") {
+        successCount++;
+        maxAnalyzedChapters = Math.max(
+          maxAnalyzedChapters,
+          batchResult.value.result.analyzedChapters
         );
+      } else {
+        lastError = batchResult.reason instanceof Error
+          ? batchResult.reason.message
+          : String(batchResult.reason);
+      }
+    }
 
-        analyzedChapters = result.analyzedChapters;
-        currentIndex++;
-        processedCount++;
-        retryCount = 0;
+    currentIndex += successCount;
+    analyzedChapters = maxAnalyzedChapters;
+    const processedCount = successCount;
 
-        // 진행 상황 업데이트 + 잠금 갱신
+    // 일부 또는 전체 성공 시 진행 상황 업데이트
+    if (successCount > 0) {
+      await db.bibleGenerationJob.update({
+        where: { id: job.id },
+        data: {
+          currentBatchIndex: currentIndex,
+          analyzedChapters,
+          retryCount: 0,
+          lastError: null,
+          lockedAt: new Date(),
+        },
+      });
+      retryCount = 0;
+    }
+
+    // 일부 실패 시 에러 처리 (다음 cron에서 재시도)
+    if (lastError && successCount < batchesToProcess.length) {
+      retryCount++;
+
+      if (retryCount >= job.maxRetries) {
         await db.bibleGenerationJob.update({
           where: { id: job.id },
           data: {
-            currentBatchIndex: currentIndex,
-            analyzedChapters,
-            retryCount: 0,
-            lastError: null,
-            lockedAt: new Date(),
-          },
-        });
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        retryCount++;
-
-        if (retryCount >= job.maxRetries) {
-          await db.bibleGenerationJob.update({
-            where: { id: job.id },
-            data: {
-              status: "FAILED",
-              errorMessage: `배치 ${currentIndex + 1}/${job.totalBatches} 처리 실패 (${job.maxRetries}회 재시도 후): ${errorMsg}`,
-              lastError: errorMsg,
-              retryCount,
-              lockedAt: null,
-              lockedBy: null,
-            },
-          });
-          lockedJobId = null;
-          return NextResponse.json({
-            error: "Job failed after max retries",
-            jobId: job.id,
-            failedBatch: currentIndex,
-          });
-        }
-
-        // 재시도 남음 → 에러 기록하고 잠금 해제
-        await db.bibleGenerationJob.update({
-          where: { id: job.id },
-          data: {
+            status: "FAILED",
+            errorMessage: `배치 처리 실패 (${job.maxRetries}회 재시도 후): ${lastError}`,
+            lastError,
             retryCount,
-            lastError: errorMsg,
             lockedAt: null,
             lockedBy: null,
           },
         });
         lockedJobId = null;
         return NextResponse.json({
-          message: `Batch failed, will retry (${retryCount}/${job.maxRetries})`,
+          error: "Job failed after max retries",
           jobId: job.id,
-          error: errorMsg,
+          processedBatches: successCount,
+        });
+      }
+
+      // 성공한 배치가 없으면 재시도 카운트 증가
+      if (successCount === 0) {
+        await db.bibleGenerationJob.update({
+          where: { id: job.id },
+          data: {
+            retryCount,
+            lastError,
+            lockedAt: null,
+            lockedBy: null,
+          },
+        });
+        lockedJobId = null;
+        return NextResponse.json({
+          message: `All batches failed, will retry (${retryCount}/${job.maxRetries})`,
+          jobId: job.id,
+          error: lastError,
         });
       }
     }
