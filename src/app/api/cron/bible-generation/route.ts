@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 // cron 1회 호출당 최대 배치 수 (배치당 ~30초, 4×30=120초 < maxDuration 300초, 여유분 180초)
 const MAX_BATCHES_PER_INVOCATION = 4;
-// 잠금 만료 시간 (5분)
-const LOCK_STALE_MS = 5 * 60 * 1000;
+// 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
+const LOCK_STALE_MS = 10 * 60 * 1000;
 
 // 잠금 해제 헬퍼 (에러 무시)
 async function releaseLock(jobId: string) {
@@ -20,7 +20,7 @@ async function releaseLock(jobId: string) {
       data: { lockedAt: null, lockedBy: null },
     });
   } catch {
-    // 잠금 해제 실패는 무시 (5분 후 자동 만료)
+    // 잠금 해제 실패는 무시 (10분 후 자동 만료)
   }
 }
 
@@ -136,11 +136,42 @@ export async function GET(req: Request) {
 
     // 현재 처리할 배치만 추출 (메모리 최적화)
     const fullBatchPlan = job.batchPlan as number[][];
+
+    // batchPlan 유효성 검증
+    if (!Array.isArray(fullBatchPlan) || fullBatchPlan.length === 0) {
+      await db.bibleGenerationJob.update({
+        where: { id: job.id },
+        data: {
+          status: "FAILED",
+          errorMessage: "배치 계획이 비어있거나 유효하지 않습니다.",
+          lockedAt: null,
+          lockedBy: null,
+        },
+      });
+      lockedJobId = null;
+      return NextResponse.json({ error: "Invalid batch plan" });
+    }
+
     const batchesToProcess = extractBatches(
       fullBatchPlan,
       job.currentBatchIndex,
       MAX_BATCHES_PER_INVOCATION
     );
+
+    // 처리할 배치가 없으면 완료 처리
+    if (batchesToProcess.length === 0) {
+      await db.bibleGenerationJob.update({
+        where: { id: job.id },
+        data: {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          lockedAt: null,
+          lockedBy: null,
+        },
+      });
+      lockedJobId = null;
+      return NextResponse.json({ message: "Job already completed", jobId: job.id });
+    }
 
     const workInfo = {
       title: work.titleKo,

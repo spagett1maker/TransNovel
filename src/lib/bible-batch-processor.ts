@@ -62,26 +62,35 @@ export async function processBibleBatch(
   );
 
   // ── 1. 캐릭터 처리 ──
-  const existingChars = await db.character.findMany({
-    where: { bibleId },
-    select: {
-      id: true,
-      nameOriginal: true,
-      nameKorean: true,
-      nameHanja: true,
-      titles: true,
-      aliases: true,
-      personality: true,
-      speechStyle: true,
-      role: true,
-      description: true,
-      relationships: true,
-      firstAppearance: true,
-      sortOrder: true,
-    },
-  });
+  // 메모리 최적화: 현재 배치 결과에 해당하는 캐릭터만 조회
+  const charNamesToCheck = analysisResult.characters.map((c) => c.nameOriginal).filter(Boolean);
+  const existingChars = charNamesToCheck.length > 0
+    ? await db.character.findMany({
+        where: { bibleId, nameOriginal: { in: charNamesToCheck } },
+        select: {
+          id: true,
+          nameOriginal: true,
+          nameKorean: true,
+          nameHanja: true,
+          titles: true,
+          aliases: true,
+          personality: true,
+          speechStyle: true,
+          role: true,
+          description: true,
+          relationships: true,
+          firstAppearance: true,
+          sortOrder: true,
+        },
+      })
+    : [];
   const charMap = new Map(existingChars.map((c) => [c.nameOriginal, c]));
-  let maxSortOrder = existingChars.reduce((max, c) => Math.max(max, c.sortOrder), -1);
+  // 최대 sortOrder는 새 캐릭터 추가 시에만 필요, 별도 쿼리로 가져오기
+  const maxSortOrderResult = await db.character.aggregate({
+    where: { bibleId },
+    _max: { sortOrder: true },
+  });
+  let maxSortOrder = maxSortOrderResult._max.sortOrder ?? -1;
 
   const charsToUpdate: Array<{ id: string; data: Prisma.CharacterUpdateInput }> = [];
   const charsToCreate: Prisma.CharacterCreateManyInput[] = [];
@@ -137,18 +146,22 @@ export async function processBibleBatch(
   }
 
   // ── 2. 용어 처리 ──
-  const existingTerms = await db.settingTerm.findMany({
-    where: { bibleId },
-    select: {
-      id: true,
-      original: true,
-      translated: true,
-      category: true,
-      note: true,
-      context: true,
-      firstAppearance: true,
-    },
-  });
+  // 메모리 최적화: 현재 배치 결과에 해당하는 용어만 조회
+  const termOriginalsToCheck = analysisResult.terms.map((t) => t.original).filter(Boolean);
+  const existingTerms = termOriginalsToCheck.length > 0
+    ? await db.settingTerm.findMany({
+        where: { bibleId, original: { in: termOriginalsToCheck } },
+        select: {
+          id: true,
+          original: true,
+          translated: true,
+          category: true,
+          note: true,
+          context: true,
+          firstAppearance: true,
+        },
+      })
+    : [];
   const termMap = new Map(existingTerms.map((t) => [t.original, t]));
 
   const termsToUpdate: Array<{ id: string; data: Prisma.SettingTermUpdateInput }> = [];
@@ -193,21 +206,34 @@ export async function processBibleBatch(
   }
 
   // ── 3. 이벤트 처리 ──
-  const existingEvents = await db.timelineEvent.findMany({
-    where: { bibleId },
-    select: {
-      id: true,
-      title: true,
-      description: true,
-      chapterStart: true,
-      chapterEnd: true,
-      eventType: true,
-      importance: true,
-      isForeshadowing: true,
-      foreshadowNote: true,
-      involvedCharacterIds: true,
-    },
-  });
+  // 메모리 최적화: 현재 배치 결과에 해당하는 이벤트만 조회
+  // 이벤트는 title + chapterStart 조합으로 식별, OR 조건으로 조회
+  const eventKeysToCheck = analysisResult.events
+    .filter((e) => e.title && e.chapterStart)
+    .map((e) => ({ title: e.title, chapterStart: e.chapterStart }));
+  const existingEvents = eventKeysToCheck.length > 0
+    ? await db.timelineEvent.findMany({
+        where: {
+          bibleId,
+          OR: eventKeysToCheck.map((k) => ({
+            title: k.title,
+            chapterStart: k.chapterStart,
+          })),
+        },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          chapterStart: true,
+          chapterEnd: true,
+          eventType: true,
+          importance: true,
+          isForeshadowing: true,
+          foreshadowNote: true,
+          involvedCharacterIds: true,
+        },
+      })
+    : [];
   const eventMap = new Map(existingEvents.map((e) => [`${e.title}_${e.chapterStart}`, e]));
 
   const eventsToUpdate: Array<{ id: string; data: Prisma.TimelineEventUpdateInput }> = [];
@@ -280,12 +306,19 @@ export async function processBibleBatch(
     data: { status: "BIBLE_DRAFT" },
   });
 
+  // 최종 통계를 위한 count 쿼리 (메모리 효율적)
+  const [charCount, termCount, eventCount] = await Promise.all([
+    db.character.count({ where: { bibleId } }),
+    db.settingTerm.count({ where: { bibleId } }),
+    db.timelineEvent.count({ where: { bibleId } }),
+  ]);
+
   return {
     analyzedChapters: newAnalyzedChapters,
     stats: {
-      characters: existingChars.length + charsToCreate.length,
-      terms: existingTerms.length + termsToCreate.length,
-      events: existingEvents.length + eventsToCreate.length,
+      characters: charCount,
+      terms: termCount,
+      events: eventCount,
     },
   };
 }

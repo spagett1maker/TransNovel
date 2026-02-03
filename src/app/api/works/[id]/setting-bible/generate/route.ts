@@ -97,7 +97,7 @@ export async function POST(
 
     const batchPlan = getOptimalBatchPlan(chapterNumbers);
 
-    // 작업 생성
+    // 작업 생성 (maxRetries=5로 설정하여 일시적 오류에 대한 복원력 강화)
     const job = await db.bibleGenerationJob.create({
       data: {
         workId: id,
@@ -105,6 +105,7 @@ export async function POST(
         batchPlan: batchPlan,
         totalBatches: batchPlan.length,
         analyzedChapters: analyzedUpTo,
+        maxRetries: 5,
       },
     });
 
