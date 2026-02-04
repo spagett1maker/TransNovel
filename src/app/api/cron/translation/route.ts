@@ -18,12 +18,12 @@ export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 // 병렬 처리할 챕터 수 (AI 호출을 병렬로 실행하여 처리 속도 향상)
-// Gemini Rate Limit: 1500 RPM → 10개/분은 0.7%만 사용
-// 평균 2000자 챕터 기준: 10개 × ~25초 = 병렬로 ~30초, maxDuration 300초 내 여유
-// 5000회차 기준: 5000 ÷ 10 = 500분 ≈ 8시간
-const PARALLEL_CHAPTER_COUNT = 10;
+// Gemini Rate Limit: 800 RPM (사용 한도) → 3 작업 × 50 챕터 = 150/분 (안전 마진 확보)
+const PARALLEL_CHAPTER_COUNT = 50;
 // 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
 const LOCK_STALE_MS = 10 * 60 * 1000;
+// 한 번의 Cron 호출에서 처리할 최대 작업 수 (다중 사용자 지원)
+const MAX_CONCURRENT_JOBS = 5;
 
 // 타임스탬프 로그 헬퍼
 function log(prefix: string, message: string, data?: object) {
@@ -198,62 +198,26 @@ async function translateSingleChapter(
   }
 }
 
-// GET /api/cron/translation — Vercel Cron에 의해 매 분 호출
-export async function GET(req: Request) {
-  // Vercel Cron 인증 검증
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+// 단일 번역 작업 처리 결과
+interface SingleJobResult {
+  jobId: string;
+  success: boolean;
+  message: string;
+  processedChapters?: number;
+  currentBatchIndex?: number;
+  totalBatches?: number;
+}
 
-  const instanceId = randomUUID();
-  const now = new Date();
-  const staleThreshold = new Date(now.getTime() - LOCK_STALE_MS);
-
-  let lockedJobId: string | null = null;
-
+// 단일 번역 작업 처리 함수
+async function processSingleTranslationJob(
+  jobId: string,
+  instanceId: string,
+  now: Date
+): Promise<SingleJobResult> {
   try {
-    // 먼저 잠금 가능한 작업 하나를 조회
-    const candidateJob = await db.activeTranslationJob.findFirst({
-      where: {
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-        OR: [
-          { lockedAt: null },
-          { lockedAt: { lt: staleThreshold } },
-        ],
-      },
-      select: { jobId: true },
-      orderBy: { startedAt: "asc" }, // 오래된 작업 우선
-    });
-
-    if (!candidateJob) {
-      return NextResponse.json({ message: "No pending jobs or all locked" });
-    }
-
-    // 해당 작업에 대해서만 원자적 잠금 시도
-    const lockResult = await db.activeTranslationJob.updateMany({
-      where: {
-        jobId: candidateJob.jobId,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-        OR: [
-          { lockedAt: null },
-          { lockedAt: { lt: staleThreshold } },
-        ],
-      },
-      data: {
-        lockedAt: now,
-        lockedBy: instanceId,
-      },
-    });
-
-    if (lockResult.count === 0) {
-      // 다른 인스턴스가 먼저 잠금을 획득함
-      return NextResponse.json({ message: "Job acquired by another instance" });
-    }
-
     // 잠금 획득한 job 상세 조회
     const job = await db.activeTranslationJob.findUnique({
-      where: { jobId: candidateJob.jobId },
+      where: { jobId },
       select: {
         id: true,
         jobId: true,
@@ -273,10 +237,9 @@ export async function GET(req: Request) {
     });
 
     if (!job) {
-      return NextResponse.json({ message: "Job not found after lock" });
+      return { jobId, success: false, message: "Job not found after lock" };
     }
 
-    lockedJobId = job.jobId;
     log("[Cron Translation]", "작업 획득", { jobId: job.jobId, currentBatch: job.currentBatchIndex, totalBatches: job.totalBatches });
 
     // batchPlan 유효성 검증
@@ -291,8 +254,7 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
-      return NextResponse.json({ error: "Invalid batch plan" });
+      return { jobId, success: false, message: "Invalid batch plan" };
     }
 
     // PENDING → IN_PROGRESS 전환
@@ -341,8 +303,7 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
-      return NextResponse.json({ error: "Work not found" });
+      return { jobId, success: false, message: "Work not found" };
     }
 
     // 번역 컨텍스트 생성
@@ -430,14 +391,13 @@ export async function GET(req: Request) {
         where: { jobId: job.jobId },
         data: { lockedAt: null, lockedBy: null },
       });
-      lockedJobId = null;
 
-      return NextResponse.json({
+      return {
+        jobId,
+        success: true,
         message: "Large chapters processed",
-        jobId: job.jobId,
-        completedLargeChapters: completedCount,
-        stillInProgress: stillPartialCount,
-      });
+        processedChapters: completedCount,
+      };
     }
 
     // ========== 일반 배치 처리 ==========
@@ -458,12 +418,11 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
 
       // Work 상태 업데이트
       await updateWorkStatusAfterCompletion(job.workId);
 
-      return NextResponse.json({ message: "Job completed", jobId: job.jobId });
+      return { jobId, success: true, message: "Job completed" };
     }
 
     // 취소 여부 확인
@@ -474,8 +433,7 @@ export async function GET(req: Request) {
 
     if (!freshJob || freshJob.status === "CANCELLED") {
       await releaseLock(job.jobId);
-      lockedJobId = null;
-      return NextResponse.json({ message: "Job cancelled" });
+      return { jobId, success: false, message: "Job cancelled" };
     }
 
     // 일시정지 확인
@@ -494,8 +452,7 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
-      return NextResponse.json({ message: "Job paused" });
+      return { jobId, success: true, message: "Job paused" };
     }
 
     // 챕터 ID 조회 (배치의 챕터 번호로)
@@ -603,11 +560,12 @@ export async function GET(req: Request) {
             lockedBy: null,
           },
         });
-        lockedJobId = null;
-        return NextResponse.json({
-          error: "Job failed after max retries",
-          jobId: job.jobId,
-        });
+        return {
+          jobId,
+          success: false,
+          message: "Job failed after max retries",
+          processedChapters: 0,
+        };
       }
     }
 
@@ -645,14 +603,13 @@ export async function GET(req: Request) {
             lockedBy: null,
           },
         });
-        lockedJobId = null;
 
-        return NextResponse.json({
-          message: "Auto-retry started for failed chapters",
-          jobId: job.jobId,
-          retryingChapters: newFailedChapters,
-          autoRetryCount: autoRetryCount + 1,
-        });
+        return {
+          jobId,
+          success: true,
+          message: `Auto-retry started (${autoRetryCount + 1}/${maxAutoRetries})`,
+          processedChapters: successCount,
+        };
       }
 
       // 자동 재시도 소진 또는 실패 챕터 없음 → 완료 처리
@@ -665,22 +622,20 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
 
       // Work 상태 업데이트
       await updateWorkStatusAfterCompletion(job.workId);
 
       const finalMessage = newFailedChapters.length > 0
-        ? `Job completed with ${newFailedChapters.length} failed chapters (after ${autoRetryCount} auto-retries)`
-        : "Job completed successfully";
+        ? `Completed with ${newFailedChapters.length} failed chapters`
+        : "Completed successfully";
 
-      return NextResponse.json({
+      return {
+        jobId,
+        success: true,
         message: finalMessage,
-        jobId: job.jobId,
-        completedChapters: newCompletedChapters,
-        failedChapters: newFailedChapters.length,
-        autoRetriesUsed: autoRetryCount,
-      });
+        processedChapters: newCompletedChapters,
+      };
     }
 
     // 잠금 해제
@@ -691,21 +646,110 @@ export async function GET(req: Request) {
         lockedBy: null,
       },
     });
-    lockedJobId = null;
 
-    return NextResponse.json({
-      message: "OK",
-      jobId: job.jobId,
+    return {
+      jobId,
+      success: true,
+      message: "in_progress",
       processedChapters: successCount + failCount,
       currentBatchIndex: newCurrentBatchIndex,
       totalBatches: job.totalBatches,
+    };
+
+  } catch (error) {
+    await releaseLock(jobId);
+    throw error;
+  }
+}
+
+// GET /api/cron/translation — Vercel Cron에 의해 매 분 호출
+export async function GET(req: Request) {
+  // Vercel Cron 인증 검증
+  const authHeader = req.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const instanceId = randomUUID();
+  const now = new Date();
+  const staleThreshold = new Date(now.getTime() - LOCK_STALE_MS);
+
+  const lockedJobIds: string[] = [];
+
+  try {
+    // 여러 작업을 동시에 획득 (최대 MAX_CONCURRENT_JOBS개)
+    for (let i = 0; i < MAX_CONCURRENT_JOBS; i++) {
+      const candidateJob = await db.activeTranslationJob.findFirst({
+        where: {
+          status: { in: ["PENDING", "IN_PROGRESS"] },
+          OR: [
+            { lockedAt: null },
+            { lockedAt: { lt: staleThreshold } },
+          ],
+          jobId: { notIn: lockedJobIds }, // 이미 획득한 작업 제외
+        },
+        select: { jobId: true },
+        orderBy: { startedAt: "asc" }, // 오래된 작업 우선
+      });
+
+      if (!candidateJob) break;
+
+      // 원자적 잠금 시도
+      const lockResult = await db.activeTranslationJob.updateMany({
+        where: {
+          jobId: candidateJob.jobId,
+          status: { in: ["PENDING", "IN_PROGRESS"] },
+          OR: [
+            { lockedAt: null },
+            { lockedAt: { lt: staleThreshold } },
+          ],
+        },
+        data: {
+          lockedAt: now,
+          lockedBy: instanceId,
+        },
+      });
+
+      if (lockResult.count > 0) {
+        lockedJobIds.push(candidateJob.jobId);
+      }
+    }
+
+    if (lockedJobIds.length === 0) {
+      return NextResponse.json({ message: "No pending jobs or all locked" });
+    }
+
+    log("[Cron Translation]", `작업 ${lockedJobIds.length}개 획득`, { jobIds: lockedJobIds });
+
+    // 모든 작업 병렬 처리
+    const results = await Promise.allSettled(
+      lockedJobIds.map((jobId) => processSingleTranslationJob(jobId, instanceId, now))
+    );
+
+    // 결과 집계
+    const summary = results.map((r, i) => {
+      if (r.status === "fulfilled") {
+        return r.value;
+      } else {
+        return { jobId: lockedJobIds[i], success: false, message: String(r.reason) };
+      }
+    });
+
+    const successCount = summary.filter((s) => s.success).length;
+
+    return NextResponse.json({
+      message: "OK",
+      totalJobs: lockedJobIds.length,
+      successCount,
+      results: summary,
     });
 
   } catch (error) {
     console.error("[Cron Translation] Error:", error);
 
-    if (lockedJobId) {
-      await releaseLock(lockedJobId);
+    // 모든 잠금 해제
+    for (const jobId of lockedJobIds) {
+      await releaseLock(jobId);
     }
 
     return NextResponse.json(

@@ -8,10 +8,11 @@ export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 // 병렬 처리할 배치 수 (AI 호출을 병렬로 실행하여 처리 속도 향상)
-// 3개 병렬: JSON 모드로 안정성 확보 + 속도 3배 향상
 const PARALLEL_BATCH_COUNT = 3;
 // 잠금 만료 시간 (10분) - AI 응답 지연 시에도 충분한 여유
 const LOCK_STALE_MS = 10 * 60 * 1000;
+// 한 번의 Cron 호출에서 처리할 최대 작업 수 (다중 사용자 지원)
+const MAX_CONCURRENT_JOBS = 3;
 
 // 잠금 해제 헬퍼 (에러 무시)
 async function releaseLock(jobId: string) {
@@ -30,63 +31,15 @@ function extractBatches(batchPlan: number[][], startIndex: number, count: number
   return batchPlan.slice(startIndex, startIndex + count);
 }
 
-// GET /api/cron/bible-generation — Vercel Cron에 의해 매 분 호출
-export async function GET(req: Request) {
-  // Vercel Cron 인증 검증
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const instanceId = randomUUID();
-  const now = new Date();
-  const staleThreshold = new Date(now.getTime() - LOCK_STALE_MS);
-
-  // 잠금 획득한 job ID (예외 발생 시 해제용)
-  let lockedJobId: string | null = null;
-
+// 단일 작업 처리 함수
+async function processSingleJob(
+  jobId: string,
+  instanceId: string
+): Promise<{ jobId: string; success: boolean; message: string; processedBatches?: number }> {
   try {
-    // 먼저 잠금 가능한 작업 하나를 조회
-    const candidateJob = await db.bibleGenerationJob.findFirst({
-      where: {
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-        OR: [
-          { lockedAt: null },
-          { lockedAt: { lt: staleThreshold } },
-        ],
-      },
-      select: { id: true },
-      orderBy: { createdAt: "asc" }, // 오래된 작업 우선
-    });
-
-    if (!candidateJob) {
-      return NextResponse.json({ message: "No pending jobs or all locked" });
-    }
-
-    // 해당 작업에 대해서만 원자적 잠금 시도
-    const lockResult = await db.bibleGenerationJob.updateMany({
-      where: {
-        id: candidateJob.id,
-        status: { in: ["PENDING", "IN_PROGRESS"] },
-        OR: [
-          { lockedAt: null },
-          { lockedAt: { lt: staleThreshold } },
-        ],
-      },
-      data: {
-        lockedAt: now,
-        lockedBy: instanceId,
-      },
-    });
-
-    if (lockResult.count === 0) {
-      // 다른 인스턴스가 먼저 잠금을 획득함
-      return NextResponse.json({ message: "Job acquired by another instance" });
-    }
-
     // 잠금 획득한 job 상세 조회
     const job = await db.bibleGenerationJob.findUnique({
-      where: { id: candidateJob.id },
+      where: { id: jobId },
       select: {
         id: true,
         workId: true,
@@ -101,19 +54,14 @@ export async function GET(req: Request) {
     });
 
     if (!job) {
-      return NextResponse.json({ message: "Job not found after lock" });
+      return { jobId, success: false, message: "Job not found after lock" };
     }
-
-    lockedJobId = job.id;
 
     // PENDING → IN_PROGRESS 전환
     if (job.status === "PENDING") {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
-        data: {
-          status: "IN_PROGRESS",
-          startedAt: now,
-        },
+        data: { status: "IN_PROGRESS", startedAt: new Date() },
       });
       await db.work.update({
         where: { id: job.workId },
@@ -121,7 +69,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // 작품 메타데이터 조회 (배치 처리에 필요)
+    // 작품 메타데이터 조회
     const work = await db.work.findUnique({
       where: { id: job.workId },
       select: {
@@ -129,9 +77,7 @@ export async function GET(req: Request) {
         genres: true,
         synopsis: true,
         sourceLanguage: true,
-        settingBible: {
-          select: { id: true },
-        },
+        settingBible: { select: { id: true } },
       },
     });
 
@@ -145,17 +91,12 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
-      return NextResponse.json({ error: "Work or bible not found" });
+      return { jobId, success: false, message: "Work or bible not found" };
     }
 
-    // 클로저에서 사용할 bibleId 저장 (TypeScript null 체크 통과)
     const bibleId = work.settingBible.id;
-
-    // 현재 처리할 배치만 추출 (메모리 최적화)
     const fullBatchPlan = job.batchPlan as number[][];
 
-    // batchPlan 유효성 검증
     if (!Array.isArray(fullBatchPlan) || fullBatchPlan.length === 0) {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
@@ -166,29 +107,17 @@ export async function GET(req: Request) {
           lockedBy: null,
         },
       });
-      lockedJobId = null;
-      return NextResponse.json({ error: "Invalid batch plan" });
+      return { jobId, success: false, message: "Invalid batch plan" };
     }
 
-    const batchesToProcess = extractBatches(
-      fullBatchPlan,
-      job.currentBatchIndex,
-      PARALLEL_BATCH_COUNT
-    );
+    const batchesToProcess = extractBatches(fullBatchPlan, job.currentBatchIndex, PARALLEL_BATCH_COUNT);
 
-    // 처리할 배치가 없으면 완료 처리
     if (batchesToProcess.length === 0) {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          lockedAt: null,
-          lockedBy: null,
-        },
+        data: { status: "COMPLETED", completedAt: new Date(), lockedAt: null, lockedBy: null },
       });
-      lockedJobId = null;
-      return NextResponse.json({ message: "Job already completed", jobId: job.id });
+      return { jobId, success: true, message: "Job already completed" };
     }
 
     const workInfo = {
@@ -198,11 +127,7 @@ export async function GET(req: Request) {
       sourceLanguage: work.sourceLanguage,
     };
 
-    let currentIndex = job.currentBatchIndex;
-    let analyzedChapters = job.analyzedChapters;
-    let retryCount = job.retryCount;
-
-    // 취소 여부 확인 (병렬 처리 전 1회만)
+    // 취소 여부 확인
     const freshJob = await db.bibleGenerationJob.findUnique({
       where: { id: job.id },
       select: { status: true },
@@ -210,62 +135,44 @@ export async function GET(req: Request) {
 
     if (!freshJob || freshJob.status === "CANCELLED") {
       await releaseLock(job.id);
-      lockedJobId = null;
-      return NextResponse.json({ message: "Job cancelled" });
+      return { jobId, success: false, message: "Job cancelled" };
     }
 
-    // 배치 병렬 처리 (AI 호출 병목 해소)
+    // 배치 병렬 처리
     const batchResults = await Promise.allSettled(
-      batchesToProcess.map((chapterNumbers, idx) =>
-        processBibleBatch(
-          job.workId,
-          bibleId,
-          chapterNumbers,
-          workInfo,
-          analyzedChapters
-        ).then((result) => ({ idx, result, chapterNumbers }))
+      batchesToProcess.map((chapterNumbers) =>
+        processBibleBatch(job.workId, bibleId, chapterNumbers, workInfo, job.analyzedChapters)
       )
     );
 
     // 결과 처리
     let successCount = 0;
     let lastError: string | null = null;
-    let maxAnalyzedChapters = analyzedChapters;
+    let maxAnalyzedChapters = job.analyzedChapters;
 
     for (const batchResult of batchResults) {
       if (batchResult.status === "fulfilled") {
         successCount++;
-        maxAnalyzedChapters = Math.max(
-          maxAnalyzedChapters,
-          batchResult.value.result.analyzedChapters
-        );
+        maxAnalyzedChapters = Math.max(maxAnalyzedChapters, batchResult.value.analyzedChapters);
       } else {
-        lastError = batchResult.reason instanceof Error
-          ? batchResult.reason.message
-          : String(batchResult.reason);
+        lastError = batchResult.reason instanceof Error ? batchResult.reason.message : String(batchResult.reason);
       }
     }
 
-    currentIndex += successCount;
-    analyzedChapters = maxAnalyzedChapters;
-    const processedCount = successCount;
+    const currentIndex = job.currentBatchIndex + successCount;
+    const analyzedChapters = maxAnalyzedChapters;
+    let retryCount = job.retryCount;
 
     // 일부 또는 전체 성공 시 진행 상황 업데이트
     if (successCount > 0) {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
-        data: {
-          currentBatchIndex: currentIndex,
-          analyzedChapters,
-          retryCount: 0,
-          lastError: null,
-          lockedAt: new Date(),
-        },
+        data: { currentBatchIndex: currentIndex, analyzedChapters, retryCount: 0, lastError: null, lockedAt: new Date() },
       });
       retryCount = 0;
     }
 
-    // 일부 실패 시 에러 처리 (다음 cron에서 재시도)
+    // 일부 실패 시 에러 처리
     if (lastError && successCount < batchesToProcess.length) {
       retryCount++;
 
@@ -281,31 +188,15 @@ export async function GET(req: Request) {
             lockedBy: null,
           },
         });
-        lockedJobId = null;
-        return NextResponse.json({
-          error: "Job failed after max retries",
-          jobId: job.id,
-          processedBatches: successCount,
-        });
+        return { jobId, success: false, message: "Job failed after max retries", processedBatches: successCount };
       }
 
-      // 성공한 배치가 없으면 재시도 카운트 증가
       if (successCount === 0) {
         await db.bibleGenerationJob.update({
           where: { id: job.id },
-          data: {
-            retryCount,
-            lastError,
-            lockedAt: null,
-            lockedBy: null,
-          },
+          data: { retryCount, lastError, lockedAt: null, lockedBy: null },
         });
-        lockedJobId = null;
-        return NextResponse.json({
-          message: `All batches failed, will retry (${retryCount}/${job.maxRetries})`,
-          jobId: job.id,
-          error: lastError,
-        });
+        return { jobId, success: false, message: `Will retry (${retryCount}/${job.maxRetries})` };
       }
     }
 
@@ -313,38 +204,105 @@ export async function GET(req: Request) {
     if (currentIndex >= job.totalBatches) {
       await db.bibleGenerationJob.update({
         where: { id: job.id },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          lockedAt: null,
-          lockedBy: null,
-        },
+        data: { status: "COMPLETED", completedAt: new Date(), lockedAt: null, lockedBy: null },
       });
     } else {
-      // 잠금 해제
       await db.bibleGenerationJob.update({
         where: { id: job.id },
-        data: {
-          lockedAt: null,
-          lockedBy: null,
-        },
+        data: { lockedAt: null, lockedBy: null },
       });
     }
-    lockedJobId = null;
+
+    return {
+      jobId,
+      success: true,
+      message: currentIndex >= job.totalBatches ? "completed" : "in_progress",
+      processedBatches: successCount,
+    };
+  } catch (error) {
+    await releaseLock(jobId);
+    throw error;
+  }
+}
+
+// GET /api/cron/bible-generation — Vercel Cron에 의해 매 분 호출
+export async function GET(req: Request) {
+  // Vercel Cron 인증 검증
+  const authHeader = req.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const instanceId = randomUUID();
+  const now = new Date();
+  const staleThreshold = new Date(now.getTime() - LOCK_STALE_MS);
+
+  const lockedJobIds: string[] = [];
+
+  try {
+    // 여러 작업을 동시에 획득 (최대 MAX_CONCURRENT_JOBS개)
+    for (let i = 0; i < MAX_CONCURRENT_JOBS; i++) {
+      const candidateJob = await db.bibleGenerationJob.findFirst({
+        where: {
+          status: { in: ["PENDING", "IN_PROGRESS"] },
+          OR: [{ lockedAt: null }, { lockedAt: { lt: staleThreshold } }],
+          id: { notIn: lockedJobIds }, // 이미 획득한 작업 제외
+        },
+        select: { id: true },
+        orderBy: { createdAt: "asc" },
+      });
+
+      if (!candidateJob) break;
+
+      // 원자적 잠금 시도
+      const lockResult = await db.bibleGenerationJob.updateMany({
+        where: {
+          id: candidateJob.id,
+          status: { in: ["PENDING", "IN_PROGRESS"] },
+          OR: [{ lockedAt: null }, { lockedAt: { lt: staleThreshold } }],
+        },
+        data: { lockedAt: now, lockedBy: instanceId },
+      });
+
+      if (lockResult.count > 0) {
+        lockedJobIds.push(candidateJob.id);
+      }
+    }
+
+    if (lockedJobIds.length === 0) {
+      return NextResponse.json({ message: "No pending jobs or all locked" });
+    }
+
+    console.log(`[Cron Bible] 작업 ${lockedJobIds.length}개 획득:`, lockedJobIds);
+
+    // 모든 작업 병렬 처리
+    const results = await Promise.allSettled(
+      lockedJobIds.map((jobId) => processSingleJob(jobId, instanceId))
+    );
+
+    // 결과 집계
+    const summary = results.map((r, i) => {
+      if (r.status === "fulfilled") {
+        return r.value;
+      } else {
+        return { jobId: lockedJobIds[i], success: false, message: String(r.reason) };
+      }
+    });
+
+    const successCount = summary.filter((s) => s.success).length;
 
     return NextResponse.json({
       message: "OK",
-      jobId: job.id,
-      processedBatches: processedCount,
-      currentBatchIndex: currentIndex,
-      totalBatches: job.totalBatches,
-      completed: currentIndex >= job.totalBatches,
+      totalJobs: lockedJobIds.length,
+      successCount,
+      results: summary,
     });
   } catch (error) {
     console.error("[Cron] Bible generation error:", error);
 
-    if (lockedJobId) {
-      await releaseLock(lockedJobId);
+    // 모든 잠금 해제
+    for (const jobId of lockedJobIds) {
+      await releaseLock(jobId);
     }
 
     return NextResponse.json(
