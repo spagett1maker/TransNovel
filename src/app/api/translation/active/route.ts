@@ -11,16 +11,16 @@ export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session) {
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
     }
 
-    // 모든 작업 조회 (활성 + 최근 완료/실패)
-    const jobs = await translationManager.getAllJobs();
+    // 현재 사용자의 활성 작업만 조회
+    const jobs = await translationManager.getActiveJobsByUserId(session.user.id);
 
     console.log("[Translation Active API] 작업 목록 조회:", {
+      userId: session.user.id,
       totalJobs: jobs.length,
-      activeJobs: jobs.filter((j) => j.status === "IN_PROGRESS" || j.status === "PENDING").length,
     });
 
     return NextResponse.json({ jobs });
