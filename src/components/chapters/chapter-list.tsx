@@ -36,6 +36,7 @@ interface Chapter {
   id: string;
   number: number;
   title: string | null;
+  translatedTitle: string | null;
   status: ChapterStatus | string;
   wordCount: number;
 }
@@ -132,9 +133,9 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
                     )}>
                       {chapter.number}화
                     </span>
-                    {chapter.title && (
+                    {(chapter.translatedTitle || chapter.title) && (
                       <span className="text-muted-foreground truncate">
-                        {chapter.title}
+                        {chapter.translatedTitle || chapter.title}
                       </span>
                     )}
                   </div>

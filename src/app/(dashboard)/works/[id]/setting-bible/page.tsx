@@ -398,7 +398,7 @@ export default function SettingBiblePage() {
     }
   };
 
-  const isReadOnly = bible?.status === "CONFIRMED";
+  const isConfirmed = bible?.status === "CONFIRMED";
 
   if (isLoading) {
     return (
@@ -607,35 +607,33 @@ export default function SettingBiblePage() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {bible.status !== "CONFIRMED" && (
-              isGenerating ? (
+            {isGenerating ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  cancelGeneration(workId);
+                  toast.info("설정집 생성이 취소되었습니다.");
+                }}
+              >
+                <StopCircle className="mr-2 h-4 w-4" />
+                생성 취소
+              </Button>
+            ) : (
+              <>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    cancelGeneration(workId);
-                    toast.info("설정집 생성이 취소되었습니다.");
-                  }}
+                  onClick={() => setShowGenerationProgress(true)}
                 >
-                  <StopCircle className="mr-2 h-4 w-4" />
-                  생성 취소
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  재분석
                 </Button>
-              ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowGenerationProgress(true)}
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    재분석
-                  </Button>
-                  <Button onClick={() => setShowConfirmDialog(true)}>
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                    설정집 확정
-                  </Button>
-                </>
-              )
+                <Button onClick={() => setShowConfirmDialog(true)}>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  {isConfirmed ? "용어집 재동기화" : "설정집 확정"}
+                </Button>
+              </>
             )}
-            {bible.status === "CONFIRMED" && (
+            {isConfirmed && (
               <Button asChild>
                 <Link href={`/works/${workId}/translate`}>
                   번역 시작하기
@@ -671,12 +669,12 @@ export default function SettingBiblePage() {
         </div>
       </div>
 
-      {/* Read-only Warning */}
-      {isReadOnly && (
-        <div className="p-4 mb-6 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-3">
-          <CheckCircle2 className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-          <p className="text-sm text-amber-800 dark:text-amber-300">
-            설정집이 확정되어 수정할 수 없습니다. 번역 시 이 설정이 자동 적용됩니다.
+      {/* Confirmed Info */}
+      {isConfirmed && (
+        <div className="p-4 mb-6 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+          <p className="text-sm text-emerald-800 dark:text-emerald-300">
+            설정집이 확정되었습니다. 수정 후 &quot;용어집 재동기화&quot; 버튼을 눌러 번역에 반영하세요.
           </p>
         </div>
       )}
@@ -746,7 +744,7 @@ export default function SettingBiblePage() {
                     character={char}
                     onEdit={setEditingCharacter}
                     onDelete={setDeletingCharacterId}
-                    readOnly={isReadOnly}
+                    readOnly={false}
                   />
                 ))}
               </div>
@@ -797,7 +795,7 @@ export default function SettingBiblePage() {
                 terms={terms.items}
                 onEdit={setEditingTerm}
                 onDelete={setDeletingTermId}
-                readOnly={isReadOnly}
+                readOnly={false}
               />
               <PaginationControls
                 page={termPage}
@@ -833,36 +831,28 @@ export default function SettingBiblePage() {
           <div className="section-surface p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold">번역 가이드</h3>
-              {!isReadOnly && (
-                <Button
-                  size="sm"
-                  onClick={handleSaveGuide}
-                  disabled={isSavingGuide || !guideDirty}
-                >
-                  {isSavingGuide ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  저장
-                </Button>
-              )}
+              <Button
+                size="sm"
+                onClick={handleSaveGuide}
+                disabled={isSavingGuide || !guideDirty}
+              >
+                {isSavingGuide ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                저장
+              </Button>
             </div>
-            {isReadOnly ? (
-              <div className="prose prose-sm max-w-none text-muted-foreground whitespace-pre-wrap">
-                {bible.translationGuide || "등록된 번역 가이드가 없습니다."}
-              </div>
-            ) : (
-              <Textarea
-                value={guideText}
-                onChange={(e) => {
-                  setGuideText(e.target.value);
-                  setGuideDirty(true);
-                }}
-                placeholder="AI가 생성한 번역 가이드가 여기에 표시됩니다. 수정이 필요하면 직접 편집할 수 있습니다."
-                className="min-h-[300px]"
-              />
-            )}
+            <Textarea
+              value={guideText}
+              onChange={(e) => {
+                setGuideText(e.target.value);
+                setGuideDirty(true);
+              }}
+              placeholder="AI가 생성한 번역 가이드가 여기에 표시됩니다. 수정이 필요하면 직접 편집할 수 있습니다."
+              className="min-h-[300px]"
+            />
           </div>
         </TabsContent>
       </Tabs>

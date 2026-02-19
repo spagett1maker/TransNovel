@@ -40,6 +40,7 @@ interface Chapter {
   id: string;
   number: number;
   title: string | null;
+  translatedTitle: string | null;
   status: string;
   wordCount: number;
 }
@@ -111,7 +112,7 @@ const ChapterCell = memo(function ChapterCell({
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-xs">
-          <p className="font-medium">{chapter.title || `${chapter.number}화`}</p>
+          <p className="font-medium">{chapter.translatedTitle || chapter.title || `${chapter.number}화`}</p>
           <p className="text-muted-foreground">
             {chapter.wordCount.toLocaleString()}자 ·{" "}
             {chapter.status === "PENDING" ? "대기" :
@@ -791,9 +792,9 @@ export default function TranslatePage() {
                         </span>
                         <span
                           className="flex-1 text-sm truncate"
-                          title={chapter.title || `제 ${chapter.number}화`}
+                          title={chapter.translatedTitle || chapter.title || `제 ${chapter.number}화`}
                         >
-                          {chapter.title || `제 ${chapter.number}화`}
+                          {chapter.translatedTitle || chapter.title || `제 ${chapter.number}화`}
                         </span>
                         <span className="text-xs text-muted-foreground tabular-nums">
                           {chapter.wordCount.toLocaleString()}자

@@ -232,13 +232,6 @@ export async function PATCH(
       return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
     }
 
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "확정된 설정집은 수정할 수 없습니다." },
-        { status: 400 }
-      );
-    }
-
     const body = await req.json();
     const { translationGuide } = body;
 

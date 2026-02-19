@@ -1,0 +1,23 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+crash.log
+crash.*.log
+
+# Secrets
+*.pem
+*.key
+
+# Build artifacts
+*.zip
+placeholder.zip
+
+# IDE
+.idea/
+*.swp
+*.swo

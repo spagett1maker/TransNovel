@@ -42,6 +42,7 @@ interface ChapterSummary {
   id: string;
   number: number;
   title: string | null;
+  translatedTitle: string | null;
   status: ChapterStatus;
   wordCount: number;
 }
@@ -572,14 +573,14 @@ export default function ReviewPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium truncate">
                         {chapter.number}화
-                        {chapter.title && (
+                        {(chapter.translatedTitle || chapter.title) && (
                           <span
                             className={cn(
                               "font-normal ml-1",
                               isSelected ? "opacity-70" : "text-muted-foreground"
                             )}
                           >
-                            {chapter.title}
+                            {chapter.translatedTitle || chapter.title}
                           </span>
                         )}
                       </p>

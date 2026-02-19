@@ -48,3 +48,10 @@ next-env.d.ts
 
 # claude
 .claude/
+
+# Terraform sensitive files
+infrastructure/terraform/terraform.tfvars
+infrastructure/terraform/*.tfstate*
+infrastructure/terraform/.terraform/
+infrastructure/lambda/*/deployment/
+infrastructure/lambda/*/deployment.zip

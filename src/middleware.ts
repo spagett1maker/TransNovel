@@ -13,8 +13,11 @@ const PUBLIC_PATHS = [
 const PUBLIC_API_PATHS = [
   "/api/auth",
   "/api/auth/check-email",
-  "/api/cron",
 ];
+
+// 인증을 건너뛸 정적 파일 확장자 (보안: 와일드카드 대신 명시적 목록)
+const STATIC_FILE_EXTENSIONS =
+  /\.(ico|png|jpg|jpeg|gif|svg|webp|css|js|woff|woff2|ttf|eot|map)$/;
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -23,7 +26,7 @@ export async function middleware(req: NextRequest) {
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    STATIC_FILE_EXTENSIONS.test(pathname)
   ) {
     return NextResponse.next();
   }

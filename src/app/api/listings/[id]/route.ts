@@ -68,6 +68,22 @@ export async function GET(
       data: { viewCount: { increment: 1 } },
     });
 
+    // 번역된 첫 3화 미리보기
+    const previewChapters = await db.chapter.findMany({
+      where: {
+        workId: listing.work.id,
+        translatedContent: { not: null },
+      },
+      select: {
+        number: true,
+        title: true,
+        translatedTitle: true,
+        translatedContent: true,
+      },
+      orderBy: { number: "asc" },
+      take: 3,
+    });
+
     // Check if the current user (editor) has already applied
     let myApplication: { id: string; status: string } | null = null;
     let hasEditorProfile = false;
@@ -90,7 +106,7 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ listing, myApplication, hasEditorProfile });
+    return NextResponse.json({ listing, myApplication, hasEditorProfile, previewChapters });
   } catch (error) {
     console.error("Error fetching listing:", error);
     return NextResponse.json(

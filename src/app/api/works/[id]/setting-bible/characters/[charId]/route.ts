@@ -85,14 +85,6 @@ export async function PATCH(
       return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
     }
 
-    // 확정된 설정집은 수정 불가
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "확정된 설정집은 수정할 수 없습니다." },
-        { status: 400 }
-      );
-    }
-
     const character = await db.character.findUnique({
       where: { id: charId },
     });
@@ -157,14 +149,6 @@ export async function DELETE(
 
     if (!work.settingBible) {
       return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
-    }
-
-    // 확정된 설정집은 삭제 불가
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "확정된 설정집은 수정할 수 없습니다." },
-        { status: 400 }
-      );
     }
 
     const character = await db.character.findUnique({

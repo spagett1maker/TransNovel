@@ -73,9 +73,9 @@ function ChapterEditorContent() {
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-semibold tracking-tight">
                 {chapter.number}화
-                {chapter.title && (
+                {(chapter.translatedTitle || chapter.title) && (
                   <span className="text-muted-foreground ml-2 font-normal">
-                    {chapter.title}
+                    {chapter.translatedTitle || chapter.title}
                   </span>
                 )}
               </h1>

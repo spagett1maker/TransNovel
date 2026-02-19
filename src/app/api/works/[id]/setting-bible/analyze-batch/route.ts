@@ -44,13 +44,6 @@ export async function POST(
       );
     }
 
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "이미 확정된 설정집입니다." },
-        { status: 400 }
-      );
-    }
-
     const body = await req.json();
     const { chapterNumbers } = requestSchema.parse(body);
 

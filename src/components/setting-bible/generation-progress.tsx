@@ -48,8 +48,9 @@ export function GenerationProgress({
       hasCompletedRef.current = true;
       toast.success("설정집 생성이 완료되었습니다!");
       onComplete();
+      onOpenChange(false);
     }
-  }, [job?.status, onComplete]);
+  }, [job?.status, onComplete, onOpenChange]);
 
   // 생성 시작
   const startGeneration = useCallback(async () => {

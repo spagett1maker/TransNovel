@@ -22,6 +22,7 @@ export interface Chapter {
   id: string;
   number: number;
   title: string | null;
+  translatedTitle: string | null;
   originalContent: string;
   translatedContent: string | null;
   editedContent: string | null;

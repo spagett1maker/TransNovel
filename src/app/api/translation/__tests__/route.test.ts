@@ -23,8 +23,6 @@ vi.mock("@prisma/client", () => ({
 // translation-manager mock (vi.hoisted로 호이스팅 문제 해결)
 const { mockTranslationManager } = vi.hoisted(() => ({
   mockTranslationManager: {
-    reserveJobSlot: vi.fn(),
-    releaseJobSlot: vi.fn(),
     createJob: vi.fn(),
     startJob: vi.fn(),
     completeJob: vi.fn(),
@@ -63,16 +61,11 @@ vi.mock("@/lib/gemini", () => ({
   },
 }));
 
-// next/server의 after()를 no-op으로 mock
-vi.mock("next/server", async (importOriginal) => {
-  const original = await importOriginal<typeof import("next/server")>();
-  return {
-    ...original,
-    after: vi.fn((fn: () => void) => {
-      // 테스트에서는 백그라운드 처리를 실행하지 않음
-    }),
-  };
-});
+// SQS queue mock
+vi.mock("@/lib/queue", () => ({
+  enqueueBatchTranslation: vi.fn().mockResolvedValue(undefined),
+  isQueueEnabled: vi.fn().mockReturnValue(true),
+}));
 
 import { POST } from "../route";
 
@@ -80,9 +73,7 @@ describe("POST /api/translation", () => {
   beforeEach(() => {
     resetMockDb();
     mockGetServerSession.mockReset();
-    mockTranslationManager.reserveJobSlot.mockReset();
     mockTranslationManager.createJob.mockReset();
-    mockTranslationManager.releaseJobSlot.mockReset();
   });
 
   it("미인증 시 401을 반환한다", async () => {
@@ -203,7 +194,6 @@ describe("POST /api/translation", () => {
         glossary: [],
       })
     );
-    mockTranslationManager.reserveJobSlot.mockResolvedValue(true);
     mockDb.chapter.findMany
       .mockResolvedValueOnce([]) // 번역 가능 챕터 없음
       .mockResolvedValueOnce([{ number: 1, status: "TRANSLATED" }]); // 실제 상태 조회
@@ -293,7 +283,13 @@ describe("POST /api/translation", () => {
         glossary: [],
       })
     );
-    mockTranslationManager.reserveJobSlot.mockResolvedValue(false);
+
+    const chapters = [
+      buildChapter({ id: "ch-1", number: 1, originalContent: "내용" }),
+    ];
+    mockDb.chapter.findMany.mockResolvedValue(chapters);
+    mockDb.chapter.updateMany.mockResolvedValue({ count: 0 });
+    mockTranslationManager.createJob.mockResolvedValue(null); // 중복 — null 반환
 
     const req = createRequest("http://localhost:3000/api/translation", {
       method: "POST",
@@ -316,8 +312,6 @@ describe("POST /api/translation", () => {
         glossary: [],
       })
     );
-    mockTranslationManager.reserveJobSlot.mockResolvedValue(true);
-
     const chapters = [
       buildChapter({ id: "ch-1", number: 1, originalContent: "내용" }),
     ];

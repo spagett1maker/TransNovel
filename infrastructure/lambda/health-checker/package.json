@@ -1,0 +1,22 @@
+{
+  "name": "transnovel-health-checker",
+  "version": "1.0.0",
+  "description": "Lambda for job health monitoring and cleanup",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "package": "npm run build && cd dist && zip -r ../deployment.zip .",
+    "deploy": "npm run package && aws lambda update-function-code --function-name transnovel-health-checker --zip-file fileb://deployment.zip"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "@aws-sdk/client-sqs": "^3.500.0",
+    "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.131",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "prisma": "^5.22.0"
+  }
+}

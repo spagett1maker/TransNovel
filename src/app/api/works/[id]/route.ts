@@ -29,6 +29,7 @@ export async function GET(
             id: true,
             number: true,
             title: true,
+            translatedTitle: true,
             status: true,
             wordCount: true,
           },

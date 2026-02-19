@@ -38,13 +38,6 @@ export async function POST(
       );
     }
 
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "이미 확정된 설정집입니다." },
-        { status: 400 }
-      );
-    }
-
     // 카테고리 변환 맵
     const categoryMap: Record<string, string> = {
       CHARACTER: "character",

@@ -80,6 +80,7 @@ export async function GET(
       select: {
         number: true,
         title: true,
+        translatedTitle: true,
         translatedContent: true,
         editedContent: true,
         status: true,
@@ -109,7 +110,7 @@ export async function GET(
     // 파일 생성
     const chapterData = {
       number: chapter.number,
-      title: chapter.title,
+      title: chapter.translatedTitle || chapter.title,
       content,
     };
 

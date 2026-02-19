@@ -78,14 +78,6 @@ export async function PATCH(
       return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
     }
 
-    // 확정된 설정집은 수정 불가
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "확정된 설정집은 수정할 수 없습니다." },
-        { status: 400 }
-      );
-    }
-
     const term = await db.settingTerm.findUnique({
       where: { id: termId },
     });
@@ -101,6 +93,28 @@ export async function PATCH(
       where: { id: termId },
       data: validatedData,
     });
+
+    // 확정된 설정집이면 GlossaryItem도 동기화 (번역 시 반영)
+    if (work.settingBible.status === "CONFIRMED") {
+      const categoryMap: Record<string, string> = {
+        CHARACTER: "character",
+        PLACE: "place",
+        ORGANIZATION: "organization",
+        RANK_TITLE: "other",
+        SKILL_TECHNIQUE: "skill",
+        ITEM: "item",
+        OTHER: "other",
+      };
+
+      await db.glossaryItem.updateMany({
+        where: { workId: id, original: term.original },
+        data: {
+          translated: updated.translated,
+          category: categoryMap[updated.category] || "other",
+          note: updated.note,
+        },
+      });
+    }
 
     return NextResponse.json({ term: updated });
   } catch (error) {
@@ -144,14 +158,6 @@ export async function DELETE(
       return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
     }
 
-    // 확정된 설정집은 삭제 불가
-    if (work.settingBible.status === "CONFIRMED") {
-      return NextResponse.json(
-        { error: "확정된 설정집은 수정할 수 없습니다." },
-        { status: 400 }
-      );
-    }
-
     const term = await db.settingTerm.findUnique({
       where: { id: termId },
     });
@@ -163,6 +169,13 @@ export async function DELETE(
     await db.settingTerm.delete({
       where: { id: termId },
     });
+
+    // 확정된 설정집이면 GlossaryItem도 삭제 (번역 시 반영)
+    if (work.settingBible.status === "CONFIRMED") {
+      await db.glossaryItem.deleteMany({
+        where: { workId: id, original: term.original },
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

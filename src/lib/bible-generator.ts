@@ -1,11 +1,6 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CharacterRole, TermCategory, EventType } from "@prisma/client";
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-if (!GEMINI_API_KEY) {
-  console.error("[CRITICAL] GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.");
-}
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "MISSING_API_KEY");
+import { genAI, MODEL_PRIORITY } from "@/lib/gemini/client";
+import { withTimeout, addJitter, delay } from "@/lib/gemini/resilience";
 
 // 조건부 로깅
 const isDev = process.env.NODE_ENV === "development";
@@ -20,17 +15,6 @@ const logError = (...args: unknown[]) => {
 const MAX_RETRIES = 3; // 모델당 3회 재시도
 const BASE_DELAY_MS = 5000; // 5초 (Vercel Pro에서 더 빠른 재시도)
 
-// 모델 우선순위 (fallback)
-const MODEL_PRIORITY = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-];
-
-// 딜레이 함수
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // 배치당 고정 챕터 수 (5챕터 × ~3000자 = ~15,000자, Gemini 15~30초 처리)
 const CHAPTERS_PER_BATCH = 5;
@@ -57,11 +41,6 @@ export function getOptimalBatchPlan(
   return batches;
 }
 
-// Jitter 추가 (thundering herd 방지)
-function addJitter(baseMs: number, jitterFraction: number = 0.2): number {
-  const jitter = baseMs * jitterFraction * (Math.random() - 0.5) * 2;
-  return Math.max(0, baseMs + jitter);
-}
 
 // 재시도 가능한 에러인지 확인
 function isRetryableError(error: unknown): boolean {
@@ -83,29 +62,6 @@ function isRetryableError(error: unknown): boolean {
   return false;
 }
 
-// 타임아웃 래퍼 함수
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  operation: string
-): Promise<T> {
-  let timeoutId: NodeJS.Timeout;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`${operation} 시간 초과 (${timeoutMs / 1000}초)`));
-    }, timeoutMs);
-  });
-
-  try {
-    const result = await Promise.race([promise, timeoutPromise]);
-    clearTimeout(timeoutId!);
-    return result;
-  } catch (error) {
-    clearTimeout(timeoutId!);
-    throw error;
-  }
-}
 
 // AI 분석 결과 타입
 export interface AnalyzedCharacter {

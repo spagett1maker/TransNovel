@@ -3,7 +3,7 @@ import { Prisma, WorkStatus } from "@prisma/client";
 
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { translateChapter, TranslationError, TranslationContext } from "@/lib/gemini";
+import { translateChapter, TranslationError, TranslationContext, prependChapterTitle, extractTranslatedTitle } from "@/lib/gemini";
 import { translationManager } from "@/lib/translation-manager";
 import { translationLogger } from "@/lib/translation-logger";
 import { canTransitionWorkStatus } from "@/lib/work-status";
@@ -381,7 +381,7 @@ async function processTranslation(
     // 메모리 최적화: 챕터 원문을 한 건씩 DB에서 로드
     const chapterData = await db.chapter.findUnique({
       where: { id: chapter.id },
-      select: { originalContent: true },
+      select: { title: true, originalContent: true },
     });
     if (!chapterData) {
       log(`챕터 ${chapter.number} DB에서 찾을 수 없음, 스킵`);
@@ -409,9 +409,10 @@ async function processTranslation(
 
       await translationManager.startChapter(jobId, chapter.number, 1);
 
-      // 챕터 전체 번역 (대형 챕터는 자동 청크 분할)
-      const translatedContent = await translateChapter(
-        chapterData.originalContent,
+      // 챕터 전체 번역 (대형 챕터는 자동 청크 분할, 제목 포함)
+      const contentWithTitle = prependChapterTitle(chapterData.originalContent, chapterData.title);
+      const rawTranslated = await translateChapter(
+        contentWithTitle,
         context,
         5,
         async (currentChunk, totalChunks) => {
@@ -420,11 +421,15 @@ async function processTranslation(
         }
       );
 
+      // 번역된 제목과 본문 분리
+      const { translatedTitle, content: translatedBody } = extractTranslatedTitle(rawTranslated);
+
       // 번역 결과 저장
       await db.chapter.update({
         where: { id: chapter.id },
         data: {
-          translatedContent,
+          translatedContent: translatedBody,
+          translatedTitle: translatedTitle || undefined,
           status: "TRANSLATED",
         },
       });
@@ -516,7 +521,8 @@ async function processTranslation(
               authorId: work.authorId,
               title: `[윤문 요청] ${work.titleKo}`,
               description: work.synopsis || `${work.titleKo} 작품의 윤문을 요청합니다.`,
-              status: "DRAFT",
+              status: "OPEN",
+              publishedAt: new Date(),
               chapterStart: hasChapter0 ? 0 : 1,
               chapterEnd: work.totalChapters || totalCount,
             },

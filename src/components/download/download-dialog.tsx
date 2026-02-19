@@ -21,6 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 interface Chapter {
   number: number;
   title: string | null;
+  translatedTitle?: string | null;
   status: string;
 }
 
@@ -51,8 +52,8 @@ const ChapterItem = memo(function ChapterItem({
       />
       <span className="text-sm">
         {chapter.number}화
-        {chapter.title && (
-          <span className="ml-1 text-muted-foreground">- {chapter.title}</span>
+        {(chapter.translatedTitle || chapter.title) && (
+          <span className="ml-1 text-muted-foreground">- {chapter.translatedTitle || chapter.title}</span>
         )}
       </span>
     </label>

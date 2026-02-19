@@ -12,6 +12,9 @@ import {
   Eye,
   Clock,
   CheckCircle,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 import { toast } from "sonner";
@@ -61,6 +64,13 @@ interface Listing {
   };
 }
 
+interface PreviewChapter {
+  number: number;
+  title: string | null;
+  translatedTitle: string | null;
+  translatedContent: string | null;
+}
+
 const LANGUAGES: Record<string, string> = {
   ZH: "중국어",
   JA: "일본어",
@@ -82,6 +92,8 @@ export default function ListingDetailPage({
   const [isLoading, setIsLoading] = useState(true);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [previewChapters, setPreviewChapters] = useState<PreviewChapter[]>([]);
+  const [expandedChapter, setExpandedChapter] = useState<number | null>(null);
   const [applicationForm, setApplicationForm] = useState({
     proposalMessage: "",
     estimatedDays: "",
@@ -98,6 +110,7 @@ export default function ListingDetailPage({
       setListing(data.listing);
       setMyApplication(data.myApplication ?? null);
       setHasEditorProfile(data.hasEditorProfile ?? true);
+      setPreviewChapters(data.previewChapters ?? []);
     } catch (error) {
       console.error("Failed to fetch listing:", error);
     } finally {
@@ -272,6 +285,56 @@ export default function ListingDetailPage({
               </p>
             )}
           </section>
+
+          {/* Chapter Preview */}
+          {previewChapters.length > 0 && (
+            <section>
+              <h2 className="text-lg font-medium mb-3 flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                번역 미리보기 (첫 {previewChapters.length}화)
+              </h2>
+              <div className="space-y-3">
+                {previewChapters.map((ch) => {
+                  const isExpanded = expandedChapter === ch.number;
+                  const displayTitle = ch.translatedTitle || ch.title;
+                  const content = ch.translatedContent || "";
+                  const previewText = content.length > 500
+                    ? content.slice(0, 500) + "..."
+                    : content;
+
+                  return (
+                    <div key={ch.number} className="border rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => setExpandedChapter(isExpanded ? null : ch.number)}
+                        className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
+                      >
+                        <span className="font-medium text-sm">
+                          {ch.number}화
+                          {displayTitle && (
+                            <span className="ml-2 text-muted-foreground font-normal">
+                              {displayTitle}
+                            </span>
+                          )}
+                        </span>
+                        {isExpanded ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                        )}
+                      </button>
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t">
+                          <div className="prose prose-sm max-w-none text-muted-foreground whitespace-pre-wrap pt-3 max-h-[400px] overflow-y-auto">
+                            {previewText}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Sidebar */}
