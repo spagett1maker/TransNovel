@@ -55,3 +55,4 @@ infrastructure/terraform/*.tfstate*
 infrastructure/terraform/.terraform/
 infrastructure/lambda/*/deployment/
 infrastructure/lambda/*/deployment.zip
+infrastructure/lambda/*/deploy.zip
