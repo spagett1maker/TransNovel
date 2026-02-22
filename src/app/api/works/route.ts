@@ -48,10 +48,10 @@ export async function GET(req: Request) {
         include: {
           creators: true,
           author: {
-            select: { id: true, name: true, email: true },
+            select: { id: true, name: true },
           },
           editor: {
-            select: { id: true, name: true, email: true },
+            select: { id: true, name: true },
           },
           _count: {
             select: { chapters: true },

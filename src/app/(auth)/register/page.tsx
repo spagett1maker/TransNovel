@@ -134,9 +134,9 @@ export default function RegisterPage() {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>이름</FormLabel>
+                  <FormLabel>닉네임</FormLabel>
                   <FormControl>
-                    <Input placeholder="홍길동" {...field} />
+                    <Input placeholder="닉네임을 입력하세요" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

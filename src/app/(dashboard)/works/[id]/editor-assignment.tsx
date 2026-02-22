@@ -18,7 +18,6 @@ import {
 interface Editor {
   id: string;
   name: string;
-  email?: string;
 }
 
 interface EditorAssignmentProps {
@@ -128,7 +127,6 @@ export function EditorAssignment({
           </Avatar>
           <div>
             <p className="font-medium">{currentEditor.name}</p>
-            {currentEditor.email && <p className="text-sm text-muted-foreground">{currentEditor.email}</p>}
           </div>
         </div>
         <Button
@@ -166,10 +164,7 @@ export function EditorAssignment({
         <SelectContent>
           {editors.map((editor) => (
             <SelectItem key={editor.id} value={editor.id}>
-              <div className="flex items-center gap-2">
-                <span>{editor.name}</span>
-                <span className="text-muted-foreground text-xs">({editor.email})</span>
-              </div>
+              <span>{editor.name}</span>
             </SelectItem>
           ))}
         </SelectContent>
