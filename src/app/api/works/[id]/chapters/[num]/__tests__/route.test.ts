@@ -7,7 +7,7 @@ import { createRequest, parseResponse } from "@/test-utils/request-helper";
 // Mock 설정
 vi.mock("@/lib/db", () => ({
   db: mockDb,
-  dbTransaction: (...args: unknown[]) => mockDbTransaction(...args),
+  dbTransaction: (...args: Parameters<typeof mockDbTransaction>) => mockDbTransaction(...args),
 }));
 vi.mock("next-auth", () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),

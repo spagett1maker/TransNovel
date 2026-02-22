@@ -316,6 +316,13 @@ async function handleRetryFailed(failedJob: any, userId: string) {
     failedJob.userEmail || undefined
   );
 
+  if (!newJobId) {
+    return NextResponse.json(
+      { error: "작업 생성에 실패했습니다" },
+      { status: 500 }
+    );
+  }
+
   const chapterMeta = retryChapters.map((ch) => ({ id: ch.id, number: ch.number }));
 
   after(async () => {

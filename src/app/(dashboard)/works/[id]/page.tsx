@@ -42,6 +42,7 @@ export default async function WorkDetailPage({
           id: true,
           number: true,
           title: true,
+          translatedTitle: true,
           status: true,
           wordCount: true,
         },
@@ -307,6 +308,7 @@ export default async function WorkDetailPage({
                 id: ch.id,
                 number: ch.number,
                 title: ch.title,
+                translatedTitle: ch.translatedTitle ?? null,
                 status: ch.status,
                 wordCount: ch.wordCount,
               }))}

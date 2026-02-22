@@ -1,4 +1,4 @@
-import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from "@aws-sdk/client-sqs";
+import { SQSClient, SendMessageCommand, SendMessageBatchCommand, type SendMessageBatchRequestEntry } from "@aws-sdk/client-sqs";
 
 // ===========================================
 // AWS SQS Queue Configuration
@@ -128,7 +128,7 @@ export async function enqueueBatchTranslation(
   // SendMessageBatch는 최대 10개/호출
   for (let i = 0; i < chapters.length; i += 10) {
     const batchEnd = Math.min(i + 10, chapters.length);
-    const entries = [];
+    const entries: SendMessageBatchRequestEntry[] = [];
 
     for (let j = i; j < batchEnd; j++) {
       const chapter = chapters[j];
@@ -146,11 +146,11 @@ export async function enqueueBatchTranslation(
         MessageBody: JSON.stringify({ ...payload, keyIndex: j % apiKeyCount }),
         MessageAttributes: {
           JobId: {
-            DataType: "String" as const,
+            DataType: "String",
             StringValue: jobId,
           },
           ChapterNumber: {
-            DataType: "Number" as const,
+            DataType: "Number",
             StringValue: chapter.number.toString(),
           },
         },
@@ -254,7 +254,7 @@ export async function startBibleGeneration(
   // SendMessageBatch는 최대 10개/호출
   for (let i = 0; i < totalBatches; i += 10) {
     const batchEnd = Math.min(i + 10, totalBatches);
-    const entries = [];
+    const entries: SendMessageBatchRequestEntry[] = [];
 
     for (let j = i; j < batchEnd; j++) {
       const payload: BibleBatchPayload = {
