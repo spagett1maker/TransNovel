@@ -84,6 +84,7 @@ export async function GET() {
               select: {
                 nameOriginal: true,
                 nameKorean: true,
+                role: true,
                 speechStyle: true,
                 personality: true,
               },
@@ -111,6 +112,7 @@ export async function GET() {
     const characters = work.settingBible?.characters.map((c) => ({
       nameOriginal: c.nameOriginal,
       nameKorean: c.nameKorean,
+      role: c.role,
       speechStyle: c.speechStyle ?? undefined,
       personality: c.personality ?? undefined,
     })) ?? [];
