@@ -155,7 +155,7 @@ export default async function WorksPage({
         where: { id: { in: listingIds } },
         select: { id: true, workId: true },
       });
-      const listingToWork = new Map(listings.map((l) => [l.id, l.workId]));
+      const listingToWork = new Map<string, string>(listings.map((l) => [l.id, l.workId]));
       appCounts.forEach((c) => {
         const wId = listingToWork.get(c.listingId);
         if (wId) {
