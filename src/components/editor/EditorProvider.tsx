@@ -13,6 +13,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   ReactNode,
 } from "react";
 import { canEditChapterContent } from "@/lib/permissions";
@@ -252,6 +253,84 @@ export function EditorProvider({
     }
   }, [editor, isEditable]);
 
+  // ── Auto-save: 편집 내용을 챕터 전환 시 자동 저장 ──
+
+  // Refs로 최신 값 추적 (cleanup 함수에서 stale closure 방지)
+  const isDirtyRef = useRef(false);
+  const editorRef = useRef(editor);
+  const chapterRef = useRef(chapter);
+  const isEditableRef = useRef(isEditable);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  editorRef.current = editor;
+  chapterRef.current = chapter;
+  isEditableRef.current = isEditable;
+
+  // 에디터 변경 시 dirty 플래그 설정 + 디바운스 자동 저장 (5초)
+  useEffect(() => {
+    if (!editor) return;
+
+    const handleUpdate = () => {
+      if (!isEditableRef.current) return;
+      isDirtyRef.current = true;
+
+      // 기존 타이머 취소 후 5초 디바운스
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => {
+        const ed = editorRef.current;
+        const ch = chapterRef.current;
+        if (!ed || !ch || !isDirtyRef.current || !isEditableRef.current) return;
+
+        const editedContent = ed.getHTML();
+        isDirtyRef.current = false;
+        fetch(`/api/works/${workId}/chapters/${chapterNum}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ editedContent, _updatedAt: ch.updatedAt }),
+        })
+          .then(async (res) => {
+            if (res.ok) {
+              const updated = await res.json();
+              chapterRef.current = updated;
+              setChapter(updated);
+            }
+          })
+          .catch(() => {
+            // 자동 저장 실패 시 dirty 복원
+            isDirtyRef.current = true;
+          });
+      }, 5000);
+    };
+
+    editor.on("update", handleUpdate);
+    return () => {
+      editor.off("update", handleUpdate);
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [editor, workId, chapterNum]);
+
+  // 언마운트(챕터 전환) 시 미저장 내용 즉시 저장
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+      const ed = editorRef.current;
+      const ch = chapterRef.current;
+      if (!ed || !ch || !isDirtyRef.current || !isEditableRef.current) return;
+
+      const editedContent = ed.getHTML();
+      // keepalive: 컴포넌트 언마운트 후에도 요청이 완료됨
+      fetch(`/api/works/${workId}/chapters/${chapterNum}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ editedContent, _updatedAt: ch.updatedAt }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workId, chapterNum]);
+
+  // 수동 저장 시 dirty 플래그 초기화
   // Save handler
   const handleSave = useCallback(async () => {
     if (!chapter || !editor) return;
@@ -259,6 +338,9 @@ export function EditorProvider({
       toast.error("읽기 전용 모드에서는 저장할 수 없습니다");
       return;
     }
+
+    // 수동 저장 시 대기 중인 자동 저장 취소
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
     setIsSaving(true);
     try {
@@ -291,6 +373,7 @@ export function EditorProvider({
         return;
       }
 
+      isDirtyRef.current = false;
       const updatedChapter = await response.json();
       setChapter(updatedChapter);
       toast.success("저장되었습니다");

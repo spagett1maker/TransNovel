@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -349,7 +350,10 @@ export default function WorkListingsPage() {
             return (
               <section key={listing.id}>
                 {/* Listing Info */}
-                <div className="border rounded-xl p-6 mb-6">
+                <div className={cn(
+                  "border rounded-xl p-6 mb-6",
+                  pendingApps.length > 0 && "border-orange-500/50 bg-orange-50 dark:bg-orange-950/20"
+                )}>
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h2 className="text-xl font-semibold">{listing.title}</h2>
@@ -402,6 +406,9 @@ export default function WorkListingsPage() {
                   </div>
                   <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
                     <span>지원서 {listing._count.applications}건</span>
+                    {pendingApps.length > 0 && (
+                      <Badge variant="warning">{pendingApps.length}건 대기중</Badge>
+                    )}
                   </div>
                 </div>
 

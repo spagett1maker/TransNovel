@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import { Sparkles, Loader2, X, Check, RotateCcw, Copy } from "lucide-react";
+import { Sparkles, Loader2, X, Check, RotateCcw, Copy, GripHorizontal } from "lucide-react";
 import { toast } from "sonner";
 
 interface Suggestion {
@@ -30,6 +30,45 @@ export function AiImproveBubble({
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastRequestRef = useRef<{ selectedText: string; context: string } | null>(null);
 
+  // Drag state
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; ox: number; oy: number }>({ x: 0, y: 0, ox: 0, oy: 0 });
+  const bubbleRef = useRef<HTMLDivElement>(null);
+
+  const isExpanded = isLoading || !!suggestions || !!error;
+
+  // Reset drag offset when selection changes (bubble repositions)
+  useEffect(() => {
+    if (!isExpanded) {
+      setDragOffset({ x: 0, y: 0 });
+    }
+  }, [isExpanded]);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingRef.current = true;
+    dragStartRef.current = { x: e.clientX, y: e.clientY, ox: dragOffset.x, oy: dragOffset.y };
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      setDragOffset({
+        x: dragStartRef.current.ox + (ev.clientX - dragStartRef.current.x),
+        y: dragStartRef.current.oy + (ev.clientY - dragStartRef.current.y),
+      });
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, [dragOffset]);
+
   // Reset state and cancel pending request when selection changes
   useEffect(() => {
     const handleSelectionUpdate = () => {
@@ -46,6 +85,7 @@ export function AiImproveBubble({
         setError(null);
         setIsLoading(false);
         setCopiedIndex(null);
+        setDragOffset({ x: 0, y: 0 });
       }
     };
 
@@ -166,6 +206,7 @@ export function AiImproveBubble({
     setError(null);
     setIsLoading(false);
     setCopiedIndex(null);
+    setDragOffset({ x: 0, y: 0 });
   }, []);
 
   return (
@@ -176,7 +217,22 @@ export function AiImproveBubble({
         return from !== to;
       }}
     >
-      <div className="bg-popover border border-border rounded-lg shadow-lg overflow-hidden">
+      <div
+        ref={bubbleRef}
+        className="bg-popover border border-border rounded-lg shadow-lg overflow-hidden"
+        style={isExpanded ? { transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` } : undefined}
+      >
+        {/* Drag handle — only visible when expanded */}
+        {isExpanded && (
+          <div
+            onMouseDown={handleDragStart}
+            className="flex items-center justify-center py-0.5 cursor-grab active:cursor-grabbing border-b border-border bg-muted/30 select-none"
+            title="드래그하여 이동"
+          >
+            <GripHorizontal className="h-3 w-3 text-muted-foreground/50" />
+          </div>
+        )}
+
         {/* Initial state: just the button */}
         {!isLoading && !suggestions && !error && (
           <button

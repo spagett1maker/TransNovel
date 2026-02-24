@@ -94,23 +94,23 @@ export async function PATCH(
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
-    // 윤문가인 경우 계약 범위 내 챕터만 편집 가능
+    // 윤문가인 경우 활성 계약이 있으면 계약 범위 내 챕터만 편집 가능
+    // 계약이 없어도 work.editorId 체크(canAccessWork)를 통과했으면 편집 허용
     if (userRole === UserRole.EDITOR) {
       const contract = await db.projectContract.findFirst({
         where: { workId: id, editorId: session.user.id, isActive: true },
         select: { chapterStart: true, chapterEnd: true },
       });
-      if (!contract) {
-        return NextResponse.json({ error: "이 작품에 대한 활성 계약이 없습니다." }, { status: 403 });
-      }
-      if (
-        (contract.chapterStart && number < contract.chapterStart) ||
-        (contract.chapterEnd && number > contract.chapterEnd)
-      ) {
-        return NextResponse.json(
-          { error: `계약 범위(${contract.chapterStart}~${contract.chapterEnd}화) 밖의 회차입니다.` },
-          { status: 403 }
-        );
+      if (contract) {
+        if (
+          (contract.chapterStart && number < contract.chapterStart) ||
+          (contract.chapterEnd && number > contract.chapterEnd)
+        ) {
+          return NextResponse.json(
+            { error: `계약 범위(${contract.chapterStart}~${contract.chapterEnd}화) 밖의 회차입니다.` },
+            { status: 403 }
+          );
+        }
       }
     }
 

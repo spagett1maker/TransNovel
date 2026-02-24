@@ -136,6 +136,35 @@ export default async function WorksPage({
     counts.forEach((c) => pendingReviewCounts.set(c.workId, c._count._all));
   }
 
+  // 작가만: 대기 중 지원서 수를 groupBy로 조회
+  const pendingApplicationCounts = new Map<string, number>();
+  if (!isEditor && works.length > 0) {
+    const workIds = works.map((w) => w.id);
+    const appCounts = await db.projectApplication.groupBy({
+      by: ["listingId"],
+      where: {
+        listing: { workId: { in: workIds } },
+        status: "PENDING",
+      },
+      _count: { _all: true },
+    });
+    // listingId → workId 매핑을 위해 listing 조회
+    if (appCounts.length > 0) {
+      const listingIds = appCounts.map((c) => c.listingId);
+      const listings = await db.projectListing.findMany({
+        where: { id: { in: listingIds } },
+        select: { id: true, workId: true },
+      });
+      const listingToWork = new Map(listings.map((l) => [l.id, l.workId]));
+      appCounts.forEach((c) => {
+        const wId = listingToWork.get(c.listingId);
+        if (wId) {
+          pendingApplicationCounts.set(wId, (pendingApplicationCounts.get(wId) || 0) + c._count._all);
+        }
+      });
+    }
+  }
+
   // 페이지 번호 배열 생성
   const getPageNumbers = (): (number | "ellipsis")[] => {
     const pages: (number | "ellipsis")[] = [];
@@ -274,6 +303,9 @@ export default async function WorksPage({
                   const pendingReviewCount = isEditor
                     ? (pendingReviewCounts.get(work.id) || 0)
                     : 0;
+                  const pendingAppCount = !isEditor
+                    ? (pendingApplicationCounts.get(work.id) || 0)
+                    : 0;
 
                   return (
                     <WorkCardClient
@@ -337,6 +369,11 @@ export default async function WorksPage({
                           {isEditor && pendingReviewCount > 0 && (
                             <Badge variant="default" className="text-xs">
                               검토 대기 {pendingReviewCount}건
+                            </Badge>
+                          )}
+                          {!isEditor && pendingAppCount > 0 && (
+                            <Badge variant="warning" className="text-xs">
+                              지원 대기 {pendingAppCount}건
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground">
