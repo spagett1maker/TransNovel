@@ -51,8 +51,6 @@ export {
   getChunkThreshold,
   getChunkSize,
   LARGE_CHAPTER_THRESHOLD,
-  CHUNKS_PER_CRON_CALL,
-  translateLargeChapterIncrementally,
   translateChapter,
   translateChunks,
   splitIntoChunks,
@@ -61,7 +59,6 @@ export {
 } from "./translate";
 export type {
   LargeChapterProgress,
-  IncrementalTranslationResult,
   LargeChapterProgressCallback,
   ChunkTranslationResult,
   ChunkProgressCallback,

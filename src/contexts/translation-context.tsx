@@ -436,7 +436,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     [jobsByWorkId]
   );
 
-  // 작업 취소 (Cron 기반)
+  // 작업 취소
   const cancelJob = useCallback(async (workId: string): Promise<boolean> => {
     console.log("[TranslationContext] 취소 요청:", workId);
 

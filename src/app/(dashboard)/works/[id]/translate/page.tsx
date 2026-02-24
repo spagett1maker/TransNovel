@@ -447,10 +447,11 @@ export default function TranslatePage() {
         removeJob(job.jobId);
       }
 
-      const response = await fetch(`/api/works/${workId}/translate/job`, {
+      const response = await fetch("/api/translation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          workId,
           chapterNumbers: sortedChapterNumbers,
         }),
       });

@@ -105,21 +105,40 @@ export async function POST(
       );
     }
 
-    // SQS를 통해 전체 배치 fan-out 큐잉 (실패 시 Cron 폴백)
-    if (isQueueEnabled()) {
-      try {
-        await startBibleGeneration(
-          job.id,
-          id,
-          session.user.id,
-          session.user.email || undefined,
-          batchPlan.length
-        );
-        console.log("[Bible Generate] SQS fan-out 큐잉 완료:", { jobId: job.id, totalBatches: batchPlan.length });
-      } catch (sqsError) {
-        // SQS 실패 시 Cron이 PENDING 작업을 자동으로 처리
-        console.warn("[Bible Generate] SQS 큐잉 실패, Cron 폴백:", sqsError);
-      }
+    // SQS를 통해 전체 배치 fan-out 큐잉
+    if (!isQueueEnabled()) {
+      await db.bibleGenerationJob.update({
+        where: { id: job.id },
+        data: { status: "FAILED", errorMessage: "SQS 큐가 설정되지 않았습니다." },
+      });
+      return NextResponse.json(
+        { error: "번역 큐가 설정되지 않았습니다. 관리자에게 문의하세요." },
+        { status: 503 }
+      );
+    }
+
+    try {
+      await startBibleGeneration(
+        job.id,
+        id,
+        session.user.id,
+        session.user.email || undefined,
+        batchPlan.length
+      );
+      console.log("[Bible Generate] SQS fan-out 큐잉 완료:", { jobId: job.id, totalBatches: batchPlan.length });
+    } catch (sqsError) {
+      console.error("[Bible Generate] SQS 큐잉 실패:", sqsError);
+      await db.bibleGenerationJob.update({
+        where: { id: job.id },
+        data: {
+          status: "FAILED",
+          errorMessage: sqsError instanceof Error ? sqsError.message : "SQS 큐잉 실패",
+        },
+      });
+      return NextResponse.json(
+        { error: "설정집 생성 작업 큐잉에 실패했습니다. 다시 시도해주세요." },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({

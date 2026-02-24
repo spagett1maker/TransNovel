@@ -13,7 +13,6 @@ const PUBLIC_PATHS = [
 const PUBLIC_API_PATHS = [
   "/api/auth",
   "/api/auth/check-email",
-  "/api/cron",
 ];
 
 // 인증을 건너뛸 정적 파일 확장자 (보안: 와일드카드 대신 명시적 목록)

@@ -23,7 +23,7 @@ interface ProcessBatchResult {
 
 /**
  * 단일 배치의 챕터를 AI 분석하고 DB에 저장하는 공유 함수.
- * analyze-batch API 라우트와 cron 워커 양쪽에서 사용.
+ * analyze-batch API 라우트와 Lambda 워커에서 사용.
  */
 export async function processBibleBatch(
   workId: string,

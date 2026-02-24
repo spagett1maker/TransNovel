@@ -268,11 +268,8 @@ export function getChunkSize(text: string): number {
   return Math.max(8000, maxCharsForTokenBudget(text, TARGET_CHUNK_TOKENS));
 }
 
-// 대형 챕터 임계값 (이 이상이면 점진적 처리 필요)
+// 대형 챕터 임계값 (이 이상이면 청크 분할 처리)
 export const LARGE_CHAPTER_THRESHOLD = 40000; // 약 10청크 이상
-
-// Cron당 처리할 최대 청크 수 (3청크 × ~30초 = ~90초, 안전 마진 확보)
-export const CHUNKS_PER_CRON_CALL = 3;
 
 // 대형 챕터 진행 상태 타입
 export interface LargeChapterProgress {
@@ -280,99 +277,6 @@ export interface LargeChapterProgress {
   totalChunks: number;
   processedChunks: number;
   partialResults: string[];
-}
-
-// 대형 챕터 점진적 번역 결과
-export interface IncrementalTranslationResult {
-  complete: boolean;
-  translatedContent?: string; // complete가 true일 때만
-  progress?: LargeChapterProgress; // complete가 false일 때
-}
-
-/**
- * 대형 챕터를 점진적으로 번역 (Cron당 N개 청크씩)
- * - 설정집의 배치 처리 패턴과 동일한 접근
- * - 각 Cron 호출에서 제한된 청크만 처리
- * - 진행 상태를 반환하여 DB에 저장 가능
- */
-export async function translateLargeChapterIncrementally(
-  content: string,
-  context: TranslationContext,
-  existingProgress?: LargeChapterProgress | null,
-  maxRetries: number = 5
-): Promise<IncrementalTranslationResult> {
-  const dynamicChunkSize = getChunkSize(content);
-  const allChunks = splitIntoChunks(content, dynamicChunkSize);
-
-  log("translateLargeChapterIncrementally 시작", {
-    contentLength: content.length,
-    totalChunks: allChunks.length,
-    existingProcessedChunks: existingProgress?.processedChunks ?? 0,
-  });
-
-  // 기존 진행 상태 확인
-  const startChunkIndex = existingProgress?.processedChunks ?? 0;
-  const partialResults = existingProgress?.partialResults ?? [];
-
-  // 이미 완료된 경우
-  if (startChunkIndex >= allChunks.length) {
-    return {
-      complete: true,
-      translatedContent: partialResults.join("\n\n"),
-    };
-  }
-
-  // 이번 Cron에서 처리할 청크 범위
-  const endChunkIndex = Math.min(startChunkIndex + CHUNKS_PER_CRON_CALL, allChunks.length);
-  const chunksToProcess = allChunks.slice(startChunkIndex, endChunkIndex);
-
-  log(`청크 처리 시작: ${startChunkIndex + 1}~${endChunkIndex}/${allChunks.length}`);
-
-  // 청크 순차 처리 (번역 순서 유지 필요)
-  const newResults: string[] = [];
-  for (let i = 0; i < chunksToProcess.length; i++) {
-    const chunkIndex = startChunkIndex + i;
-    log(`청크 ${chunkIndex + 1}/${allChunks.length} 번역 중...`);
-
-    try {
-      const translated = await translateText(chunksToProcess[i], context, maxRetries);
-      newResults.push(translated);
-    } catch (error) {
-      const errorMsg = error instanceof TranslationError
-        ? error.message
-        : error instanceof Error ? error.message : "알 수 없는 오류";
-
-      logError(`청크 ${chunkIndex + 1} 번역 실패:`, errorMsg);
-
-      // 실패한 청크는 원문으로 대체하고 계속 진행
-      newResults.push(`[번역 실패: ${errorMsg}]\n\n${chunksToProcess[i]}`);
-    }
-  }
-
-  // 결과 병합
-  const updatedPartialResults = [...partialResults, ...newResults];
-  const newProcessedChunks = endChunkIndex;
-
-  // 완료 여부 확인
-  if (newProcessedChunks >= allChunks.length) {
-    log(`대형 챕터 번역 완료: 총 ${allChunks.length}개 청크`);
-    return {
-      complete: true,
-      translatedContent: updatedPartialResults.join("\n\n"),
-    };
-  }
-
-  // 아직 남은 청크가 있음
-  log(`대형 챕터 진행 중: ${newProcessedChunks}/${allChunks.length} 청크 완료`);
-  return {
-    complete: false,
-    progress: {
-      isLargeChapter: true,
-      totalChunks: allChunks.length,
-      processedChunks: newProcessedChunks,
-      partialResults: updatedPartialResults,
-    },
-  };
 }
 
 // 대형 챕터 청크 진행률 콜백
