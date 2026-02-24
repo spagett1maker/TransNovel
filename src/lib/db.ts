@@ -1,18 +1,14 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import { withAccelerate } from "@prisma/extension-accelerate";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-function createPrismaClient(): PrismaClient {
-  const client = new PrismaClient({
+export const db =
+  globalForPrisma.prisma ??
+  new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
-  return client.$extends(withAccelerate()) as unknown as PrismaClient;
-}
-
-export const db = globalForPrisma.prisma ?? createPrismaClient();
 
 // 프로덕션에서도 글로벌 캐싱 적용 (서버리스 환경 최적화)
 globalForPrisma.prisma = db;
