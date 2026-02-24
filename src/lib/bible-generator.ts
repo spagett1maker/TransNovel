@@ -1,6 +1,15 @@
 import { CharacterRole, TermCategory, EventType } from "@prisma/client";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { genAI, MODEL_PRIORITY } from "@/lib/gemini/client";
 import { withTimeout, addJitter, delay } from "@/lib/gemini/resilience";
+
+const safetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 // 조건부 로깅
 const isDev = process.env.NODE_ENV === "development";
@@ -457,6 +466,7 @@ async function tryAnalyzeWithModel(
             maxOutputTokens: 16384, // 실측 기반: 배치당 ~1,600토큰, 최악 ~3,400토큰
             responseMimeType: "application/json", // JSON 모드: 유효한 JSON만 출력
           },
+          safetySettings,
         }),
         180000, // 3분 타임아웃 (Vercel Pro)
         "설정집 분석"

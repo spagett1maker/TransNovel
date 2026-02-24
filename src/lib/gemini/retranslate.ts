@@ -16,6 +16,15 @@ import {
   TranslationContext,
   buildRetranslatePrompt,
 } from "./prompt";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+
+const safetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 // 재번역 함수
 export async function retranslateText(
@@ -67,6 +76,7 @@ export async function retranslateText(
             topK: 40,
             maxOutputTokens: 65536,
           },
+          safetySettings,
         }),
         API_TIMEOUT_MS,
         "재번역 API 호출"
@@ -184,6 +194,7 @@ ${genreNote}
             maxOutputTokens: 2048,
             responseMimeType: "application/json",
           },
+          safetySettings,
         }),
         IMPROVE_TIMEOUT_MS,
         "AI 표현 개선"

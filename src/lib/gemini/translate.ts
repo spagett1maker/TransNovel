@@ -25,6 +25,15 @@ import {
   filterContextForContent,
   buildSystemPrompt,
 } from "./prompt";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+
+const safetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 const TITLE_MARKER = "【제목】";
 
@@ -106,6 +115,7 @@ ${content}
             topK: 40,
             maxOutputTokens: 65536,
           },
+          safetySettings,
         }),
         API_TIMEOUT_MS,
         "청크 번역 API 호출"
@@ -403,6 +413,7 @@ ${content}
             topK: 40,
             maxOutputTokens: 65536,
           },
+          safetySettings,
         }),
         API_TIMEOUT_MS,
         "챕터 번역 API 호출"
