@@ -116,6 +116,16 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
     }
   };
 
+  // TXT 파일 인코딩 자동 감지 (UTF-8 → GBK/Big5 폴백)
+  function decodeTextFile(buffer: ArrayBuffer): string {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch {
+      // UTF-8 실패 → GBK (중국어 간체) 시도
+      return new TextDecoder("gbk").decode(buffer);
+    }
+  }
+
   // 파일 업로드 처리
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -133,8 +143,9 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
     setIsLoading(true);
     try {
       if (isTxt) {
-        // TXT 파일은 클라이언트에서 직접 읽기
-        const text = await file.text();
+        // TXT 파일은 클라이언트에서 직접 읽기 (인코딩 자동 감지)
+        const buffer = await file.arrayBuffer();
+        const text = decodeTextFile(buffer);
         setRawText(text);
         toast.success("파일이 로드되었습니다.");
       } else if (isDocx) {

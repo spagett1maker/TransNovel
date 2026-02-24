@@ -43,9 +43,9 @@ function chineseToNumber(str: string): number {
   return result || NaN;
 }
 
-// 마크다운 헤더 접두사 제거
+// 앞쪽 공백 + 마크다운 헤더 접두사 제거
 function stripMarkdown(header: string): string {
-  return header.replace(/^#{1,6}\s+/, "");
+  return header.replace(/^[\s\u3000]*#{1,6}\s+/, "").replace(/^[\s\u3000]+/, "");
 }
 
 // 헤더에서 번호 추출
@@ -104,22 +104,23 @@ function extractTitleFromHeader(header: string): string | undefined {
 const PROLOGUE_PATTERN = /^(?:序章|序幕|プロローグ|Prologue|프롤로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
 const EPILOGUE_PATTERN = /^(?:終章|尾声|エピローグ|Epilogue|에필로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
 
-// 마크다운 헤더 접두사 (### , ## , # 등) — 선택적
+// 선택적 앞쪽 공백 + 마크다운 헤더 접두사 (### , ## , # 등)
+const WS = "[ \\t\\u3000]*"; // 공백, 탭, 전각 공백
 const MD = "(?:#{1,6}\\s+)?";
 
 // 챕터 감지 패턴 (우선순위순)
 const CHAPTER_PATTERNS = [
   // CJK 통합: 第X章/话/話/節/节/回/卷
-  new RegExp(`^${MD}第[一二三四五六七八九十百千万萬零〇\\d]+[章话話節节回卷].*$`, "gm"),
+  new RegExp(`^${WS}${MD}第[一二三四五六七八九十百千万萬零〇\\d]+[章话話節节回卷].*$`, "gm"),
 
   // 영어: Chapter / Ch. / Episode / Part
-  new RegExp(`^${MD}(?:Chapter|Ch\\.?|Episode|Part)\\s*\\d+.*$`, "gim"),
+  new RegExp(`^${WS}${MD}(?:Chapter|Ch\\.?|Episode|Part)\\s*\\d+.*$`, "gim"),
 
   // 한국어: 제X화/장/회/편 또는 X화/장/회/편
-  new RegExp(`^${MD}제?\\s*\\d+\\s*[화장회편].*$`, "gm"),
+  new RegExp(`^${WS}${MD}제?\\s*\\d+\\s*[화장회편].*$`, "gm"),
 
   // 숫자만: "1. Title" / "1、Title" (1~4자리, 뒤에 비숫자 문자 필수)
-  new RegExp(`^${MD}\\d{1,4}[\\.、]\\s*\\S.*$`, "gm"),
+  new RegExp(`^${WS}${MD}\\d{1,4}[\\.、]\\s*\\S.*$`, "gm"),
 ];
 
 /**
