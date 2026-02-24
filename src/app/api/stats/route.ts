@@ -82,7 +82,7 @@ export async function GET(req: Request) {
     ]);
 
     // 작품별 완료율 계산 (인메모리 조인)
-    const completionMap = new Map(chapterCompletions.map((c) => [c.workId, c._count._all]));
+    const completionMap = new Map<string, number>(chapterCompletions.map((c) => [c.workId, c._count._all]));
     const workStats = works.map((work) => {
       const completedCount = completionMap.get(work.id) || 0;
       return {
