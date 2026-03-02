@@ -109,7 +109,7 @@ const globalForCircuitBreaker = globalThis as unknown as {
 
 export const circuitBreaker =
   globalForCircuitBreaker.geminiCircuitBreaker ??
-  new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 60000 });
+  new CircuitBreaker({ failureThreshold: 10, resetTimeoutMs: 300000 });
 
 if (process.env.NODE_ENV !== "production") {
   globalForCircuitBreaker.geminiCircuitBreaker = circuitBreaker;

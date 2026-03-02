@@ -34,6 +34,7 @@ export async function GET(
             wordCount: true,
           },
           orderBy: { number: "asc" },
+          take: 1000,
         },
         author: {
           select: { id: true, name: true },
@@ -59,7 +60,9 @@ export async function GET(
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
-    return NextResponse.json(work);
+    const response = NextResponse.json(work);
+    response.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=300");
+    return response;
   } catch (error) {
     console.error("Failed to fetch work:", error);
     return NextResponse.json(

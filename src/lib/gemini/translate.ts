@@ -1,6 +1,5 @@
 import { translationLogger } from "@/lib/translation-logger";
 import {
-  genAI,
   log,
   logError,
   API_TIMEOUT_MS,
@@ -10,10 +9,13 @@ import {
   MIN_FAILURES_FOR_RATE_CHECK,
   MODEL_PRIORITY,
   TranslationLoggingContext,
+  getApiKeyCount,
+  getGeminiApiKeyByIndex,
+  createGenAIClient,
 } from "./client";
 import {
   circuitBreaker,
-  rateLimiter,
+  getRateLimiterForKey,
   withTimeout,
   addJitter,
   delay,
@@ -26,6 +28,9 @@ import {
   buildSystemPrompt,
 } from "./prompt";
 import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+
+// Per-key round-robin counter for distributing requests across API keys
+let keyRotationCounter = 0;
 
 const safetySettings = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -71,18 +76,22 @@ async function tryTranslateChunkWithModel(
   systemPrompt: string,
   maxRetries: number
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: modelName });
-
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    log(`[${modelName}] 청크 번역 시도 ${attempt + 1}/${maxRetries}`);
+    // Select API key via round-robin for this attempt
+    const keyIndex = keyRotationCounter++ % getApiKeyCount();
+    const apiKey = getGeminiApiKeyByIndex(keyIndex);
+    const client = createGenAIClient(apiKey);
+    const model = client.getGenerativeModel({ model: modelName });
+
+    log(`[${modelName}] 청크 번역 시도 ${attempt + 1}/${maxRetries} (키 ${keyIndex})`);
     try {
       // 0. Circuit Breaker 확인
       circuitBreaker.check();
 
-      // 1. Rate Limiter 토큰 획득 (초당 요청 수 제한)
-      await rateLimiter.acquire();
+      // 1. Per-key Rate Limiter 토큰 획득
+      await getRateLimiterForKey(keyIndex).acquire();
 
       const startTime = Date.now();
 
@@ -142,7 +151,7 @@ ${content}
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      logError(`[${modelName}] 청크 번역 시도 ${attempt + 1} 실패:`, {
+      logError(`[${modelName}] 청크 번역 시도 ${attempt + 1} 실패 (키 ${keyIndex}):`, {
         code: lastError.code,
         message: lastError.message,
       });
@@ -153,9 +162,9 @@ ${content}
         circuitBreaker.onFailure(isCritical);
       }
 
-      // Rate limit 에러 시 rate limiter에 알림
+      // Rate limit 에러 시 해당 키의 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
-        rateLimiter.onRateLimitError();
+        getRateLimiterForKey(keyIndex).onRateLimitError();
       }
 
       // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw
@@ -369,18 +378,22 @@ async function tryTranslateWithModel(
   systemPrompt: string,
   maxRetries: number
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: modelName });
-
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    log(`[${modelName}] 챕터 번역 시도 ${attempt + 1}/${maxRetries}`);
+    // Select API key via round-robin for this attempt
+    const keyIndex = keyRotationCounter++ % getApiKeyCount();
+    const apiKey = getGeminiApiKeyByIndex(keyIndex);
+    const client = createGenAIClient(apiKey);
+    const model = client.getGenerativeModel({ model: modelName });
+
+    log(`[${modelName}] 챕터 번역 시도 ${attempt + 1}/${maxRetries} (키 ${keyIndex})`);
     try {
       // 0. Circuit Breaker 확인
       circuitBreaker.check();
 
-      // 1. Rate Limiter 토큰 획득
-      await rateLimiter.acquire();
+      // 1. Per-key Rate Limiter 토큰 획득
+      await getRateLimiterForKey(keyIndex).acquire();
 
       const startTime = Date.now();
 
@@ -439,7 +452,7 @@ ${content}
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
 
-      logError(`[${modelName}] 챕터 번역 시도 ${attempt + 1} 실패:`, {
+      logError(`[${modelName}] 챕터 번역 시도 ${attempt + 1} 실패 (키 ${keyIndex}):`, {
         code: lastError.code,
         message: lastError.message,
       });
@@ -450,9 +463,9 @@ ${content}
         circuitBreaker.onFailure(isCritical);
       }
 
-      // Rate limit 에러 시 rate limiter에 알림
+      // Rate limit 에러 시 해당 키의 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
-        rateLimiter.onRateLimitError();
+        getRateLimiterForKey(keyIndex).onRateLimitError();
       }
 
       // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw

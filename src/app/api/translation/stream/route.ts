@@ -38,18 +38,15 @@ async function withRetry<T>(
 }
 
 export async function GET(req: Request) {
-  console.log("[SSE Stream] GET 요청 수신");
   const session = await getServerSession(authOptions);
 
   if (!session) {
     console.log("[SSE Stream] 인증 실패");
     return new Response("인증이 필요합니다", { status: 401 });
   }
-  console.log("[SSE Stream] 인증 성공:", session.user.email);
 
   const { searchParams } = new URL(req.url);
   const jobId = searchParams.get("jobId");
-  console.log("[SSE Stream] jobId:", jobId);
 
   if (!jobId) {
     console.log("[SSE Stream] jobId 누락");
@@ -74,14 +71,11 @@ export async function GET(req: Request) {
     return new Response("권한이 없습니다", { status: 403 });
   }
 
-  console.log("[SSE Stream] 작업 조회 성공:", { status: job.status, chapters: job.chapters.length });
-
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
       const timestamp = () => new Date().toISOString();
-      console.log(`[${timestamp()}] [SSE Stream] 스트림 시작`);
 
       let isStreamClosed = false;
       let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
@@ -154,19 +148,16 @@ export async function GET(req: Request) {
             error: jobSummary.error,
           },
         };
-        console.log(`[${timestamp()}] [SSE Stream] 초기 상태 전송:`, currentState.type);
         sendEvent(currentState);
 
         // 이미 완료된 작업이면 스트림 종료
         if (jobSummary.status === "COMPLETED" || jobSummary.status === "FAILED") {
-          console.log(`[${timestamp()}] [SSE Stream] 작업 이미 완료됨, 스트림 종료`);
           cleanup();
           return;
         }
       }
 
       // DB 폴링으로 상태 변화 감지
-      console.log(`[${timestamp()}] [SSE Stream] DB 폴링 시작`);
       let consecutiveFailures = 0;
 
       pollInterval = setInterval(async () => {
@@ -359,13 +350,11 @@ export async function GET(req: Request) {
 
       // 클라이언트 연결 종료 시 정리
       req.signal.addEventListener("abort", () => {
-        console.log(`[${timestamp()}] [SSE Stream] 클라이언트 연결 종료`);
         cleanup();
       });
     },
   });
 
-  console.log("[SSE Stream] 스트림 응답 반환");
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",

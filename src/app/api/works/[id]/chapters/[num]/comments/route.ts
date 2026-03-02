@@ -107,6 +107,7 @@ export async function GET(
             },
           },
           orderBy: { createdAt: "asc" },
+          take: 50,
         },
       },
       orderBy: { createdAt: "desc" },

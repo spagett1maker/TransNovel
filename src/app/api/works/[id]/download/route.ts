@@ -77,6 +77,9 @@ export async function GET(
       }
     }
 
+    // 다운로드 최대 챕터 수 제한 (OOM 방지)
+    const MAX_DOWNLOAD_CHAPTERS = 200;
+
     // 메모리 최적화: 메타데이터만 먼저 조회
     const chapterMeta = await db.chapter.findMany({
       where: {
@@ -91,6 +94,13 @@ export async function GET(
       },
       orderBy: { number: "asc" },
     });
+
+    if (chapterMeta.length > MAX_DOWNLOAD_CHAPTERS) {
+      return NextResponse.json(
+        { error: `한 번에 최대 ${MAX_DOWNLOAD_CHAPTERS}개 회차까지 다운로드할 수 있습니다. 범위를 나눠서 다운로드해주세요.` },
+        { status: 400 }
+      );
+    }
 
     if (chapterMeta.length === 0) {
       return NextResponse.json(

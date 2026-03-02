@@ -19,6 +19,9 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     const { id } = await params;
+    const { searchParams } = new URL(req.url);
+    const take = Math.min(parseInt(searchParams.get("take") || "500", 10), 1000);
+    const cursor = searchParams.get("cursor");
 
     if (!session) {
       return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
@@ -36,9 +39,18 @@ export async function GET(
     const glossary = await db.glossaryItem.findMany({
       where: { workId: id },
       orderBy: { original: "asc" },
+      take: take + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
-    return NextResponse.json(glossary);
+    const hasMore = glossary.length > take;
+    if (hasMore) glossary.pop();
+
+    return NextResponse.json({
+      data: glossary,
+      nextCursor: hasMore ? glossary[glossary.length - 1].id : null,
+      hasMore,
+    });
   } catch (error) {
     console.error("Failed to fetch glossary:", error);
     return NextResponse.json(

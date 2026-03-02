@@ -79,7 +79,7 @@ variable "lambda_timeout" {
 variable "translation_lambda_concurrency" {
   description = "Translation worker SQS event source maximum concurrency"
   type        = number
-  default     = 1000
+  default     = 50
 }
 
 variable "bible_lambda_concurrency" {

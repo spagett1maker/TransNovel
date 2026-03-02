@@ -128,7 +128,7 @@ resource "aws_db_proxy_default_target_group" "main" {
   connection_pool_config {
     max_connections_percent      = 90
     max_idle_connections_percent = 50
-    connection_borrow_timeout    = 120 # seconds
+    connection_borrow_timeout    = 60 # seconds (fast-fail to prevent cascading timeouts)
   }
 }
 

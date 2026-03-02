@@ -62,6 +62,15 @@ function mapCharacterRole(role: string): string {
 // Prisma client singleton
 let prisma: PrismaClient | null = null;
 
+// Lambda는 짧은 수명 + 높은 동시성이므로 connection_limit을 낮게 설정
+const LAMBDA_CONNECTION_LIMIT = 5;
+
+function ensureConnectionLimit(url: string): string {
+  if (url.includes("connection_limit")) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}connection_limit=${LAMBDA_CONNECTION_LIMIT}`;
+}
+
 async function getPrismaClient(): Promise<PrismaClient> {
   if (!prisma) {
     const secrets = await getSecrets<DatabaseSecrets>(
@@ -70,7 +79,7 @@ async function getPrismaClient(): Promise<PrismaClient> {
     prisma = new PrismaClient({
       datasources: {
         db: {
-          url: secrets.DATABASE_URL,
+          url: ensureConnectionLimit(secrets.DATABASE_URL),
         },
       },
     });
