@@ -51,8 +51,12 @@ interface UseGlossaryDataResult {
   setSearchQuery: (q: string) => void;
   categoryFilter: string | null;
   setCategoryFilter: (c: string | null) => void;
+  eventTypeFilter: string | null;
+  setEventTypeFilter: (t: string | null) => void;
   filteredGlossary: GlossaryItem[];
   filteredCharacters: Character[];
+  filteredTimeline: TimelineEvent[];
+  eventTypes: string[];
   categories: string[];
   refetch: () => Promise<void>;
 }
@@ -67,6 +71,7 @@ export function useGlossaryData(workId: string): UseGlossaryDataResult {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [eventTypeFilter, setEventTypeFilter] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -129,6 +134,33 @@ export function useGlossaryData(workId: string): UseGlossaryDataResult {
     );
   }, [data.characters, searchQuery]);
 
+  const eventTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const event of data.timeline) {
+      if (event.eventType) types.add(event.eventType);
+    }
+    return Array.from(types).sort();
+  }, [data.timeline]);
+
+  const filteredTimeline = useMemo(() => {
+    let items = data.timeline;
+
+    if (eventTypeFilter) {
+      items = items.filter((e) => e.eventType === eventTypeFilter);
+    }
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      items = items.filter(
+        (e) =>
+          e.title.toLowerCase().includes(q) ||
+          e.description.toLowerCase().includes(q)
+      );
+    }
+
+    return items;
+  }, [data.timeline, searchQuery, eventTypeFilter]);
+
   return {
     glossary: data.glossary,
     characters: data.characters,
@@ -139,8 +171,12 @@ export function useGlossaryData(workId: string): UseGlossaryDataResult {
     setSearchQuery,
     categoryFilter,
     setCategoryFilter,
+    eventTypeFilter,
+    setEventTypeFilter,
     filteredGlossary,
     filteredCharacters,
+    filteredTimeline,
+    eventTypes,
     categories,
     refetch: fetchData,
   };
