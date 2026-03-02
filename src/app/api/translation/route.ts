@@ -238,6 +238,8 @@ export async function POST(req: Request) {
       })),
       // 설정집의 번역 가이드 추가
       translationGuide: work.settingBible?.translationGuide || undefined,
+      // 커스텀 시스템 프롬프트
+      customSystemPrompt: work.settingBible?.customSystemPrompt || undefined,
     };
     console.log("[Translation API] 컨텍스트:", {
       titleKo: context.titleKo,

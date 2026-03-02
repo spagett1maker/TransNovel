@@ -27,7 +27,10 @@ export async function POST(
     // Check work access
     const work = await db.work.findUnique({
       where: { id: workId },
-      select: { id: true, authorId: true, editorId: true, genres: true },
+      select: {
+        id: true, authorId: true, editorId: true, genres: true,
+        settingBible: { select: { customImprovePrompt: true } },
+      },
     });
 
     if (!work) {
@@ -62,7 +65,8 @@ export async function POST(
     const suggestions = await improveExpression(
       selectedText,
       context,
-      work.genres
+      work.genres,
+      work.settingBible?.customImprovePrompt || undefined
     );
 
     return NextResponse.json({ suggestions });

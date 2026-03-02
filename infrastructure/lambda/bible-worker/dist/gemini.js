@@ -7,6 +7,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AnalysisError = void 0;
 exports.analyzeBatch = analyzeBatch;
 const generative_ai_1 = require("@google/generative-ai");
+const safetySettings = [
+    { category: generative_ai_1.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: generative_ai_1.HarmBlockThreshold.BLOCK_NONE },
+    { category: generative_ai_1.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: generative_ai_1.HarmBlockThreshold.BLOCK_NONE },
+    { category: generative_ai_1.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: generative_ai_1.HarmBlockThreshold.BLOCK_NONE },
+    { category: generative_ai_1.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: generative_ai_1.HarmBlockThreshold.BLOCK_NONE },
+    { category: generative_ai_1.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: generative_ai_1.HarmBlockThreshold.BLOCK_NONE },
+];
 // Configuration
 const API_TIMEOUT_MS = 180000; // 3 minutes
 const MAX_OUTPUT_TOKENS = 65536;
@@ -27,26 +34,8 @@ class AnalysisError extends Error {
     }
 }
 exports.AnalysisError = AnalysisError;
-/**
- * Build system prompt for bible analysis
- */
-function buildSystemPrompt(workInfo, chapterRange) {
-    return `당신은 웹소설 분석 전문가입니다. 주어진 챕터들을 분석하여 설정집을 생성합니다.
-
-[작품 정보]
-- 제목: ${workInfo.title}
-- 장르: ${workInfo.genres.join(", ")}
-- 줄거리: ${workInfo.synopsis}
-- 원문 언어: ${workInfo.sourceLanguage}
-- 분석 범위: ${chapterRange.start}회 ~ ${chapterRange.end}회
-
-[분석 지침]
-1. 등장인물: 이름, 역할, 성격, 말투, 관계 등을 추출
-2. 용어: 고유명사, 기술명, 지명 등을 원문과 번역어로 정리
-3. 이벤트: 주요 사건, 복선, 반전 등을 기록
-4. 번역 참고사항: 문체, 분위기, 주의점 등을 정리
-
-[출력 형식]
+// JSON 출력 스키마 (항상 자동 주입)
+const BIBLE_JSON_SCHEMA = `[출력 형식]
 반드시 아래 JSON 형식으로만 응답하세요:
 {
   "characters": [
@@ -89,6 +78,34 @@ function buildSystemPrompt(workInfo, chapterRange) {
   ],
   "translationNotes": "번역 시 참고할 전반적인 사항"
 }`;
+/**
+ * Build system prompt for bible analysis
+ */
+function buildSystemPrompt(workInfo, chapterRange, customPrompt) {
+    const workInfoSection = `[작품 정보]
+- 제목: ${workInfo.title}
+- 장르: ${workInfo.genres.join(", ")}
+- 줄거리: ${workInfo.synopsis}
+- 원문 언어: ${workInfo.sourceLanguage}
+- 분석 범위: ${chapterRange.start}회 ~ ${chapterRange.end}회`;
+    if (customPrompt) {
+        return `${customPrompt}
+
+${workInfoSection}
+
+${BIBLE_JSON_SCHEMA}`;
+    }
+    return `당신은 웹소설 분석 전문가입니다. 주어진 챕터들을 분석하여 설정집을 생성합니다.
+
+${workInfoSection}
+
+[분석 지침]
+1. 등장인물: 이름, 역할, 성격, 말투, 관계 등을 추출
+2. 용어: 고유명사, 기술명, 지명 등을 원문과 번역어로 정리
+3. 이벤트: 주요 사건, 복선, 반전 등을 기록
+4. 번역 참고사항: 문체, 분위기, 주의점 등을 정리
+
+${BIBLE_JSON_SCHEMA}`;
 }
 /**
  * Analyze error and convert to AnalysisError
@@ -163,6 +180,7 @@ async function analyzeWithModel(genAI, modelName, content, systemPrompt, maxRetr
                     topK: 40,
                     maxOutputTokens: MAX_OUTPUT_TOKENS,
                 },
+                safetySettings,
             }), API_TIMEOUT_MS, "분석 API 호출");
             const text = result.response.text();
             if (!text || text.trim().length === 0) {
@@ -252,9 +270,9 @@ function parseAnalysisResult(text) {
 /**
  * Main analysis function
  */
-async function analyzeBatch(workInfo, chapters, chapterRange, apiKey, maxRetries = 5) {
+async function analyzeBatch(workInfo, chapters, chapterRange, apiKey, maxRetries = 5, customPrompt) {
     const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
-    const systemPrompt = buildSystemPrompt(workInfo, chapterRange);
+    const systemPrompt = buildSystemPrompt(workInfo, chapterRange, customPrompt);
     // Combine chapter contents
     const content = chapters
         .map((ch) => `=== ${ch.number}회 ===\n${ch.originalContent}`)

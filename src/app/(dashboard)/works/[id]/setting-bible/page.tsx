@@ -19,6 +19,9 @@ import {
   Clock,
   Save,
   StopCircle,
+  Terminal,
+  RotateCcw,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -189,6 +192,34 @@ export default function SettingBiblePage() {
   const [isSavingGuide, setIsSavingGuide] = useState(false);
   const [guideDirty, setGuideDirty] = useState(false);
 
+  // 프롬프트 편집 상태
+  type PromptType = "translate" | "retranslate" | "improve" | "bible";
+  interface PromptState {
+    mode: "default" | "custom";
+    customValue: string;
+    defaultTemplate: string;
+    fullPreview: string;
+    dirty: boolean;
+  }
+  const [selectedPromptType, setSelectedPromptType] = useState<PromptType>("translate");
+  const [prompts, setPrompts] = useState<Record<PromptType, PromptState>>({
+    translate: { mode: "default", customValue: "", defaultTemplate: "", fullPreview: "", dirty: false },
+    retranslate: { mode: "default", customValue: "", defaultTemplate: "", fullPreview: "", dirty: false },
+    improve: { mode: "default", customValue: "", defaultTemplate: "", fullPreview: "", dirty: false },
+    bible: { mode: "default", customValue: "", defaultTemplate: "", fullPreview: "", dirty: false },
+  });
+  const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+
+  const currentPrompt = prompts[selectedPromptType];
+
+  const updatePromptState = (type: PromptType, updates: Partial<PromptState>) => {
+    setPrompts(prev => ({
+      ...prev,
+      [type]: { ...prev[type], ...updates },
+    }));
+  };
+
   // 전역 설정집 생성 상태
   const { getJobByWorkId, cancelGeneration, startPolling } = useBibleGeneration();
   const activeGenerationJob = getJobByWorkId(workId);
@@ -250,6 +281,53 @@ export default function SettingBiblePage() {
       toast.error("설정집을 불러오는데 실패했습니다.");
     } finally {
       setIsLoading(false);
+    }
+  }, [workId]);
+
+  // 프롬프트 미리보기 로드 (전체)
+  const fetchPromptPreview = useCallback(async () => {
+    setIsLoadingPrompt(true);
+    try {
+      const res = await fetch(`/api/works/${workId}/translation-prompt`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // 초벌 번역
+      setPrompts(prev => ({
+        ...prev,
+        translate: {
+          mode: data.isCustom ? "custom" : "default",
+          customValue: data.customSystemPrompt || "",
+          defaultTemplate: data.defaultTemplate || "",
+          fullPreview: data.fullPrompt || "",
+          dirty: false,
+        },
+        retranslate: {
+          mode: data.isRetranslateCustom ? "custom" : "default",
+          customValue: data.customRetranslatePrompt || "",
+          defaultTemplate: data.defaultRetranslateTemplate || "",
+          fullPreview: data.customRetranslatePrompt || data.defaultRetranslateTemplate || "",
+          dirty: false,
+        },
+        improve: {
+          mode: data.isImproveCustom ? "custom" : "default",
+          customValue: data.customImprovePrompt || "",
+          defaultTemplate: data.defaultImproveTemplate || "",
+          fullPreview: data.customImprovePrompt || data.defaultImproveTemplate || "",
+          dirty: false,
+        },
+        bible: {
+          mode: data.isBibleCustom ? "custom" : "default",
+          customValue: data.customBiblePrompt || "",
+          defaultTemplate: data.defaultBibleTemplate || "",
+          fullPreview: data.customBiblePrompt || data.defaultBibleTemplate || "",
+          dirty: false,
+        },
+      }));
+    } catch (error) {
+      console.error("Failed to fetch prompt preview:", error);
+    } finally {
+      setIsLoadingPrompt(false);
     }
   }, [workId]);
 
@@ -315,6 +393,14 @@ export default function SettingBiblePage() {
       fetchTabData("events", eventPage, "", "all");
     }
   }, [bible, activeTab, eventPage, fetchTabData]);
+
+  // 프롬프트 탭 선택 시 미리보기 로드
+  useEffect(() => {
+    if (!bible) return;
+    if (activeTab === "prompt") {
+      fetchPromptPreview();
+    }
+  }, [bible, activeTab, fetchPromptPreview]);
 
   // 필터 변경 시 페이지 리셋
   useEffect(() => { setCharacterPage(1); }, [characterRoleFilter]);
@@ -396,6 +482,67 @@ export default function SettingBiblePage() {
     } finally {
       setIsSavingGuide(false);
     }
+  };
+
+  // DB 필드 매핑
+  const PROMPT_DB_FIELD: Record<PromptType, string> = {
+    translate: "customSystemPrompt",
+    retranslate: "customRetranslatePrompt",
+    improve: "customImprovePrompt",
+    bible: "customBiblePrompt",
+  };
+
+  const PROMPT_LABELS: Record<PromptType, string> = {
+    translate: "초벌 번역",
+    retranslate: "재번역",
+    improve: "표현 개선",
+    bible: "설정집 분석",
+  };
+
+  const handleSavePrompt = async () => {
+    if (isSavingPrompt) return;
+    setIsSavingPrompt(true);
+    try {
+      const state = prompts[selectedPromptType];
+      const value = state.mode === "custom" ? state.customValue : null;
+      const fieldName = PROMPT_DB_FIELD[selectedPromptType];
+
+      const res = await fetch(`/api/works/${workId}/setting-bible`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [fieldName]: value }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "프롬프트 저장에 실패했습니다.");
+        return;
+      }
+      const label = PROMPT_LABELS[selectedPromptType];
+      toast.success(state.mode === "custom"
+        ? `${label} 커스텀 프롬프트가 저장되었습니다.`
+        : `${label} 기본 프롬프트로 초기화되었습니다.`
+      );
+      updatePromptState(selectedPromptType, { dirty: false });
+      fetchPromptPreview();
+    } catch (error) {
+      console.error("Failed to save custom prompt:", error);
+      toast.error("프롬프트 저장에 실패했습니다.");
+    } finally {
+      setIsSavingPrompt(false);
+    }
+  };
+
+  const handleResetPrompt = () => {
+    updatePromptState(selectedPromptType, { mode: "default", customValue: "", dirty: true });
+  };
+
+  const handleSwitchToCustom = () => {
+    const state = prompts[selectedPromptType];
+    updatePromptState(selectedPromptType, {
+      mode: "custom",
+      customValue: state.customValue || state.defaultTemplate,
+      dirty: true,
+    });
   };
 
   const isConfirmed = bible?.status === "CONFIRMED";
@@ -695,6 +842,10 @@ export default function SettingBiblePage() {
             타임라인 ({bible.eventCount.toLocaleString()})
           </TabsTrigger>
           <TabsTrigger value="guide">번역 가이드</TabsTrigger>
+          <TabsTrigger value="prompt" className="gap-2">
+            <Terminal className="h-4 w-4" />
+            번역 프롬프트
+          </TabsTrigger>
         </TabsList>
 
         {/* Characters Tab */}
@@ -853,6 +1004,147 @@ export default function SettingBiblePage() {
               placeholder="AI가 생성한 번역 가이드가 여기에 표시됩니다. 수정이 필요하면 직접 편집할 수 있습니다."
               className="min-h-[300px]"
             />
+          </div>
+        </TabsContent>
+
+        {/* Prompt Tab */}
+        <TabsContent value="prompt">
+          <div className="section-surface p-6">
+            {/* 헤더: 프롬프트 타입 선택 + 저장 버튼 */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <h3 className="font-semibold">프롬프트 설정</h3>
+                <Select value={selectedPromptType} onValueChange={(v) => setSelectedPromptType(v as PromptType)}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bible">설정집 분석</SelectItem>
+                    <SelectItem value="translate">초벌 번역</SelectItem>
+                    <SelectItem value="retranslate">재번역</SelectItem>
+                    <SelectItem value="improve">표현 개선</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                {currentPrompt.mode === "custom" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleResetPrompt}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    기본값으로 초기화
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  onClick={handleSavePrompt}
+                  disabled={isSavingPrompt || !currentPrompt.dirty}
+                >
+                  {isSavingPrompt ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  저장
+                </Button>
+              </div>
+            </div>
+
+            {/* 모드 선택 */}
+            <div className="flex gap-3 mb-4">
+              <button
+                type="button"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  currentPrompt.mode === "default"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+                }`}
+                onClick={() => {
+                  if (currentPrompt.mode !== "default") {
+                    handleResetPrompt();
+                  }
+                }}
+              >
+                <div className={`h-3 w-3 rounded-full border-2 ${
+                  currentPrompt.mode === "default" ? "border-primary bg-primary" : "border-muted-foreground"
+                }`} />
+                기본 프롬프트 사용
+              </button>
+              <button
+                type="button"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  currentPrompt.mode === "custom"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+                }`}
+                onClick={handleSwitchToCustom}
+              >
+                <div className={`h-3 w-3 rounded-full border-2 ${
+                  currentPrompt.mode === "custom" ? "border-primary bg-primary" : "border-muted-foreground"
+                }`} />
+                커스텀 프롬프트 사용
+              </button>
+            </div>
+
+            {isLoadingPrompt ? (
+              <div className="flex items-center justify-center py-12">
+                <Spinner size="md" />
+              </div>
+            ) : (
+              <>
+                <Textarea
+                  value={currentPrompt.mode === "custom"
+                    ? currentPrompt.customValue
+                    : (currentPrompt.fullPreview || currentPrompt.defaultTemplate)
+                  }
+                  onChange={(e) => {
+                    if (currentPrompt.mode === "custom") {
+                      updatePromptState(selectedPromptType, {
+                        customValue: e.target.value,
+                        dirty: true,
+                      });
+                    }
+                  }}
+                  readOnly={currentPrompt.mode === "default"}
+                  className={`min-h-[500px] font-mono text-sm ${
+                    currentPrompt.mode === "default" ? "bg-muted/30 cursor-default" : ""
+                  }`}
+                  placeholder="시스템 프롬프트가 여기에 표시됩니다..."
+                />
+
+                <div className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    {selectedPromptType === "translate" && (
+                      <>
+                        <p>용어집, 인물 정보, 번역 가이드는 항상 자동으로 추가됩니다.</p>
+                        <p>여기서 수정하는 것은 번역 지시사항(System Role, 절대 원칙, 스타일 가이드, 출력 형식 등) 부분입니다.</p>
+                      </>
+                    )}
+                    {selectedPromptType === "retranslate" && (
+                      <>
+                        <p>작품 정보, 용어집, 사용자 피드백, 원문, 현재 번역본은 항상 자동으로 추가됩니다.</p>
+                        <p>여기서 수정하는 것은 재번역 시 System Role과 지시사항 부분입니다.</p>
+                      </>
+                    )}
+                    {selectedPromptType === "improve" && (
+                      <>
+                        <p>장르 정보와 JSON 출력 형식은 항상 자동으로 추가됩니다.</p>
+                        <p>여기서 수정하는 것은 표현 개선 시 윤문가의 역할과 규칙 부분입니다.</p>
+                      </>
+                    )}
+                    {selectedPromptType === "bible" && (
+                      <>
+                        <p>작품 정보, 원문, JSON 출력 스키마는 항상 자동으로 추가됩니다.</p>
+                        <p>여기서 수정하는 것은 설정집 분석 시 지시사항 부분입니다.</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </TabsContent>
       </Tabs>

@@ -42,6 +42,8 @@ export {
   filterContextForContent,
   buildSystemPrompt,
   buildRetranslatePrompt,
+  getDefaultPromptTemplate,
+  getDefaultRetranslateTemplate,
 } from "./prompt";
 export type { TranslationContext } from "./prompt";
 
@@ -68,5 +70,6 @@ export type {
 export {
   retranslateText,
   improveExpression,
+  getDefaultImproveTemplate,
 } from "./retranslate";
 export type { ExpressionSuggestion } from "./retranslate";

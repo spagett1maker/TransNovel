@@ -5,7 +5,7 @@
  * Connects to DB via RDS Proxy for connection pooling at scale.
  */
 
-import { SQSHandler, SQSEvent, SQSRecord } from "aws-lambda";
+import { SQSEvent, SQSRecord, SQSBatchResponse } from "aws-lambda";
 import { PrismaClient } from "@prisma/client";
 import { getSecrets, GeminiSecrets, DatabaseSecrets } from "./secrets";
 import { translateChapter, TranslationContext, prependChapterTitle, extractTranslatedTitle } from "./gemini";
@@ -28,6 +28,15 @@ async function getPrismaClient(): Promise<PrismaClient> {
   }
   return prisma;
 }
+
+// Clean up Prisma connection when Lambda container is recycled
+process.on("SIGTERM", async () => {
+  log("SIGTERM received, disconnecting Prisma");
+  if (prisma) {
+    await prisma.$disconnect();
+    prisma = null;
+  }
+});
 
 // Message payload interface
 interface TranslationMessage {
@@ -52,14 +61,36 @@ function log(message: string, data?: object) {
 
 /**
  * Main Lambda handler
+ * Returns SQSBatchResponse for partial failure reporting.
+ * Each message is processed independently - one failure won't block others.
  */
-export const handler: SQSHandler = async (event: SQSEvent) => {
+export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   log("Received SQS event", { recordCount: event.Records.length });
 
-  // Process each message (batch size should be 1 for translation)
-  for (const record of event.Records) {
-    await processMessage(record);
-  }
+  const results = await Promise.allSettled(
+    event.Records.map(record => processMessage(record))
+  );
+
+  const batchItemFailures: Array<{ itemIdentifier: string }> = [];
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      log("Message failed", {
+        messageId: event.Records[index].messageId,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
+      batchItemFailures.push({
+        itemIdentifier: event.Records[index].messageId,
+      });
+    }
+  });
+
+  log("Batch processing complete", {
+    total: event.Records.length,
+    succeeded: event.Records.length - batchItemFailures.length,
+    failed: batchItemFailures.length,
+  });
+
+  return { batchItemFailures };
 };
 
 /**
@@ -183,6 +214,7 @@ async function processMessage(record: SQSRecord): Promise<void> {
         personality: c.personality || undefined,
       })),
       translationGuide: work.settingBible?.translationGuide || undefined,
+      customSystemPrompt: work.settingBible?.customSystemPrompt || undefined,
     };
 
     // 5. Get Gemini API key from pool

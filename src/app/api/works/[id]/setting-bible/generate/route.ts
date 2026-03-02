@@ -53,21 +53,24 @@ export async function POST(
       bibleId = bible.id;
     }
 
-    // 배치 계획 생성 (resume: 이미 분석된 챕터 건너뛰기)
-    let chapterNumbers = work.chapters.map((ch) => ch.number);
-    let skippedChapters = 0;
-    const analyzedUpTo = work.settingBible?.analyzedChapters ?? 0;
+    // 배치 계획 생성
+    const chapterNumbers = work.chapters.map((ch) => ch.number);
+    const analyzedCount = work.settingBible?.analyzedChapters ?? 0;
+    const skippedChapters = 0;
 
-    if (analyzedUpTo > 0) {
-      const allCount = chapterNumbers.length;
-      chapterNumbers = chapterNumbers.filter((n) => n > analyzedUpTo);
-      skippedChapters = allCount - chapterNumbers.length;
+    // 이미 전체 분석 완료된 경우에만 건너뛰기
+    // (재분석 버튼 클릭 시에는 analyzedChapters를 0으로 리셋하고 호출됨)
+    if (analyzedCount > 0 && analyzedCount >= chapterNumbers.length) {
+      return NextResponse.json({
+        alreadyComplete: true,
+        message: "이미 모든 회차가 분석되었습니다.",
+      });
     }
 
     if (chapterNumbers.length === 0) {
       return NextResponse.json({
         alreadyComplete: true,
-        message: "이미 모든 회차가 분석되었습니다.",
+        message: "분석할 회차가 없습니다.",
       });
     }
 
@@ -92,7 +95,7 @@ export async function POST(
           userId: session.user.id,
           batchPlan: batchPlan,
           totalBatches: batchPlan.length,
-          analyzedChapters: analyzedUpTo,
+          analyzedChapters: 0,
           maxRetries: 5,
         },
       });
@@ -104,6 +107,12 @@ export async function POST(
         { status: 409 }
       );
     }
+
+    // 새 생성 시작 시 analyzedChapters 리셋 (배치별 increment로 다시 쌓임)
+    await db.settingBible.updateMany({
+      where: { workId: id },
+      data: { analyzedChapters: 0 },
+    });
 
     // SQS를 통해 전체 배치 fan-out 큐잉
     if (!isQueueEnabled()) {

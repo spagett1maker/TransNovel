@@ -62,5 +62,5 @@ export declare class AnalysisError extends Error {
 /**
  * Main analysis function
  */
-export declare function analyzeBatch(workInfo: WorkInfo, chapters: ChapterContent[], chapterRange: ChapterRange, apiKey: string, maxRetries?: number): Promise<AnalysisResult>;
+export declare function analyzeBatch(workInfo: WorkInfo, chapters: ChapterContent[], chapterRange: ChapterRange, apiKey: string, maxRetries?: number, customPrompt?: string): Promise<AnalysisResult>;
 //# sourceMappingURL=gemini.d.ts.map

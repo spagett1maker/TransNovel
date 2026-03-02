@@ -31,6 +31,7 @@ export interface TranslationContext {
     personality?: string;
   }>;
   translationGuide?: string;
+  customSystemPrompt?: string;
 }
 
 const TITLE_MARKER = "【제목】";
@@ -91,6 +92,18 @@ ${context.characters.map((c) => `- ${c.nameOriginal} → ${c.nameKorean} (${c.ro
 `;
   }
 
+  const dynamicSections = `${glossarySection}
+${characterSection}
+${context.translationGuide ? `[번역 가이드]\n${context.translationGuide}\n` : ""}`;
+
+  if (context.customSystemPrompt) {
+    return `${context.customSystemPrompt}
+
+${dynamicSections}
+
+입력되는 원문을 한국어로 번역하세요.`;
+  }
+
   return `당신은 웹소설 번역 전문가입니다.
 
 [작품 정보]
@@ -98,9 +111,7 @@ ${context.characters.map((c) => `- ${c.nameOriginal} → ${c.nameKorean} (${c.ro
 - 장르: ${context.genres.join(", ")}
 - 연령등급: ${context.ageRating}
 - 줄거리: ${context.synopsis}
-${glossarySection}
-${characterSection}
-${context.translationGuide ? `[번역 가이드]\n${context.translationGuide}\n` : ""}
+${dynamicSections}
 
 [지침]
 1. 원문의 의미와 뉘앙스를 정확하게 전달하세요

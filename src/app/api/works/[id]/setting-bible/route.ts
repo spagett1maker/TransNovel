@@ -233,9 +233,23 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const { translationGuide } = body;
+    const { translationGuide, customSystemPrompt, customRetranslatePrompt, customImprovePrompt, customBiblePrompt } = body;
 
-    if (typeof translationGuide !== "string") {
+    // 하나 이상의 유효한 필드가 있어야 함
+    const updateData: Record<string, unknown> = {};
+
+    if (typeof translationGuide === "string") {
+      updateData.translationGuide = translationGuide;
+    }
+
+    // 커스텀 프롬프트 필드들: null이면 기본값으로 초기화, string이면 저장
+    for (const [key, value] of Object.entries({ customSystemPrompt, customRetranslatePrompt, customImprovePrompt, customBiblePrompt })) {
+      if (value !== undefined && (value === null || typeof value === "string")) {
+        updateData[key] = value;
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
         { error: "유효하지 않은 요청입니다." },
         { status: 400 }
@@ -244,7 +258,7 @@ export async function PATCH(
 
     const updated = await db.settingBible.update({
       where: { workId: id },
-      data: { translationGuide },
+      data: updateData,
     });
 
     return NextResponse.json({ bible: updated });

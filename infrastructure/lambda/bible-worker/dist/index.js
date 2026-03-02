@@ -68,6 +68,14 @@ async function getPrismaClient() {
     }
     return prisma;
 }
+// Clean up Prisma connection when Lambda container is recycled
+process.on("SIGTERM", async () => {
+    log("SIGTERM received, disconnecting Prisma");
+    if (prisma) {
+        await prisma.$disconnect();
+        prisma = null;
+    }
+});
 const UPDATE_BATCH_SIZE = 20;
 // Logging helper
 function log(message, data) {
@@ -133,7 +141,6 @@ async function processMessage(record) {
                 status: true,
                 batchPlan: true,
                 totalBatches: true,
-                analyzedChapters: true,
                 maxRetries: true,
             },
         });
@@ -165,7 +172,7 @@ async function processMessage(record) {
                 genres: true,
                 synopsis: true,
                 sourceLanguage: true,
-                settingBible: { select: { id: true } },
+                settingBible: { select: { id: true, customBiblePrompt: true } },
             },
         });
         if (!work || !work.settingBible) {
@@ -201,7 +208,8 @@ async function processMessage(record) {
         log("Using Gemini API key", { keyName, keyIndex: keyIndex % keyCount });
         // 6. Process this single batch
         log("Processing batch", { batchIndex, chapterNumbers });
-        const result = await processSingleBatch(db, workId, bibleId, chapterNumbers, workInfo, apiKey, job.analyzedChapters);
+        const customBiblePrompt = work.settingBible.customBiblePrompt || undefined;
+        const result = await processSingleBatch(db, workId, bibleId, chapterNumbers, workInfo, apiKey, customBiblePrompt);
         const duration = Date.now() - startTime;
         log("Batch completed", {
             batchIndex,
@@ -235,33 +243,38 @@ async function incrementAndCheckCompletion(db, jobId, fullBatchPlan) {
     });
     // Only the last Lambda to finish will see this condition
     if (updatedJob.currentBatchIndex >= updatedJob.totalBatches && updatedJob.status !== "COMPLETED") {
-        const maxChapter = Math.max(...fullBatchPlan.flat());
+        // 배치 플랜 내 전체 챕터 수 (실제 분석된 개수)
+        const totalAnalyzedCount = fullBatchPlan.flat().length;
+        const job = await db.bibleGenerationJob.findUnique({
+            where: { id: jobId },
+            select: { workId: true, analyzedChapters: true },
+        });
+        // 이전 분석 분 + 이번 작업 분석 분
+        const finalCount = (job?.analyzedChapters ?? 0) + totalAnalyzedCount;
         await db.bibleGenerationJob.update({
             where: { id: jobId },
             data: {
                 status: "COMPLETED",
                 completedAt: new Date(),
-                analyzedChapters: maxChapter,
+                analyzedChapters: finalCount,
             },
         });
-        // Update bible analyzedChapters
-        const job = await db.bibleGenerationJob.findUnique({
-            where: { id: jobId },
-            select: { workId: true },
-        });
+        // SettingBible에도 총 분석된 챕터 수 반영
         if (job) {
+            // 작품 전체 챕터 수로 설정 (모든 배치 완료 = 전체 분석 완료)
+            const totalChapters = await db.chapter.count({ where: { workId: job.workId } });
             await db.settingBible.updateMany({
                 where: { workId: job.workId },
-                data: { analyzedChapters: maxChapter },
+                data: { analyzedChapters: totalChapters },
             });
         }
-        log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, maxChapter });
+        log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, totalAnalyzedCount });
     }
 }
 /**
  * Process a single batch of chapters
  */
-async function processSingleBatch(db, workId, bibleId, chapterNumbers, workInfo, apiKey, currentAnalyzedChapters) {
+async function processSingleBatch(db, workId, bibleId, chapterNumbers, workInfo, apiKey, customBiblePrompt) {
     // Load chapters
     const chapters = await db.chapter.findMany({
         where: {
@@ -286,15 +299,15 @@ async function processSingleBatch(db, workId, bibleId, chapterNumbers, workInfo,
         originalContent: ch.originalContent,
     }));
     // Run AI analysis
-    const analysisResult = await (0, gemini_1.analyzeBatch)(workInfo, chapterContents, chapterRange, apiKey);
+    const analysisResult = await (0, gemini_1.analyzeBatch)(workInfo, chapterContents, chapterRange, apiKey, 5, customBiblePrompt);
     // Save results to database
-    await saveAnalysisResult(db, bibleId, workId, analysisResult, chapterRange, currentAnalyzedChapters);
-    return { analyzedChapters: chapterRange.end };
+    await saveAnalysisResult(db, bibleId, workId, analysisResult, chapterRange, chapters.length);
+    return { analyzedChapters: chapters.length };
 }
 /**
  * Save analysis result to database
  */
-async function saveAnalysisResult(db, bibleId, workId, result, chapterRange, currentAnalyzedChapters) {
+async function saveAnalysisResult(db, bibleId, workId, result, chapterRange, batchChapterCount) {
     // 1. Characters
     const charNamesToCheck = result.characters.map((c) => c.nameOriginal).filter(Boolean);
     const existingChars = charNamesToCheck.length > 0
@@ -470,13 +483,12 @@ async function saveAnalysisResult(db, bibleId, workId, result, chapterRange, cur
     for (let i = 0; i < eventsToUpdate.length; i += UPDATE_BATCH_SIZE) {
         await Promise.all(eventsToUpdate.slice(i, i + UPDATE_BATCH_SIZE).map(({ id, data }) => db.timelineEvent.update({ where: { id }, data })));
     }
-    // 4. Update bible metadata
-    const newAnalyzedChapters = Math.max(currentAnalyzedChapters, chapterRange.end);
+    // 4. Update bible metadata (배치 내 실제 챕터 수만큼 증가)
     await db.settingBible.update({
         where: { id: bibleId },
         data: {
             status: "DRAFT",
-            analyzedChapters: newAnalyzedChapters,
+            analyzedChapters: { increment: batchChapterCount },
             ...(result.translationNotes ? { translationGuide: result.translationNotes } : {}),
             generatedAt: new Date(),
         },

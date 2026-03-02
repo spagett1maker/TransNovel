@@ -57,7 +57,7 @@ export async function POST(
         synopsis: work.synopsis,
         sourceLanguage: work.sourceLanguage,
       },
-      work.settingBible.analyzedChapters
+      work.settingBible.customBiblePrompt || undefined
     );
 
     return NextResponse.json({

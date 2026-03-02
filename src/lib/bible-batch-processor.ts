@@ -30,7 +30,7 @@ export async function processBibleBatch(
   bibleId: string,
   chapterNumbers: number[],
   workInfo: WorkInfo,
-  currentAnalyzedChapters: number
+  customBiblePrompt?: string
 ): Promise<ProcessBatchResult> {
   // 필요한 챕터만 조회
   const chaptersToAnalyze = await db.chapter.findMany({
@@ -58,7 +58,8 @@ export async function processBibleBatch(
   const analysisResult = await analyzeBatch(
     workInfo,
     chaptersToAnalyze,
-    chapterRange
+    chapterRange,
+    customBiblePrompt
   );
 
   // ── 1. 캐릭터 처리 ──
@@ -286,14 +287,12 @@ export async function processBibleBatch(
     );
   }
 
-  // ── 4. 메타데이터 업데이트 ──
-  const newAnalyzedChapters = Math.max(currentAnalyzedChapters, chapterRange.end);
-
+  // ── 4. 메타데이터 업데이트 (배치 내 실제 챕터 수만큼 증가) ──
   await db.settingBible.update({
     where: { id: bibleId },
     data: {
       status: "DRAFT",
-      analyzedChapters: newAnalyzedChapters,
+      analyzedChapters: { increment: chaptersToAnalyze.length },
       ...(analysisResult.translationNotes
         ? { translationGuide: analysisResult.translationNotes }
         : {}),
@@ -314,7 +313,7 @@ export async function processBibleBatch(
   ]);
 
   return {
-    analyzedChapters: newAnalyzedChapters,
+    analyzedChapters: chaptersToAnalyze.length,
     stats: {
       characters: charCount,
       terms: termCount,

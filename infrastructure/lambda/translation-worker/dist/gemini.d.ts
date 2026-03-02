@@ -20,6 +20,17 @@ export interface TranslationContext {
     }>;
     translationGuide?: string;
 }
+/**
+ * 원문 앞에 제목 마커를 붙여서 Gemini가 함께 번역하도록 함
+ */
+export declare function prependChapterTitle(content: string, title: string | null | undefined): string;
+/**
+ * 번역 결과에서 제목 마커를 파싱하여 제목과 본문을 분리
+ */
+export declare function extractTranslatedTitle(translatedContent: string): {
+    translatedTitle: string | null;
+    content: string;
+};
 export declare class TranslationError extends Error {
     code: string;
     retryable: boolean;

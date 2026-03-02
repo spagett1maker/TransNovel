@@ -85,7 +85,7 @@ async function processMessage(record) {
         // 2. Load chapter
         const chapter = await db.chapter.findUnique({
             where: { id: chapterId },
-            select: { id: true, number: true, originalContent: true, status: true },
+            select: { id: true, number: true, title: true, originalContent: true, status: true },
         });
         if (!chapter) {
             log("Chapter not found", { chapterId });
@@ -159,21 +159,27 @@ async function processMessage(record) {
         const keyName = `GEMINI_API_KEY_${(keyIndex % keyCount) + 1}`;
         const apiKey = geminiSecrets[keyName] || geminiSecrets.GEMINI_API_KEY_1;
         log("Using Gemini API key", { keyName, keyIndex: keyIndex % keyCount });
-        // 6. Execute translation
+        // 6. Execute translation (제목 포함)
+        const contentWithTitle = (0, gemini_1.prependChapterTitle)(chapter.originalContent, chapter.title);
         log("Starting translation", {
-            contentLength: chapter.originalContent.length,
+            contentLength: contentWithTitle.length,
+            hasTitle: !!chapter.title,
         });
-        const translatedContent = await (0, gemini_1.translateChapter)(chapter.originalContent, context, apiKey, 5 // maxRetries
+        const rawTranslated = await (0, gemini_1.translateChapter)(contentWithTitle, context, apiKey, 5 // maxRetries
         );
+        // 번역된 제목과 본문 분리
+        const { translatedTitle, content: translatedBody } = (0, gemini_1.extractTranslatedTitle)(rawTranslated);
         log("Translation completed", {
             originalLength: chapter.originalContent.length,
-            translatedLength: translatedContent.length,
+            translatedLength: translatedBody.length,
+            translatedTitle: translatedTitle || "(none)",
         });
         // 7. Save result
         await db.chapter.update({
             where: { id: chapterId },
             data: {
-                translatedContent,
+                translatedContent: translatedBody,
+                translatedTitle: translatedTitle || undefined,
                 status: "TRANSLATED",
                 translationMeta: undefined,
             },

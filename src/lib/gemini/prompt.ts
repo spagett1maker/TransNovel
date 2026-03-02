@@ -16,6 +16,7 @@ export interface TranslationContext {
   glossary?: Array<{ original: string; translated: string; note?: string }>;
   characters?: CharacterInfo[];
   translationGuide?: string;
+  customSystemPrompt?: string;
 }
 
 /**
@@ -102,16 +103,10 @@ const AGE_GUIDES: Record<string, string> = {
 - 자극적 표현도 문맥에 맞게 살림`,
 };
 
-export function buildSystemPrompt(context: TranslationContext): string {
-  const genreGuides = context.genres
-    .map((g) => GENRE_GUIDES[g] || GENRE_GUIDES["기타"])
-    .join("\n\n");
-  const ageGuide = AGE_GUIDES[context.ageRating] || AGE_GUIDES["ALL"];
-
-  // 용어집 섹션
-  let glossarySection = "";
-  if (context.glossary && context.glossary.length > 0) {
-    glossarySection = `
+// 동적 섹션 빌더 (용어집, 인물, 번역 가이드)
+function buildGlossarySection(context: TranslationContext): string {
+  if (!context.glossary || context.glossary.length === 0) return "";
+  return `
 [PART 4. 용어집 (Setting Bible)]
 아래 용어는 반드시 지정된 번역어를 사용하십시오.
 
@@ -119,19 +114,18 @@ export function buildSystemPrompt(context: TranslationContext): string {
 |------|------|------|
 ${context.glossary.map((g) => `| ${g.original} | ${g.translated} | ${g.note || ""} |`).join("\n")}
 `;
-  }
+}
 
-  // 인물 정보 섹션
-  let characterSection = "";
-  if (context.characters && context.characters.length > 0) {
-    const mainCharacters = context.characters.filter(
-      (c) => c.role === "PROTAGONIST" || c.role === "ANTAGONIST"
-    );
-    const supportingCharacters = context.characters.filter(
-      (c) => c.role === "SUPPORTING"
-    );
+function buildCharacterSection(context: TranslationContext): string {
+  if (!context.characters || context.characters.length === 0) return "";
+  const mainCharacters = context.characters.filter(
+    (c) => c.role === "PROTAGONIST" || c.role === "ANTAGONIST"
+  );
+  const supportingCharacters = context.characters.filter(
+    (c) => c.role === "SUPPORTING"
+  );
 
-    characterSection = `
+  return `
 [PART 5. 인물 정보 (Character Bible)]
 번역 시 각 인물의 말투와 성격을 일관되게 유지하십시오.
 
@@ -143,16 +137,25 @@ ${mainCharacters.map((c) => `- **${c.nameOriginal}** → **${c.nameKorean}** (${
 ${supportingCharacters.length > 0 ? `## 조연
 ${supportingCharacters.slice(0, 10).map((c) => `- **${c.nameOriginal}** → **${c.nameKorean}**${c.speechStyle ? ` (${c.speechStyle})` : ""}`).join("\n")}` : ""}
 `;
-  }
+}
 
-  // 번역 가이드 섹션
-  let translationGuideSection = "";
-  if (context.translationGuide) {
-    translationGuideSection = `
+function buildGuideSection(context: TranslationContext): string {
+  if (!context.translationGuide) return "";
+  return `
 [PART 6. 작품별 번역 가이드]
 ${context.translationGuide}
 `;
-  }
+}
+
+/**
+ * 기본 시스템 프롬프트의 하드코딩 부분 (System Role + PART 1,2,3,7)
+ * 커스텀 프롬프트 편집 시 초기값으로 사용
+ */
+export function getDefaultPromptTemplate(context: TranslationContext): string {
+  const genreGuides = context.genres
+    .map((g) => GENRE_GUIDES[g] || GENRE_GUIDES["기타"])
+    .join("\n\n");
+  const ageGuide = AGE_GUIDES[context.ageRating] || AGE_GUIDES["ALL"];
 
   return `[System Role]
 당신은 대한민국 웹소설 시장(카카오페이지, 네이버 시리즈)에서 활동하는 **'S급 ${context.genres.join("/")} 전문 각색 번역가'**입니다.
@@ -234,21 +237,61 @@ ${ageGuide}
 - 일방적 가해는 지양
 
 ═══════════════════════════════════════════════════════════════
-${glossarySection}
-${characterSection}
-${translationGuideSection}
-═══════════════════════════════════════════════════════════════
 
 [PART 7. 출력 형식]
 
 1. **번역문만 출력** - 설명, 주석, 번역 노트 포함 금지
 2. **원문의 문단 구조 유지** - 단, 가독성을 위해 긴 문단은 분리 가능
 3. **대화문 형식 유지** - 따옴표, 줄바꿈 등 원문 형식 준수
-4. **회차 제목 번역** - 원문 첫 줄에 【제목】으로 시작하는 회차 제목이 있으면, 번역문도 반드시 첫 줄에 【제목】번역된 제목 형식으로 출력하고 빈 줄 후 본문 번역을 이어가세요
+4. **회차 제목 번역** - 원문 첫 줄에 【제목】으로 시작하는 회차 제목이 있으면, 번역문도 반드시 첫 줄에 【제목】번역된 제목 형식으로 출력하고 빈 줄 후 본문 번역을 이어가세요`;
+}
 
+export function buildSystemPrompt(context: TranslationContext): string {
+  // 동적 섹션 (항상 자동 생성)
+  const glossarySection = buildGlossarySection(context);
+  const characterSection = buildCharacterSection(context);
+  const translationGuideSection = buildGuideSection(context);
+
+  if (context.customSystemPrompt) {
+    // 커스텀 프롬프트 + 동적 데이터 결합
+    return `${context.customSystemPrompt}
+
+═══════════════════════════════════════════════════════════════
+${glossarySection}
+${characterSection}
+${translationGuideSection}
 ═══════════════════════════════════════════════════════════════
 
 이제 입력되는 중국어 원문을 위 지침에 따라 한국어로 번역하십시오.`;
+  }
+
+  // 기본 프롬프트 (하드코딩 템플릿 + 동적 데이터)
+  const template = getDefaultPromptTemplate(context);
+
+  return `${template}
+${glossarySection}
+${characterSection}
+${translationGuideSection}
+═══════════════════════════════════════════════════════════════
+
+이제 입력되는 중국어 원문을 위 지침에 따라 한국어로 번역하십시오.`;
+}
+
+/**
+ * 재번역 프롬프트의 기본 템플릿 (커스텀 편집 시 초기값)
+ * System Role + 지시사항 부분만 반환 (동적 데이터 제외)
+ */
+export function getDefaultRetranslateTemplate(): string {
+  return `[System Role]
+당신은 웹소설 번역 수정 전문가입니다.
+기존 번역본을 사용자의 피드백을 반영하여 개선해야 합니다.
+
+[지시사항]
+1. 위 피드백을 반영하여 번역을 수정하세요
+2. 피드백에서 지적한 부분을 중점적으로 개선하세요
+3. 나머지 부분은 원래 번역의 스타일을 유지하세요
+4. 수정된 전체 번역문만 출력하세요 (설명 없이)
+5. 용어집의 번역어를 준수하세요`;
 }
 
 // 재번역 프롬프트 생성
@@ -257,7 +300,8 @@ export function buildRetranslatePrompt(
   currentTranslation: string,
   feedback: string,
   selectedText: string | undefined,
-  context: TranslationContext
+  context: TranslationContext,
+  customRetranslatePrompt?: string
 ): string {
   let selectedSection = "";
   if (selectedText) {
@@ -271,11 +315,8 @@ ${selectedText}
 `;
   }
 
-  return `[System Role]
-당신은 웹소설 번역 수정 전문가입니다.
-기존 번역본을 사용자의 피드백을 반영하여 개선해야 합니다.
-
-[작품 정보]
+  // 동적 데이터 섹션 (항상 자동 생성)
+  const dynamicSection = `[작품 정보]
 - 제목: ${context.titleKo}
 - 장르: ${context.genres.join(", ")}
 - 연령등급: ${context.ageRating}
@@ -298,14 +339,19 @@ ${originalContent}
 [현재 번역본]
 ${currentTranslation}
 
-═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════`;
 
-[지시사항]
-1. 위 피드백을 반영하여 번역을 수정하세요
-2. 피드백에서 지적한 부분을 중점적으로 개선하세요
-3. 나머지 부분은 원래 번역의 스타일을 유지하세요
-4. 수정된 전체 번역문만 출력하세요 (설명 없이)
-5. 용어집의 번역어를 준수하세요
+  if (customRetranslatePrompt) {
+    return `${customRetranslatePrompt}
+
+${dynamicSection}
+
+수정된 번역문:`;
+  }
+
+  return `${getDefaultRetranslateTemplate()}
+
+${dynamicSection}
 
 수정된 번역문:`;
 }

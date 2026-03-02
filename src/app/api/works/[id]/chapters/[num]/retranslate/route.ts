@@ -45,6 +45,9 @@ export async function POST(
       where: { id: workId },
       include: {
         glossary: true,
+        settingBible: {
+          select: { customRetranslatePrompt: true },
+        },
       },
     });
 
@@ -103,7 +106,9 @@ export async function POST(
       currentTranslation,
       feedback,
       selectedText,
-      context
+      context,
+      3, // maxRetries
+      work.settingBible?.customRetranslatePrompt || undefined
     );
 
     console.log("[Retranslate API] 재번역 완료, 길이:", retranslatedContent.length);

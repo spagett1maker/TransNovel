@@ -33,7 +33,8 @@ export async function retranslateText(
   feedback: string,
   selectedText: string | undefined,
   context: TranslationContext,
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  customRetranslatePrompt?: string
 ): Promise<string> {
   log("retranslateText 시작", {
     originalLength: originalContent.length,
@@ -50,7 +51,8 @@ export async function retranslateText(
     currentTranslation,
     feedback,
     selectedText,
-    context
+    context,
+    customRetranslatePrompt
   );
 
   let lastError: TranslationError | null = null;
@@ -141,33 +143,46 @@ export interface ExpressionSuggestion {
   reason: string;
 }
 
+// JSON 출력 형식 요구사항 (커스텀 프롬프트에도 항상 추가)
+const IMPROVE_JSON_FORMAT = `반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON 배열만 반환하세요:
+[
+  { "text": "대안 표현 1", "reason": "변경 이유 (10자 이내)" },
+  { "text": "대안 표현 2", "reason": "변경 이유 (10자 이내)" },
+  { "text": "대안 표현 3", "reason": "변경 이유 (10자 이내)" }
+]`;
+
+/**
+ * 표현 개선 프롬프트의 기본 템플릿 (커스텀 편집 시 초기값)
+ * JSON 출력 형식은 자동으로 추가되므로 포함하지 않음
+ */
+export function getDefaultImproveTemplate(): string {
+  return `당신은 전문 한국어 윤문가입니다. 사용자가 선택한 텍스트에 대해 더 나은 3가지 대안 표현을 제안하세요.
+
+규칙:
+- 원문의 의미를 정확히 유지하면서 표현력을 높이세요
+- 자연스러운 한국어 문체를 사용하세요
+- 각 제안은 서로 다른 스타일/뉘앙스를 가져야 합니다
+- 번역 투가 아닌 자연스러운 한국어를 사용하세요`;
+}
+
 /**
  * 선택한 텍스트에 대해 3가지 대안 표현을 제안합니다.
  */
 export async function improveExpression(
   selectedText: string,
   context: string,
-  genres: string[] = []
+  genres: string[] = [],
+  customImprovePrompt?: string
 ): Promise<ExpressionSuggestion[]> {
   const genreNote = genres.length > 0
     ? `이 작품의 장르는 ${genres.join(", ")}입니다. 장르 분위기에 맞는 표현을 제안하세요.`
     : "";
 
-  const systemPrompt = `당신은 전문 한국어 윤문가입니다. 사용자가 선택한 텍스트에 대해 더 나은 3가지 대안 표현을 제안하세요.
+  const basePrompt = customImprovePrompt || getDefaultImproveTemplate();
 
-규칙:
-- 원문의 의미를 정확히 유지하면서 표현력을 높이세요
-- 자연스러운 한국어 문체를 사용하세요
-- 각 제안은 서로 다른 스타일/뉘앙스를 가져야 합니다
-- 번역 투가 아닌 자연스러운 한국어를 사용하세요
-${genreNote}
-
-반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON 배열만 반환하세요:
-[
-  { "text": "대안 표현 1", "reason": "변경 이유 (10자 이내)" },
-  { "text": "대안 표현 2", "reason": "변경 이유 (10자 이내)" },
-  { "text": "대안 표현 3", "reason": "변경 이유 (10자 이내)" }
-]`;
+  const systemPrompt = `${basePrompt}
+${genreNote ? `${genreNote}\n` : ""}
+${IMPROVE_JSON_FORMAT}`;
 
   const userPrompt = context
     ? `문맥:\n${context}\n\n개선할 텍스트: "${selectedText}"`

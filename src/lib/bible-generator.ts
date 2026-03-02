@@ -122,21 +122,8 @@ interface WorkInfo {
   sourceLanguage: string;
 }
 
-// 설정집 분석 프롬프트 생성 (JSON 모드 최적화)
-function buildBibleAnalysisPrompt(
-  workInfo: WorkInfo,
-  chaptersText: string,
-  chapterRange: { start: number; end: number }
-): string {
-  return `웹소설 번역용 설정집 추출. ${chapterRange.start}~${chapterRange.end}화 분석.
-
-[작품] ${workInfo.title} | ${workInfo.genres.join(", ")} | ${workInfo.sourceLanguage}
-${workInfo.synopsis ? `줄거리: ${workInfo.synopsis.slice(0, 200)}` : ""}
-
-[원문]
-${chaptersText}
-
-[추출 스키마]
+// JSON 출력 스키마 (커스텀/기본 프롬프트 모두에서 항상 사용)
+const BIBLE_JSON_SCHEMA = `[추출 스키마]
 {
   "characters": [{
     "nameOriginal": "원문명(필수)",
@@ -172,6 +159,42 @@ ${chaptersText}
   }],
   "translationNotes": "번역 시 주의사항"
 }`;
+
+// 기본 설정집 분석 지시사항 (커스텀 프롬프트 편집 시 초기값)
+const DEFAULT_BIBLE_INSTRUCTIONS = `웹소설 번역용 설정집 추출.
+
+[분석 지침]
+1. 등장인물: 원문명과 한국어명을 반드시 추출. 역할, 성격, 말투 특징, 인물 간 관계를 정리
+2. 용어: 고유명사, 기술명, 지명, 직위 등을 원문과 번역어로 정리. 맥락과 참고사항 포함
+3. 이벤트: 주요 사건, 복선, 반전, 캐릭터 발전 등을 기록. 중요도 1-5 평가
+4. 번역 참고사항: 작품의 문체, 분위기, 번역 시 주의점 등을 정리`;
+
+// 기본 설정집 분석 프롬프트 템플릿 반환 (미리보기/편집용)
+export function getDefaultBibleTemplate(): string {
+  return DEFAULT_BIBLE_INSTRUCTIONS;
+}
+
+// 설정집 분석 프롬프트 생성 (JSON 모드 최적화)
+function buildBibleAnalysisPrompt(
+  workInfo: WorkInfo,
+  chaptersText: string,
+  chapterRange: { start: number; end: number },
+  customPrompt?: string
+): string {
+  const workInfoSection = `[작품] ${workInfo.title} | ${workInfo.genres.join(", ")} | ${workInfo.sourceLanguage}
+${workInfo.synopsis ? `줄거리: ${workInfo.synopsis.slice(0, 200)}` : ""}`;
+
+  const instructions = customPrompt || `웹소설 번역용 설정집 추출.`;
+
+  return `${instructions}
+
+${workInfoSection}
+분석 범위: ${chapterRange.start}~${chapterRange.end}화
+
+[원문]
+${chaptersText}
+
+${BIBLE_JSON_SCHEMA}`;
 }
 
 // 불완전한 JSON 복구 시도
@@ -508,7 +531,8 @@ async function tryAnalyzeWithModel(
 export async function analyzeBatch(
   workInfo: WorkInfo,
   chapters: Array<{ number: number; originalContent: string }>,
-  chapterRange: { start: number; end: number }
+  chapterRange: { start: number; end: number },
+  customPrompt?: string
 ): Promise<BibleAnalysisResult> {
   log("analyzeBatch 시작", {
     title: workInfo.title,
@@ -521,7 +545,7 @@ export async function analyzeBatch(
     .map((ch) => `[${ch.number}화]\n${ch.originalContent}`)
     .join("\n\n═══════════════════════════════════════════════════════════════\n\n");
 
-  const prompt = buildBibleAnalysisPrompt(workInfo, chaptersText, chapterRange);
+  const prompt = buildBibleAnalysisPrompt(workInfo, chaptersText, chapterRange, customPrompt);
 
   let lastError: Error | null = null;
 

@@ -5,6 +5,8 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TranslationError = void 0;
+exports.prependChapterTitle = prependChapterTitle;
+exports.extractTranslatedTitle = extractTranslatedTitle;
 exports.translateChapter = translateChapter;
 const generative_ai_1 = require("@google/generative-ai");
 // Configuration
@@ -17,6 +19,28 @@ const MODEL_PRIORITY = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
 ];
+const TITLE_MARKER = "【제목】";
+/**
+ * 원문 앞에 제목 마커를 붙여서 Gemini가 함께 번역하도록 함
+ */
+function prependChapterTitle(content, title) {
+    if (!title || !title.trim())
+        return content;
+    return `${TITLE_MARKER}${title.trim()}\n\n${content}`;
+}
+/**
+ * 번역 결과에서 제목 마커를 파싱하여 제목과 본문을 분리
+ */
+function extractTranslatedTitle(translatedContent) {
+    const match = translatedContent.match(/^【제목】(.+)\n\n?/);
+    if (match) {
+        return {
+            translatedTitle: match[1].trim(),
+            content: translatedContent.slice(match[0].length),
+        };
+    }
+    return { translatedTitle: null, content: translatedContent };
+}
 class TranslationError extends Error {
     code;
     retryable;
@@ -63,6 +87,7 @@ ${context.translationGuide ? `[번역 가이드]\n${context.translationGuide}\n`
 3. 캐릭터의 말투와 성격을 일관되게 유지하세요
 4. 한국 독자에게 자연스러운 문체로 번역하세요
 5. 번역문만 출력하세요 (설명, 주석 없이)
+6. 원문 첫 줄에 【제목】으로 시작하는 회차 제목이 있으면, 번역문도 반드시 첫 줄에 【제목】번역된 제목 형식으로 출력하고 빈 줄 후 본문 번역을 이어가세요
 
 입력되는 원문을 한국어로 번역하세요.`;
 }
