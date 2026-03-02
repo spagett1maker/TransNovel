@@ -2,3 +2,7 @@ infrastructure/
 remotion-video/
 .agents/
 .claude/
+example/
+docs/
+e2e/
+scripts/
