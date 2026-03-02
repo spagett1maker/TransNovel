@@ -246,11 +246,13 @@ export function parseChaptersFromText(
     // 볼륨 마커 필터링 + 볼륨 추적
     let currentVolume: string | undefined;
     let hasAnyVolume = false;
+    let extraVolumeCount = 0;
     const filteredHeaders: HeaderInfo[] = [];
 
     for (const h of allHeaders) {
       if (h.type === "chapter" && isVolumeMarker(h.header)) {
-        currentVolume = extractVolumeName(h.header);
+        extraVolumeCount++;
+        currentVolume = extraVolumeCount === 1 ? "외전" : `외전 ${extraVolumeCount}`;
         hasAnyVolume = true;
         continue; // 볼륨 마커 자체는 챕터가 아니므로 제외
       }
@@ -259,9 +261,8 @@ export function parseChaptersFromText(
 
     // 볼륨이 존재하면 이전 챕터들에 기본 볼륨명 소급 적용
     if (hasAnyVolume) {
-      const defaultVolume = hasMainTextPrefix ? "正文" : "正文";
       for (const h of filteredHeaders) {
-        if (!h.volume) h.volume = defaultVolume;
+        if (!h.volume) h.volume = "본편";
       }
     }
 
