@@ -225,10 +225,11 @@ resource "aws_lambda_function" "health_checker" {
 
 # SQS Event Source Mapping for Translation Worker
 resource "aws_lambda_event_source_mapping" "translation_sqs" {
-  event_source_arn = aws_sqs_queue.translation.arn
-  function_name    = aws_lambda_function.translation_worker.arn
-  batch_size       = 1 # Process one message at a time
-  enabled          = true
+  event_source_arn                   = aws_sqs_queue.translation.arn
+  function_name                      = aws_lambda_function.translation_worker.arn
+  batch_size                         = 1 # Process one message at a time
+  enabled                            = true
+  function_response_types            = ["ReportBatchItemFailures"]
 
   scaling_config {
     maximum_concurrency = var.translation_lambda_concurrency

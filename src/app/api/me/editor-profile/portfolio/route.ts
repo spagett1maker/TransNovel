@@ -28,6 +28,7 @@ export async function GET() {
     const portfolioItems = await db.portfolioItem.findMany({
       where: { profileId: profile.id },
       orderBy: { sortOrder: "asc" },
+      take: 100,
     });
 
     return NextResponse.json({ items: portfolioItems });

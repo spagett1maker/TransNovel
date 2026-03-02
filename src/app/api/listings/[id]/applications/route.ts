@@ -55,6 +55,7 @@ export async function GET(
         },
       },
       orderBy: { submittedAt: "desc" },
+      take: 100,
     });
 
     return NextResponse.json({ data: applications });

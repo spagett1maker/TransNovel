@@ -1,11 +1,13 @@
 import {
-  genAI,
   log,
   logError,
   API_TIMEOUT_MS,
+  getApiKeyCount,
+  getGeminiApiKeyByIndex,
+  createGenAIClient,
 } from "./client";
 import {
-  rateLimiter,
+  getRateLimiterForKey,
   withTimeout,
   addJitter,
   delay,
@@ -17,6 +19,9 @@ import {
   buildRetranslatePrompt,
 } from "./prompt";
 import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+
+// Per-key round-robin counter for distributing retranslate requests across API keys
+let keyRotationCounter = 0;
 
 const safetySettings = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -42,10 +47,6 @@ export async function retranslateText(
     hasSelectedText: !!selectedText,
   });
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-  });
-
   const prompt = buildRetranslatePrompt(
     originalContent,
     currentTranslation,
@@ -58,10 +59,16 @@ export async function retranslateText(
   let lastError: TranslationError | null = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    log(`재번역 시도 ${attempt + 1}/${maxRetries}`);
+    // Select API key via round-robin for this attempt
+    const keyIndex = keyRotationCounter++ % getApiKeyCount();
+    const apiKey = getGeminiApiKeyByIndex(keyIndex);
+    const client = createGenAIClient(apiKey);
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    log(`재번역 시도 ${attempt + 1}/${maxRetries} (키 ${keyIndex})`);
     try {
-      // Rate Limiter 토큰 획득
-      await rateLimiter.acquire();
+      // Per-key Rate Limiter 토큰 획득
+      await getRateLimiterForKey(keyIndex).acquire();
 
       // 타임아웃 적용
       const result = await withTimeout(
@@ -105,9 +112,9 @@ export async function retranslateText(
         message: lastError.message,
       });
 
-      // Rate limit 에러 시 rate limiter에 알림
+      // Rate limit 에러 시 해당 키의 rate limiter에 알림
       if (lastError.code === "RATE_LIMIT") {
-        rateLimiter.onRateLimitError();
+        getRateLimiterForKey(keyIndex).onRateLimitError();
       }
 
       if (!lastError.retryable) {
@@ -188,14 +195,18 @@ ${IMPROVE_JSON_FORMAT}`;
     ? `문맥:\n${context}\n\n개선할 텍스트: "${selectedText}"`
     : `개선할 텍스트: "${selectedText}"`;
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
   const IMPROVE_TIMEOUT_MS = 30000; // 30초
   const MAX_RETRIES = 2;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Select API key via round-robin for this attempt
+    const keyIndex = keyRotationCounter++ % getApiKeyCount();
+    const apiKey = getGeminiApiKeyByIndex(keyIndex);
+    const client = createGenAIClient(apiKey);
+    const model = client.getGenerativeModel({ model: "gemini-2.5-flash" });
+
     try {
-      await rateLimiter.acquire();
+      await getRateLimiterForKey(keyIndex).acquire();
 
       const result = await withTimeout(
         model.generateContent({

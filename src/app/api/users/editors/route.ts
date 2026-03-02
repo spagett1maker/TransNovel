@@ -21,6 +21,7 @@ export async function GET() {
         name: true,
       },
       orderBy: { name: "asc" },
+      take: 200,
     });
 
     return NextResponse.json(editors);

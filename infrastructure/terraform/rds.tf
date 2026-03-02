@@ -19,7 +19,7 @@ resource "aws_db_parameter_group" "main" {
   # Connection settings (static parameter, requires reboot)
   parameter {
     name         = "max_connections"
-    value        = "400"
+    value        = "500"
     apply_method = "pending-reboot"
   }
 
@@ -201,7 +201,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections" {
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
-  threshold           = 150 # 75% of max_connections
+  threshold           = 375 # 75% of max_connections (500)
   alarm_description   = "RDS connection count is high"
 
   dimensions = {
