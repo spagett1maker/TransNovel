@@ -100,6 +100,31 @@ function extractTitleFromHeader(header: string): string | undefined {
   return undefined;
 }
 
+// 접두사가 붙은 챕터 헤더를 정규화 (파싱 전 전처리)
+// "正文 第285章 风雨" → "第285章 风雨"
+// "红顶 第1章 南渡北归" → "第1章 南渡北归"
+function normalizeChapterHeaders(text: string): string {
+  return text.replace(
+    /^([\s\u3000]*)((?:正文|[\u4e00-\u9fff]{2,4})\s+)(第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回].*)$/gm,
+    (match, ws: string, prefix: string, chapterAndRest: string) => {
+      // "正文"은 항상 섹션 라벨이므로 안전하게 제거
+      if (prefix.trim() === "正文") return ws + chapterAndRest;
+      // CJK 접두사: 짧은 줄(헤더)에서만 제거, 긴 줄(본문)은 유지
+      // 소설 본문에서 "赵甲第 第7章..." 같은 false positive 방지
+      if (match.trim().length <= 80) return ws + chapterAndRest;
+      return match;
+    }
+  );
+}
+
+// 볼륨 마커 감지 (챕터가 아님)
+// "第二卷红顶" → true (볼륨 마커)
+// "第三卷" → false (이름 없음, 챕터일 수 있음)
+function isVolumeMarker(header: string): boolean {
+  const stripped = stripMarkdown(header);
+  return /^第[一二三四五六七八九十百千万萬零〇\d]+卷\s*\S/.test(stripped);
+}
+
 // 프롤로그/에필로그 패턴
 const PROLOGUE_PATTERN = /^(?:序章|序幕|プロローグ|Prologue|프롤로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
 const EPILOGUE_PATTERN = /^(?:終章|尾声|エピローグ|Epilogue|에필로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
@@ -152,6 +177,9 @@ export function parseChaptersFromText(
     return chapters;
   }
 
+  // 접두사 정규화 (正文 第X章, 红顶 第X章 → 第X章)
+  text = normalizeChapterHeaders(text);
+
   // 프롤로그/에필로그 감지
   const prologueMatches = [...text.matchAll(new RegExp(PROLOGUE_PATTERN.source, "gim"))];
   const epilogueMatches = [...text.matchAll(new RegExp(EPILOGUE_PATTERN.source, "gim"))];
@@ -193,15 +221,22 @@ export function parseChaptersFromText(
     }
     for (const m of headerMatches) {
       if (m.index !== undefined) {
+        // 본문 텍스트 false positive 필터: "第一节课下课期间..." 같은 긴 줄 제외
+        if (m[0].trim().length > 120) continue;
         allHeaders.push({ index: m.index, header: m[0], type: "chapter" });
       }
     }
 
     allHeaders.sort((a, b) => a.index - b.index);
 
+    // 볼륨 마커 필터링 (第二卷红顶 등은 챕터가 아님)
+    const filteredHeaders = allHeaders.filter(
+      (h) => h.type !== "chapter" || !isVolumeMarker(h.header)
+    );
+
     // 첫 헤더 이전 텍스트가 있으면 프롤로그로
-    if (allHeaders.length > 0) {
-      const beforeFirst = text.slice(0, allHeaders[0].index).trim();
+    if (filteredHeaders.length > 0) {
+      const beforeFirst = text.slice(0, filteredHeaders[0].index).trim();
       if (beforeFirst && beforeFirst.length > 50) {
         chapters.push({
           number: 0,
@@ -213,10 +248,10 @@ export function parseChaptersFromText(
 
     // 각 헤더별 콘텐츠 추출
     let maxChapterNum = 0;
-    for (let i = 0; i < allHeaders.length; i++) {
-      const current = allHeaders[i];
+    for (let i = 0; i < filteredHeaders.length; i++) {
+      const current = filteredHeaders[i];
       const contentStart = current.index + current.header.length;
-      const contentEnd = i < allHeaders.length - 1 ? allHeaders[i + 1].index : text.length;
+      const contentEnd = i < filteredHeaders.length - 1 ? filteredHeaders[i + 1].index : text.length;
       const content = text.slice(contentStart, contentEnd).trim();
 
       if (!content) continue;
@@ -267,6 +302,39 @@ export function parseChaptersFromText(
           content: finalContent,
         });
       }
+    }
+
+    // 섹션 경계 감지: 챕터 번호가 급감하면 새 섹션(권)으로 간주하여 오프셋 적용
+    // 예: 정본 1~310, 외전 1~60 → 정본 1~310, 외전 311~370
+    let sectionOffset = 0;
+    let maxRawInSection = 0;
+
+    for (const ch of chapters) {
+      if (ch.number <= 0) continue; // 프롤로그/에필로그 건너뛰기
+
+      const rawNum = ch.number;
+
+      if (
+        maxRawInSection > 0 &&
+        rawNum < maxRawInSection * 0.3 &&
+        maxRawInSection - rawNum > 10
+      ) {
+        // 번호 리스타트 감지 → 새 섹션 시작
+        sectionOffset += maxRawInSection;
+        maxRawInSection = 0;
+      }
+
+      ch.number = rawNum + sectionOffset;
+
+      if (rawNum > maxRawInSection) {
+        maxRawInSection = rawNum;
+      }
+    }
+
+    // maxChapterNum 재계산 (오프셋 적용 후)
+    maxChapterNum = 0;
+    for (const ch of chapters) {
+      if (ch.number > maxChapterNum) maxChapterNum = ch.number;
     }
 
     // 에필로그 번호 재할당
