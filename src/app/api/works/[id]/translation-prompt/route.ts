@@ -1,8 +1,11 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
+import { UserRole } from "@prisma/client";
+
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { canAccessWork } from "@/lib/permissions";
 import {
   buildSystemPrompt,
   getDefaultPromptTemplate,
@@ -37,7 +40,8 @@ export async function GET(
       },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 

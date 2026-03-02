@@ -1,9 +1,10 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { Prisma, CharacterRole, TermCategory } from "@prisma/client";
+import { Prisma, CharacterRole, TermCategory, UserRole } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { canAccessWork } from "@/lib/permissions";
 
 // GET /api/works/[id]/setting-bible - 설정집 조회 (페이지네이션 지원)
 export async function GET(
@@ -20,10 +21,11 @@ export async function GET(
 
     const work = await db.work.findUnique({
       where: { id },
-      select: { authorId: true },
+      select: { authorId: true, editorId: true },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
@@ -154,10 +156,11 @@ export async function POST(
 
     const work = await db.work.findUnique({
       where: { id },
-      select: { authorId: true, status: true },
+      select: { authorId: true, editorId: true, status: true },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
@@ -224,12 +227,9 @@ export async function PATCH(
       include: { settingBible: true },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
-    }
-
-    if (!work.settingBible) {
-      return NextResponse.json({ error: "설정집이 없습니다." }, { status: 404 });
     }
 
     const body = await req.json();
@@ -256,9 +256,11 @@ export async function PATCH(
       );
     }
 
-    const updated = await db.settingBible.update({
+    // 설정집이 없으면 자동 생성 (프롬프트만 미리 설정 가능)
+    const updated = await db.settingBible.upsert({
       where: { workId: id },
-      data: updateData,
+      update: updateData,
+      create: { workId: id, ...updateData },
     });
 
     return NextResponse.json({ bible: updated });
@@ -289,7 +291,8 @@ export async function DELETE(
       include: { settingBible: true },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 

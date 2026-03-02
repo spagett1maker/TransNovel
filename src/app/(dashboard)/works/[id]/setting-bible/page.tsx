@@ -191,6 +191,7 @@ export default function SettingBiblePage() {
   const [guideText, setGuideText] = useState("");
   const [isSavingGuide, setIsSavingGuide] = useState(false);
   const [guideDirty, setGuideDirty] = useState(false);
+  const [showPreGenPrompt, setShowPreGenPrompt] = useState(false);
 
   // 프롬프트 편집 상태
   type PromptType = "translate" | "retranslate" | "improve" | "bible";
@@ -394,13 +395,13 @@ export default function SettingBiblePage() {
     }
   }, [bible, activeTab, eventPage, fetchTabData]);
 
-  // 프롬프트 탭 선택 시 미리보기 로드
+  // 프롬프트 미리보기 로드 (프롬프트 탭 또는 생성 전 프롬프트 설정)
   useEffect(() => {
-    if (!bible) return;
-    if (activeTab === "prompt") {
+    if (isLoading) return;
+    if (activeTab === "prompt" || showPreGenPrompt) {
       fetchPromptPreview();
     }
-  }, [bible, activeTab, fetchPromptPreview]);
+  }, [isLoading, activeTab, showPreGenPrompt, fetchPromptPreview]);
 
   // 필터 변경 시 페이지 리셋
   useEffect(() => { setCharacterPage(1); }, [characterRoleFilter]);
@@ -546,6 +547,148 @@ export default function SettingBiblePage() {
   };
 
   const isConfirmed = bible?.status === "CONFIRMED";
+  const showGenerationScreen = !bible || (bible.analyzedChapters === 0 && !bible.generatedAt);
+
+  // 프롬프트 편집 UI (생성 화면 + 프롬프트 탭 공유)
+  const promptEditorContent = (
+    <div className="section-surface p-6">
+      {/* 헤더: 프롬프트 타입 선택 + 저장 버튼 */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h3 className="font-semibold">프롬프트 설정</h3>
+          <Select value={selectedPromptType} onValueChange={(v) => setSelectedPromptType(v as PromptType)}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bible">설정집 분석</SelectItem>
+              <SelectItem value="translate">초벌 번역</SelectItem>
+              <SelectItem value="retranslate">재번역</SelectItem>
+              <SelectItem value="improve">표현 개선</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex gap-2">
+          {currentPrompt.mode === "custom" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleResetPrompt}
+            >
+              <RotateCcw className="h-4 w-4 mr-2" />
+              기본값으로 초기화
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={handleSavePrompt}
+            disabled={isSavingPrompt || !currentPrompt.dirty}
+          >
+            {isSavingPrompt ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4 mr-2" />
+            )}
+            저장
+          </Button>
+        </div>
+      </div>
+
+      {/* 모드 선택 */}
+      <div className="flex gap-3 mb-4">
+        <button
+          type="button"
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+            currentPrompt.mode === "default"
+              ? "border-primary bg-primary/5 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+          }`}
+          onClick={() => {
+            if (currentPrompt.mode !== "default") {
+              handleResetPrompt();
+            }
+          }}
+        >
+          <div className={`h-3 w-3 rounded-full border-2 ${
+            currentPrompt.mode === "default" ? "border-primary bg-primary" : "border-muted-foreground"
+          }`} />
+          기본 프롬프트 사용
+        </button>
+        <button
+          type="button"
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+            currentPrompt.mode === "custom"
+              ? "border-primary bg-primary/5 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+          }`}
+          onClick={handleSwitchToCustom}
+        >
+          <div className={`h-3 w-3 rounded-full border-2 ${
+            currentPrompt.mode === "custom" ? "border-primary bg-primary" : "border-muted-foreground"
+          }`} />
+          커스텀 프롬프트 사용
+        </button>
+      </div>
+
+      {isLoadingPrompt ? (
+        <div className="flex items-center justify-center py-12">
+          <Spinner size="md" />
+        </div>
+      ) : (
+        <>
+          <Textarea
+            value={currentPrompt.mode === "custom"
+              ? currentPrompt.customValue
+              : (currentPrompt.fullPreview || currentPrompt.defaultTemplate)
+            }
+            onChange={(e) => {
+              if (currentPrompt.mode === "custom") {
+                updatePromptState(selectedPromptType, {
+                  customValue: e.target.value,
+                  dirty: true,
+                });
+              }
+            }}
+            readOnly={currentPrompt.mode === "default"}
+            className={`min-h-[500px] font-mono text-sm ${
+              currentPrompt.mode === "default" ? "bg-muted/30 cursor-default" : ""
+            }`}
+            placeholder="시스템 프롬프트가 여기에 표시됩니다..."
+          />
+
+          <div className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              {selectedPromptType === "translate" && (
+                <>
+                  <p>용어집, 인물 정보, 번역 가이드는 항상 자동으로 추가됩니다.</p>
+                  <p>여기서 수정하는 것은 번역 지시사항(System Role, 절대 원칙, 스타일 가이드, 출력 형식 등) 부분입니다.</p>
+                </>
+              )}
+              {selectedPromptType === "retranslate" && (
+                <>
+                  <p>작품 정보, 용어집, 사용자 피드백, 원문, 현재 번역본은 항상 자동으로 추가됩니다.</p>
+                  <p>여기서 수정하는 것은 재번역 시 System Role과 지시사항 부분입니다.</p>
+                </>
+              )}
+              {selectedPromptType === "improve" && (
+                <>
+                  <p>장르 정보와 JSON 출력 형식은 항상 자동으로 추가됩니다.</p>
+                  <p>여기서 수정하는 것은 표현 개선 시 윤문가의 역할과 규칙 부분입니다.</p>
+                </>
+              )}
+              {selectedPromptType === "bible" && (
+                <>
+                  <p>작품 정보, 원문, JSON 출력 스키마는 항상 자동으로 추가됩니다.</p>
+                  <p>여기서 수정하는 것은 설정집 분석 시 지시사항 부분입니다.</p>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   if (isLoading) {
     return (
@@ -555,8 +698,8 @@ export default function SettingBiblePage() {
     );
   }
 
-  // 설정집이 없는 경우
-  if (!bible) {
+  // 설정집이 없거나 아직 생성 전인 경우
+  if (showGenerationScreen) {
     return (
       <div className="max-w-6xl">
         <nav className="mb-6">
@@ -634,6 +777,27 @@ export default function SettingBiblePage() {
               </Button>
             </div>
           )}
+        </div>
+
+        {/* 프롬프트 사전 설정 */}
+        <div className="mt-8 max-w-4xl mx-auto">
+          <button
+            type="button"
+            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors mb-4"
+            onClick={() => {
+              const opening = !showPreGenPrompt;
+              setShowPreGenPrompt(opening);
+              if (opening) {
+                setSelectedPromptType("bible");
+                fetchPromptPreview();
+              }
+            }}
+          >
+            <Terminal className="h-4 w-4" />
+            프롬프트 사전 설정
+            <ChevronRight className={`h-4 w-4 transition-transform ${showPreGenPrompt ? "rotate-90" : ""}`} />
+          </button>
+          {showPreGenPrompt && promptEditorContent}
         </div>
 
         <GenerationProgress
@@ -1009,143 +1173,7 @@ export default function SettingBiblePage() {
 
         {/* Prompt Tab */}
         <TabsContent value="prompt">
-          <div className="section-surface p-6">
-            {/* 헤더: 프롬프트 타입 선택 + 저장 버튼 */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <h3 className="font-semibold">프롬프트 설정</h3>
-                <Select value={selectedPromptType} onValueChange={(v) => setSelectedPromptType(v as PromptType)}>
-                  <SelectTrigger className="w-[160px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bible">설정집 분석</SelectItem>
-                    <SelectItem value="translate">초벌 번역</SelectItem>
-                    <SelectItem value="retranslate">재번역</SelectItem>
-                    <SelectItem value="improve">표현 개선</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex gap-2">
-                {currentPrompt.mode === "custom" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleResetPrompt}
-                  >
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    기본값으로 초기화
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  onClick={handleSavePrompt}
-                  disabled={isSavingPrompt || !currentPrompt.dirty}
-                >
-                  {isSavingPrompt ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  저장
-                </Button>
-              </div>
-            </div>
-
-            {/* 모드 선택 */}
-            <div className="flex gap-3 mb-4">
-              <button
-                type="button"
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                  currentPrompt.mode === "default"
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
-                }`}
-                onClick={() => {
-                  if (currentPrompt.mode !== "default") {
-                    handleResetPrompt();
-                  }
-                }}
-              >
-                <div className={`h-3 w-3 rounded-full border-2 ${
-                  currentPrompt.mode === "default" ? "border-primary bg-primary" : "border-muted-foreground"
-                }`} />
-                기본 프롬프트 사용
-              </button>
-              <button
-                type="button"
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                  currentPrompt.mode === "custom"
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
-                }`}
-                onClick={handleSwitchToCustom}
-              >
-                <div className={`h-3 w-3 rounded-full border-2 ${
-                  currentPrompt.mode === "custom" ? "border-primary bg-primary" : "border-muted-foreground"
-                }`} />
-                커스텀 프롬프트 사용
-              </button>
-            </div>
-
-            {isLoadingPrompt ? (
-              <div className="flex items-center justify-center py-12">
-                <Spinner size="md" />
-              </div>
-            ) : (
-              <>
-                <Textarea
-                  value={currentPrompt.mode === "custom"
-                    ? currentPrompt.customValue
-                    : (currentPrompt.fullPreview || currentPrompt.defaultTemplate)
-                  }
-                  onChange={(e) => {
-                    if (currentPrompt.mode === "custom") {
-                      updatePromptState(selectedPromptType, {
-                        customValue: e.target.value,
-                        dirty: true,
-                      });
-                    }
-                  }}
-                  readOnly={currentPrompt.mode === "default"}
-                  className={`min-h-[500px] font-mono text-sm ${
-                    currentPrompt.mode === "default" ? "bg-muted/30 cursor-default" : ""
-                  }`}
-                  placeholder="시스템 프롬프트가 여기에 표시됩니다..."
-                />
-
-                <div className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
-                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
-                  <div className="space-y-1">
-                    {selectedPromptType === "translate" && (
-                      <>
-                        <p>용어집, 인물 정보, 번역 가이드는 항상 자동으로 추가됩니다.</p>
-                        <p>여기서 수정하는 것은 번역 지시사항(System Role, 절대 원칙, 스타일 가이드, 출력 형식 등) 부분입니다.</p>
-                      </>
-                    )}
-                    {selectedPromptType === "retranslate" && (
-                      <>
-                        <p>작품 정보, 용어집, 사용자 피드백, 원문, 현재 번역본은 항상 자동으로 추가됩니다.</p>
-                        <p>여기서 수정하는 것은 재번역 시 System Role과 지시사항 부분입니다.</p>
-                      </>
-                    )}
-                    {selectedPromptType === "improve" && (
-                      <>
-                        <p>장르 정보와 JSON 출력 형식은 항상 자동으로 추가됩니다.</p>
-                        <p>여기서 수정하는 것은 표현 개선 시 윤문가의 역할과 규칙 부분입니다.</p>
-                      </>
-                    )}
-                    {selectedPromptType === "bible" && (
-                      <>
-                        <p>작품 정보, 원문, JSON 출력 스키마는 항상 자동으로 추가됩니다.</p>
-                        <p>여기서 수정하는 것은 설정집 분석 시 지시사항 부분입니다.</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          {promptEditorContent}
         </TabsContent>
       </Tabs>
 

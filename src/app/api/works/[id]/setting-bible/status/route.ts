@@ -1,8 +1,10 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
+import { UserRole } from "@prisma/client";
 
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { canAccessWork } from "@/lib/permissions";
 
 // GET /api/works/[id]/setting-bible/status - 설정집 생성 상태 조회
 export async function GET(
@@ -21,6 +23,7 @@ export async function GET(
       where: { id },
       select: {
         authorId: true,
+        editorId: true,
         status: true,
         _count: {
           select: { chapters: true },
@@ -44,7 +47,8 @@ export async function GET(
       },
     });
 
-    if (!work || work.authorId !== session.user.id) {
+    const userRole = session.user.role as UserRole;
+    if (!work || !canAccessWork(session.user.id, userRole, work)) {
       return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
     }
 
