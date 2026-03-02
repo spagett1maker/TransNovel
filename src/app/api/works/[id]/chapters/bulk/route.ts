@@ -10,6 +10,8 @@ interface ChapterInput {
   number: number;
   title?: string;
   content: string;
+  volume?: string;
+  volumeNumber?: number;
 }
 
 interface BulkUploadRequest {
@@ -112,6 +114,8 @@ export async function POST(
             title: chapter.title || null,
             originalContent: chapter.content,
             wordCount: chapter.content.length,
+            volume: chapter.volume || null,
+            volumeNumber: chapter.volumeNumber ?? null,
           })),
           skipDuplicates: true,
         });
@@ -136,6 +140,8 @@ export async function POST(
                 title: chapter.title || null,
                 originalContent: chapter.content,
                 wordCount: chapter.content.length,
+                volume: chapter.volume || null,
+                volumeNumber: chapter.volumeNumber ?? null,
               },
             })
           )

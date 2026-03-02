@@ -66,6 +66,8 @@ export async function GET(
           translatedTitle: true,
           status: true,
           wordCount: true,
+          volume: true,
+          volumeNumber: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -119,6 +121,8 @@ export async function POST(
         number: number;
         title?: string;
         content: string;
+        volume?: string;
+        volumeNumber?: number;
       }>;
     };
 
@@ -157,6 +161,8 @@ export async function POST(
           title: chapter.title || null,
           originalContent: chapter.content,
           wordCount: chapter.content.length,
+          volume: chapter.volume || null,
+          volumeNumber: chapter.volumeNumber ?? null,
         })),
         skipDuplicates: true,
       });
@@ -175,6 +181,8 @@ export async function POST(
               title: chapter.title || null,
               originalContent: chapter.content,
               wordCount: chapter.content.length,
+              volume: chapter.volume || null,
+              volumeNumber: chapter.volumeNumber ?? null,
             },
           })
         )

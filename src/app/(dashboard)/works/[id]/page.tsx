@@ -45,6 +45,8 @@ export default async function WorkDetailPage({
           translatedTitle: true,
           status: true,
           wordCount: true,
+          volume: true,
+          volumeNumber: true,
         },
       },
       glossary: {
@@ -311,6 +313,8 @@ export default async function WorkDetailPage({
                 translatedTitle: ch.translatedTitle ?? null,
                 status: ch.status,
                 wordCount: ch.wordCount,
+                volume: ch.volume,
+                volumeNumber: ch.volumeNumber,
               }))}
               itemsPerPage={10}
               canDelete={isAuthor}

@@ -167,24 +167,34 @@ export default function ChaptersPage() {
               </div>
             ) : (
               <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                {parsedChapters.map((chapter, index) => (
-                  <div
-                    key={index}
-                    className="rounded-lg border p-3 space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">
-                        {chapter.number}화{chapter.title && ` - ${chapter.title}`}
-                      </span>
-                      <Badge variant="outline">
-                        {chapter.content.length.toLocaleString()}자
-                      </Badge>
+                {parsedChapters.map((chapter, index) => {
+                  const prevVolume = index > 0 ? parsedChapters[index - 1].volume : undefined;
+                  const showVolumeHeader = chapter.volume && chapter.volume !== prevVolume;
+                  const displayNum = chapter.volumeNumber ?? chapter.number;
+
+                  return (
+                    <div key={index}>
+                      {showVolumeHeader && (
+                        <div className="text-xs font-semibold text-muted-foreground border-t pt-2 mt-2 first:border-t-0 first:mt-0">
+                          {chapter.volume}
+                        </div>
+                      )}
+                      <div className="rounded-lg border p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">
+                            {displayNum}화{chapter.title && ` - ${chapter.title}`}
+                          </span>
+                          <Badge variant="outline">
+                            {chapter.content.length.toLocaleString()}자
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground line-clamp-3">
+                          {chapter.content.slice(0, 200)}...
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground line-clamp-3">
-                      {chapter.content.slice(0, 200)}...
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

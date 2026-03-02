@@ -37,7 +37,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [rawText, setRawText] = useState("");
   const [separator, setSeparator] = useState("");
-  const [preview, setPreview] = useState<{ number: number; title?: string; wordCount: number }[]>([]);
+  const [preview, setPreview] = useState<{ number: number; title?: string; wordCount: number; volume?: string; volumeNumber?: number }[]>([]);
 
   // 크기 기반 배치 분할 (Vercel 4.5MB 제한 → 3MB 타깃)
   const MAX_BATCH_BYTES = 3 * 1024 * 1024;
@@ -76,7 +76,7 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
         return;
       }
 
-      setPreview(parsed.map((ch) => ({ number: ch.number, title: ch.title, wordCount: ch.content.length })));
+      setPreview(parsed.map((ch) => ({ number: ch.number, title: ch.title, wordCount: ch.content.length, volume: ch.volume, volumeNumber: ch.volumeNumber })));
 
       // 크기 기반 배치 분할 후 전송
       const batches = splitIntoBatches(parsed);
@@ -264,14 +264,27 @@ export function BulkUploadDialog({ workId, onSuccess }: BulkUploadDialogProps) {
           <div className="space-y-2">
             <Label>감지된 챕터</Label>
             <div className="max-h-[150px] overflow-y-auto rounded-md border p-2">
-              {preview.map((ch) => (
-                <div key={ch.number} className="flex justify-between py-1 text-sm">
-                  <span>
-                    {ch.number}화{ch.title && ` - ${ch.title}`}
-                  </span>
-                  <span className="text-muted-foreground">{ch.wordCount.toLocaleString()}자</span>
-                </div>
-              ))}
+              {preview.map((ch, idx) => {
+                const prevVolume = idx > 0 ? preview[idx - 1].volume : undefined;
+                const showVolumeHeader = ch.volume && ch.volume !== prevVolume;
+                const displayNum = ch.volumeNumber ?? ch.number;
+
+                return (
+                  <div key={ch.number}>
+                    {showVolumeHeader && (
+                      <div className="text-xs font-medium text-muted-foreground border-t pt-1.5 mt-1.5 first:border-t-0 first:mt-0">
+                        {ch.volume}
+                      </div>
+                    )}
+                    <div className="flex justify-between py-1 text-sm">
+                      <span>
+                        {displayNum}화{ch.title && ` - ${ch.title}`}
+                      </span>
+                      <span className="text-muted-foreground">{ch.wordCount.toLocaleString()}자</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

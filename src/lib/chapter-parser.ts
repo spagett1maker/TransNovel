@@ -2,6 +2,8 @@ export interface ParsedChapter {
   number: number;
   title?: string;
   content: string;
+  volume?: string;       // 볼륨 이름: "正文", "红顶" 등
+  volumeNumber?: number; // 볼륨 내 원래 챕터 번호
 }
 
 // 한자 숫자 → 아라비아 숫자 변환
@@ -125,6 +127,14 @@ function isVolumeMarker(header: string): boolean {
   return /^第[一二三四五六七八九十百千万萬零〇\d]+卷\s*\S/.test(stripped);
 }
 
+// 볼륨 마커에서 이름 추출
+// "第二卷红顶" → "红顶"
+function extractVolumeName(header: string): string {
+  const stripped = stripMarkdown(header);
+  const match = stripped.match(/^第[一二三四五六七八九十百千万萬零〇\d]+卷\s*(.+)$/);
+  return match?.[1]?.trim() || stripped;
+}
+
 // 프롤로그/에필로그 패턴
 const PROLOGUE_PATTERN = /^(?:序章|序幕|プロローグ|Prologue|프롤로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
 const EPILOGUE_PATTERN = /^(?:終章|尾声|エピローグ|Epilogue|에필로그)(?:\s*[:\-–—]\s*(.+))?$/gim;
@@ -177,6 +187,9 @@ export function parseChaptersFromText(
     return chapters;
   }
 
+  // 접두사에서 기본 볼륨 이름 사전 감지 (정규화 전)
+  const hasMainTextPrefix = /^[\s\u3000]*正文\s+第/m.test(text);
+
   // 접두사 정규화 (正文 第X章, 红顶 第X章 → 第X章)
   text = normalizeChapterHeaders(text);
 
@@ -205,6 +218,7 @@ export function parseChaptersFromText(
       index: number;
       header: string;
       type: "prologue" | "epilogue" | "chapter";
+      volume?: string;
     }
 
     const allHeaders: HeaderInfo[] = [];
@@ -229,10 +243,27 @@ export function parseChaptersFromText(
 
     allHeaders.sort((a, b) => a.index - b.index);
 
-    // 볼륨 마커 필터링 (第二卷红顶 등은 챕터가 아님)
-    const filteredHeaders = allHeaders.filter(
-      (h) => h.type !== "chapter" || !isVolumeMarker(h.header)
-    );
+    // 볼륨 마커 필터링 + 볼륨 추적
+    let currentVolume: string | undefined;
+    let hasAnyVolume = false;
+    const filteredHeaders: HeaderInfo[] = [];
+
+    for (const h of allHeaders) {
+      if (h.type === "chapter" && isVolumeMarker(h.header)) {
+        currentVolume = extractVolumeName(h.header);
+        hasAnyVolume = true;
+        continue; // 볼륨 마커 자체는 챕터가 아니므로 제외
+      }
+      filteredHeaders.push({ ...h, volume: currentVolume });
+    }
+
+    // 볼륨이 존재하면 이전 챕터들에 기본 볼륨명 소급 적용
+    if (hasAnyVolume) {
+      const defaultVolume = hasMainTextPrefix ? "正文" : "正文";
+      for (const h of filteredHeaders) {
+        if (!h.volume) h.volume = defaultVolume;
+      }
+    }
 
     // 첫 헤더 이전 텍스트가 있으면 프롤로그로
     if (filteredHeaders.length > 0) {
@@ -262,6 +293,7 @@ export function parseChaptersFromText(
           number: 0,
           title: titleMatch?.[1]?.trim() || "프롤로그",
           content,
+          volume: current.volume,
         });
       } else if (current.type === "epilogue") {
         // 에필로그는 마지막 챕터 번호 + 1
@@ -270,6 +302,7 @@ export function parseChaptersFromText(
           number: -1, // 나중에 재할당
           title: titleMatch?.[1]?.trim() || "에필로그",
           content,
+          volume: current.volume,
         });
       } else {
         const num = extractNumber(current.header);
@@ -300,6 +333,7 @@ export function parseChaptersFromText(
           number: chapterNum,
           title,
           content: finalContent,
+          volume: current.volume,
         });
       }
     }
@@ -322,6 +356,11 @@ export function parseChaptersFromText(
         // 번호 리스타트 감지 → 새 섹션 시작
         sectionOffset += maxRawInSection;
         maxRawInSection = 0;
+      }
+
+      // 볼륨 내 원래 번호 보존 (오프셋 적용 전)
+      if (hasAnyVolume) {
+        ch.volumeNumber = rawNum;
       }
 
       ch.number = rawNum + sectionOffset;

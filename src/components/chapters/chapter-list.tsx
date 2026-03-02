@@ -39,6 +39,8 @@ interface Chapter {
   translatedTitle: string | null;
   status: ChapterStatus | string;
   wordCount: number;
+  volume?: string | null;
+  volumeNumber?: number | null;
 }
 
 interface ChapterListProps {
@@ -85,6 +87,18 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
   // 안전하게 배열 처리
   const safeChapters = Array.isArray(chapters) ? chapters : [];
   const totalPages = Math.ceil(safeChapters.length / itemsPerPage);
+  const hasVolumes = useMemo(() => safeChapters.some(ch => ch.volume), [safeChapters]);
+
+  // 볼륨별 챕터 수 계산
+  const volumeCounts = useMemo(() => {
+    if (!hasVolumes) return new Map<string, number>();
+    const counts = new Map<string, number>();
+    for (const ch of safeChapters) {
+      const vol = ch.volume || "";
+      counts.set(vol, (counts.get(vol) || 0) + 1);
+    }
+    return counts;
+  }, [safeChapters, hasVolumes]);
 
   const paginatedChapters = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -99,88 +113,105 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
     <div>
       {/* Chapter List */}
       <div className="space-y-0">
-        {paginatedChapters.map((chapter) => {
+        {paginatedChapters.map((chapter, idx) => {
           const chapterStatus = getChapterStatusConfig(chapter.status as ChapterStatus);
           const hasTranslation = ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status as string);
           const isCurrentlyTranslating = currentTranslatingChapter === chapter.number;
 
+          // 볼륨 헤더: 이전 챕터와 볼륨이 다르면 삽입
+          const prevChapter = idx > 0 ? paginatedChapters[idx - 1] : (currentPage > 1 ? safeChapters[(currentPage - 1) * itemsPerPage - 1] : null);
+          const showVolumeHeader = hasVolumes && chapter.volume && (!prevChapter || prevChapter.volume !== chapter.volume);
+          const displayNum = hasVolumes ? (chapter.volumeNumber ?? chapter.number) : chapter.number;
+
           return (
-            <Link
-              key={chapter.id}
-              href={`/works/${workId}/chapters/${chapter.number}`}
-              className={cn(
-                "list-item group",
-                isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5 translation-active"
+            <div key={chapter.id}>
+              {showVolumeHeader && (
+                <div className="flex items-center gap-3 px-4 py-2.5 bg-muted/50 border-y border-border">
+                  <span className="text-xs font-semibold text-foreground">
+                    {chapter.volume}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {volumeCounts.get(chapter.volume!) || 0}화
+                  </span>
+                  <div className="flex-1 border-t border-border/50" />
+                </div>
               )}
-            >
-              <div className="flex items-center gap-4 min-w-0 flex-1">
-                {/* 챕터 번호 - 번역 중이면 아이콘 표시 */}
-                <span className={cn(
-                  "text-xs tabular-nums w-8 flex items-center justify-center",
-                  isCurrentlyTranslating ? "text-status-progress font-medium" : "text-muted-foreground"
-                )}>
-                  {isCurrentlyTranslating ? (
-                    <Zap className="h-4 w-4 text-status-progress" />
-                  ) : (
-                    String(chapter.number).padStart(3, "0")
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={cn(
-                      "font-medium group-hover:text-muted-foreground transition-colors",
-                      isCurrentlyTranslating && "text-status-progress"
-                    )}>
-                      {chapter.number}화
-                    </span>
-                    {(chapter.translatedTitle || chapter.title) && (
-                      <span className="text-muted-foreground truncate">
-                        {chapter.translatedTitle || chapter.title}
+              <Link
+                href={`/works/${workId}/chapters/${chapter.number}`}
+                className={cn(
+                  "list-item group",
+                  isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5 translation-active"
+                )}
+              >
+                <div className="flex items-center gap-4 min-w-0 flex-1">
+                  {/* 챕터 번호 - 번역 중이면 아이콘 표시 */}
+                  <span className={cn(
+                    "text-xs tabular-nums w-8 flex items-center justify-center",
+                    isCurrentlyTranslating ? "text-status-progress font-medium" : "text-muted-foreground"
+                  )}>
+                    {isCurrentlyTranslating ? (
+                      <Zap className="h-4 w-4 text-status-progress" />
+                    ) : (
+                      String(displayNum).padStart(3, "0")
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        "font-medium group-hover:text-muted-foreground transition-colors",
+                        isCurrentlyTranslating && "text-status-progress"
+                      )}>
+                        {displayNum}화
                       </span>
+                      {(chapter.translatedTitle || chapter.title) && (
+                        <span className="text-muted-foreground truncate">
+                          {chapter.translatedTitle || chapter.title}
+                        </span>
+                      )}
+                    </div>
+                    {/* 번역 중인 챕터는 상태 표시 */}
+                    {isCurrentlyTranslating ? (
+                      <div className="flex items-center gap-2 text-xs text-status-progress mt-0.5">
+                        <Spinner size="sm" className="text-status-progress" />
+                        <span>번역 중</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {chapter.wordCount.toLocaleString()}자
+                        {hasTranslation && " · 번역 완료"}
+                      </p>
                     )}
                   </div>
-                  {/* 번역 중인 챕터는 상태 표시 */}
-                  {isCurrentlyTranslating ? (
-                    <div className="flex items-center gap-2 text-xs text-status-progress mt-0.5">
-                      <Spinner size="sm" className="text-status-progress" />
-                      <span>번역 중</span>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {chapter.wordCount.toLocaleString()}자
-                      {hasTranslation && " · 번역 완료"}
-                    </p>
-                  )}
                 </div>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                {isCurrentlyTranslating ? (
-                  <Badge variant="progress" className="text-xs gap-1">
-                    <Spinner size="sm" className="text-white" />
-                    번역중
-                  </Badge>
-                ) : (
-                  <Badge variant={chapterStatus.variant} className="text-xs">
-                    {chapterStatus.label}
-                  </Badge>
-                )}
-                {canDelete && !isCurrentlyTranslating && (
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setDeletingChapter(chapter);
-                    }}
-                    className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                  보기 →
-                </span>
-              </div>
-            </Link>
+                <div className="flex items-center gap-3 shrink-0">
+                  {isCurrentlyTranslating ? (
+                    <Badge variant="progress" className="text-xs gap-1">
+                      <Spinner size="sm" className="text-white" />
+                      번역중
+                    </Badge>
+                  ) : (
+                    <Badge variant={chapterStatus.variant} className="text-xs">
+                      {chapterStatus.label}
+                    </Badge>
+                  )}
+                  {canDelete && !isCurrentlyTranslating && (
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDeletingChapter(chapter);
+                      }}
+                      className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                    보기 →
+                  </span>
+                </div>
+              </Link>
+            </div>
           );
         })}
       </div>

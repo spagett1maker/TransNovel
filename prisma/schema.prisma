@@ -246,6 +246,10 @@ model Chapter {
   status            ChapterStatus @default(PENDING)
   wordCount         Int           @default(0)
 
+  // 볼륨 메타데이터 (다권 소설 지원)
+  volume       String? // 볼륨 이름: "正文", "红顶" 등
+  volumeNumber Int?    // 볼륨 내 원래 챕터 번호
+
   // 번역 중간 저장 메타데이터 (JSON)
   // { lastSavedChunk: number, totalChunks: number, partialResults: string[] }
   translationMeta Json?
@@ -277,6 +281,7 @@ model Chapter {
   @@index([workId])
   @@index([status])
   @@index([workId, status])
+  @@index([workId, volume])
 }
 
 model GlossaryItem {
