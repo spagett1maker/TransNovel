@@ -19,7 +19,7 @@ resource "aws_db_parameter_group" "main" {
   # Connection settings (static parameter, requires reboot)
   parameter {
     name         = "max_connections"
-    value        = "200"
+    value        = "400"
     apply_method = "pending-reboot"
   }
 
