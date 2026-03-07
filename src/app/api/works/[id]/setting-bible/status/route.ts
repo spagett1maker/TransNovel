@@ -53,7 +53,8 @@ export async function GET(
     }
 
     // 활성 작업 조회 (가장 최근 것)
-    const activeJob = await db.bibleGenerationJob.findFirst({
+    const totalChapters = work._count.chapters;
+    const activeJobRaw = await db.bibleGenerationJob.findFirst({
       where: { workId: id },
       orderBy: { createdAt: "desc" },
       select: {
@@ -70,12 +71,21 @@ export async function GET(
       },
     });
 
+    // SQS 재시도로 analyzedChapters가 실제 챕터 수를 초과할 수 있으므로 cap 처리
+    const activeJob = activeJobRaw
+      ? {
+          ...activeJobRaw,
+          currentBatchIndex: Math.min(activeJobRaw.currentBatchIndex, activeJobRaw.totalBatches),
+          analyzedChapters: Math.min(activeJobRaw.analyzedChapters, totalChapters),
+        }
+      : null;
+
     if (!work.settingBible) {
       return NextResponse.json({
         exists: false,
         workStatus: work.status,
-        totalChapters: work._count.chapters,
-        job: activeJob ?? null,
+        totalChapters,
+        job: activeJob,
       });
     }
 
@@ -83,7 +93,7 @@ export async function GET(
       exists: true,
       workStatus: work.status,
       bibleStatus: work.settingBible.status,
-      totalChapters: work._count.chapters,
+      totalChapters,
       analyzedChapters: work.settingBible.analyzedChapters,
       generatedAt: work.settingBible.generatedAt,
       confirmedAt: work.settingBible.confirmedAt,
