@@ -311,7 +311,6 @@ async function processMessage(record: SQSRecord): Promise<void> {
     log(`Chapter ${chapterNumber} failed`, {
       error: errorMessage,
       chapterId,
-      contentLength: chapter?.originalContent?.length,
     });
 
     // 재시도 가능한 에러인지 판단
