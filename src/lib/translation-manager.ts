@@ -724,7 +724,6 @@ class TranslationManager {
     log(`${result.count}개의 오래된 작업 정리됨`);
     return result.count;
   }
-}
 
   // Lazy cleanup: 확률적으로 오래된 작업 정리 (별도 cron 불필요)
   // 매 호출 시 5% 확률로 실행하여 DB 부하 최소화
