@@ -153,16 +153,6 @@ export function GenerationProgress({
             </div>
           )}
 
-          {/* 분석 상태 */}
-          {job && (
-            <div className="flex justify-between text-sm text-muted-foreground">
-              <span>분석된 회차</span>
-              <span className="tabular-nums">
-                {job.analyzedChapters}/{totalChapters}화
-              </span>
-            </div>
-          )}
-
           {/* 통계 */}
           {job?.stats && (
             <div className="grid grid-cols-3 gap-2 p-3 bg-muted rounded-lg">
