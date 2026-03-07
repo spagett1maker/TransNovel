@@ -138,9 +138,9 @@ export const CHUNK_MAX_RETRIES = 2; // 청크별 최대 재시도 횟수 (모델
 
 // 모델 우선순위 (fallback) - 설정집 분석과 동일
 export const MODEL_PRIORITY = [
+  "gemini-3-flash-preview",
   "gemini-2.5-flash",
   "gemini-2.0-flash",
-  "gemini-1.5-flash",
 ];
 
 // 실패 임계값 설정
