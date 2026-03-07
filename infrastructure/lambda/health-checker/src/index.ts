@@ -285,16 +285,15 @@ async function checkStaleBibleJobs(db: PrismaClient): Promise<number> {
     });
 
     if (progress >= 0.9) {
-      // Auto-complete: update job + SettingBible + Work status
-      const batchPlan = job.batchPlan as number[][] | null;
-      const maxChapter = batchPlan ? Math.max(...batchPlan.flat()) : job.analyzedChapters;
+      // Auto-complete: use actual chapter count (not max chapter number)
+      const totalChapters = await db.chapter.count({ where: { workId: job.workId } });
 
       await db.bibleGenerationJob.update({
         where: { id: job.id },
         data: {
           status: "COMPLETED",
           completedAt: new Date(),
-          analyzedChapters: maxChapter,
+          analyzedChapters: totalChapters,
         },
       });
 
@@ -302,7 +301,7 @@ async function checkStaleBibleJobs(db: PrismaClient): Promise<number> {
       await db.settingBible.updateMany({
         where: { workId: job.workId },
         data: {
-          analyzedChapters: maxChapter,
+          analyzedChapters: totalChapters,
           generatedAt: new Date(),
         },
       });
@@ -313,7 +312,7 @@ async function checkStaleBibleJobs(db: PrismaClient): Promise<number> {
         data: { status: "BIBLE_DRAFT" },
       });
 
-      log("Auto-completed stale bible job", { jobId: job.id, maxChapter });
+      log("Auto-completed stale bible job", { jobId: job.id, totalChapters });
     } else {
       // Mark as failed
       await db.bibleGenerationJob.update({

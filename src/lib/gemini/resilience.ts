@@ -121,6 +121,8 @@ export function getCircuitBreakerState() {
 }
 
 // 글로벌 Rate Limiter (싱글톤) - Promise 기반 큐로 경쟁 조건 방지
+const MAX_QUEUE_SIZE = 1000; // 큐 최대 크기 — OOM 방지
+
 class RateLimiter {
   private tokens: number;
   private lastRefill: number;
@@ -183,6 +185,15 @@ class RateLimiter {
     if (this.pendingQueue.length === 0 && this.tokens >= 1) {
       this.tokens -= 1;
       return;
+    }
+
+    // 큐 크기 초과 시 즉시 거부 (OOM 방지)
+    if (this.pendingQueue.length >= MAX_QUEUE_SIZE) {
+      throw new TranslationError(
+        `요청 대기열이 가득 찼습니다 (${MAX_QUEUE_SIZE}개). 잠시 후 다시 시도해주세요.`,
+        "QUEUE_FULL",
+        true
+      );
     }
 
     // 그 외에는 큐에 추가하고 대기
@@ -343,12 +354,12 @@ export function analyzeError(error: unknown): TranslationError {
       );
     }
 
-    // Content filtering
+    // Content filtering — retryable: 다른 모델 fallback + 안전 우회 프롬프트 재시도 허용
     if (message.includes("safety") || message.includes("blocked") || message.includes("filter")) {
       return new TranslationError(
         "콘텐츠 안전 정책으로 인해 번역이 거부되었습니다.",
         "CONTENT_BLOCKED",
-        false
+        true
       );
     }
 

@@ -23,7 +23,9 @@ export async function GET(
     const work = await db.work.findUnique({
       where: { id },
       include: {
-        creators: true,
+        creators: {
+          select: { id: true, name: true, role: true },
+        },
         chapters: {
           select: {
             id: true,

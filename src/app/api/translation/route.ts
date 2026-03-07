@@ -69,6 +69,9 @@ export async function POST(req: Request) {
     }
     console.log("[Translation API] 인증 성공:", session.user.email);
 
+    // 오래된 완료/실패 작업 정리 (5% 확률, 비동기)
+    translationManager.maybeLazyCleanup();
+
     // Rate Limiting 체크
     const rateLimit = await checkRateLimit(session.user.id);
     if (!rateLimit.allowed) {

@@ -158,14 +158,17 @@ export async function GET(
     }
 
     // 여러 챕터인 경우 ZIP으로 묶기
-    // 메모리 최적화: 챕터 콘텐츠를 한 건씩 DB에서 로드하여 파일 버퍼로 변환
+    // 일괄 조회로 N+1 쿼리 최적화 (200 chaptersLimit → 1 DB 쿼리)
+    const chapterContents = await db.chapter.findMany({
+      where: { id: { in: chapterMeta.map((m) => m.id) } },
+      select: { id: true, translatedContent: true, editedContent: true },
+    });
+    const contentMap = new Map(chapterContents.map((ch) => [ch.id, ch]));
+
     const files: Array<{ name: string; content: Buffer }> = [];
 
     for (const meta of chapterMeta) {
-      const ch = await db.chapter.findUnique({
-        where: { id: meta.id },
-        select: { translatedContent: true, editedContent: true },
-      });
+      const ch = contentMap.get(meta.id);
 
       const content = ch
         ? contentType === "edited"

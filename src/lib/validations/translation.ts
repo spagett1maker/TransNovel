@@ -11,7 +11,7 @@ export const translationRequestSchema = z.object({
         .max(10000, "챕터 번호는 10000 이하여야 합니다.")
     )
     .min(1, "최소 1개 이상의 챕터를 선택해야 합니다.")
-    .max(10000, "한 번에 최대 10000개 챕터까지 선택할 수 있습니다."),
+    .max(200, "한 번에 최대 200개 챕터까지 선택할 수 있습니다."),
   force: z.boolean().optional(),
 });
 

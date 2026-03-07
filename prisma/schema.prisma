@@ -426,6 +426,8 @@ model ActiveTranslationJob {
   @@index([userId])
   @@index([status])
   @@index([updatedAt])
+  @@index([status, updatedAt])
+  @@index([userId, status])
 }
 
 // 번역 작업 히스토리 (영구 저장)
@@ -514,6 +516,7 @@ model Character {
 
   @@unique([bibleId, nameOriginal])
   @@index([bibleId])
+  @@index([bibleId, isConfirmed])
 }
 
 model SettingTerm {
@@ -534,6 +537,8 @@ model SettingTerm {
   @@unique([bibleId, original])
   @@index([bibleId])
   @@index([category])
+  @@index([bibleId, isConfirmed])
+  @@index([bibleId, category])
 }
 
 model TimelineEvent {
@@ -555,6 +560,7 @@ model TimelineEvent {
   @@index([bibleId])
   @@index([chapterStart])
   @@unique([bibleId, title, chapterStart])
+  @@index([bibleId, eventType])
 }
 
 // ============================================
@@ -589,6 +595,8 @@ model BibleGenerationJob {
 
   @@index([status])
   @@index([workId])
+  @@index([workId, status])
+  @@index([createdAt])
 }
 
 // ============================================

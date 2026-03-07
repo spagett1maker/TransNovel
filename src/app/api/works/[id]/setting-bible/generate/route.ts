@@ -6,6 +6,10 @@ import { db } from "@/lib/db";
 import { getOptimalBatchPlan } from "@/lib/bible-generator";
 import { isQueueEnabled, startBibleGeneration } from "@/lib/queue";
 
+// Vercel 서버리스 함수 타임아웃 확장 (Pro: 최대 300초)
+// SQS 큐잉이 대형 작품(200+ 배치)에서 30초 초과할 수 있음
+export const maxDuration = 300;
+
 // POST /api/works/[id]/setting-bible/generate — 설정집 생성 작업 등록
 export async function POST(
   req: Request,
@@ -75,6 +79,21 @@ export async function POST(
     }
 
     const batchPlan = getOptimalBatchPlan(chapterNumbers);
+
+    // 고착 작업 자동 정리 (30분 이상 업데이트 없는 IN_PROGRESS 작업)
+    const STUCK_JOB_TIMEOUT_MS = 30 * 60 * 1000;
+    const stuckCutoff = new Date(Date.now() - STUCK_JOB_TIMEOUT_MS);
+    await db.bibleGenerationJob.updateMany({
+      where: {
+        workId: id,
+        status: "IN_PROGRESS",
+        updatedAt: { lt: stuckCutoff },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: "작업이 30분 이상 응답하지 않아 자동 실패 처리되었습니다.",
+      },
+    });
 
     // 작업 생성 — Serializable 트랜잭션으로 중복 생성 방지
     const job = await db.$transaction(async (tx) => {

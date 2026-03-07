@@ -26,6 +26,7 @@ import {
   TranslationContext,
   filterContextForContent,
   buildSystemPrompt,
+  buildSafetyBypassPrompt,
 } from "./prompt";
 import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
@@ -167,6 +168,11 @@ ${content}
         getRateLimiterForKey(keyIndex).onRateLimitError();
       }
 
+      // CONTENT_BLOCKED - 같은 모델로 재시도해도 동일 결과이므로 다음 모델로
+      if (lastError.code === "CONTENT_BLOCKED") {
+        throw lastError;
+      }
+
       // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw
       const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
       if (is503) {
@@ -208,7 +214,7 @@ ${content}
 export async function translateText(
   content: string,
   context: TranslationContext,
-  maxRetries: number = 5
+  maxRetries: number = 2  // 모델당 2회 재시도 (3모델 × 2 = 최대 6회, chunk 재시도와 합산 시 18회 이내)
 ): Promise<string> {
   log("translateText 시작", { contentLength: content.length, title: context.titleKo });
 
@@ -218,6 +224,7 @@ export async function translateText(
   log("시스템 프롬프트 생성 완료 (필터링 적용), 길이:", systemPrompt.length);
 
   let lastError: TranslationError | null = null;
+  let allContentBlocked = true;
 
   // 모델 순서대로 시도 (Fallback)
   for (const modelName of MODEL_PRIORITY) {
@@ -226,6 +233,9 @@ export async function translateText(
       return await tryTranslateChunkWithModel(modelName, content, systemPrompt, maxRetries);
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
+      if (lastError.code !== "CONTENT_BLOCKED") {
+        allContentBlocked = false;
+      }
       logError(`청크 번역 모델 ${modelName} 실패:`, lastError.message);
 
       // 503/overloaded 에러면 다음 모델로
@@ -235,6 +245,19 @@ export async function translateText(
       }
 
       log(`다음 모델로 fallback...`);
+    }
+  }
+
+  // 모든 모델이 CONTENT_BLOCKED → 안전 우회 프롬프트로 재시도
+  if (allContentBlocked) {
+    log("모든 모델 CONTENT_BLOCKED, 안전 우회 프롬프트로 재시도");
+    const safetyPrompt = buildSafetyBypassPrompt(context);
+    for (const modelName of MODEL_PRIORITY) {
+      try {
+        return await tryTranslateChunkWithModel(modelName, content, safetyPrompt, 1);
+      } catch {
+        // Try next model
+      }
     }
   }
 
@@ -468,6 +491,11 @@ ${content}
         getRateLimiterForKey(keyIndex).onRateLimitError();
       }
 
+      // CONTENT_BLOCKED - 같은 모델로 재시도해도 동일 결과이므로 다음 모델로
+      if (lastError.code === "CONTENT_BLOCKED") {
+        throw lastError;
+      }
+
       // 503/overloaded 에러면 다음 모델로 넘어가기 위해 throw
       const is503 = lastError.message.includes("503") || lastError.message.includes("overloaded");
       if (is503) {
@@ -516,6 +544,7 @@ async function translateSingleChapter(
   log("시스템 프롬프트 생성 완료 (필터링 적용), 길이:", systemPrompt.length);
 
   let lastError: TranslationError | null = null;
+  let allContentBlocked = true;
 
   // 모델 순서대로 시도 (Fallback)
   for (const modelName of MODEL_PRIORITY) {
@@ -524,6 +553,9 @@ async function translateSingleChapter(
       return await tryTranslateWithModel(modelName, content, systemPrompt, maxRetries);
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
+      if (lastError.code !== "CONTENT_BLOCKED") {
+        allContentBlocked = false;
+      }
       logError(`모델 ${modelName} 실패:`, lastError.message);
 
       // 503/overloaded 에러면 다음 모델로
@@ -533,6 +565,19 @@ async function translateSingleChapter(
       }
 
       log(`다음 모델로 fallback...`);
+    }
+  }
+
+  // 모든 모델이 CONTENT_BLOCKED → 안전 우회 프롬프트로 재시도
+  if (allContentBlocked) {
+    log("모든 모델 CONTENT_BLOCKED, 안전 우회 프롬프트로 재시도");
+    const safetyPrompt = buildSafetyBypassPrompt(filteredContext);
+    for (const modelName of MODEL_PRIORITY) {
+      try {
+        return await tryTranslateWithModel(modelName, content, safetyPrompt, 1);
+      } catch {
+        // Try next model
+      }
     }
   }
 

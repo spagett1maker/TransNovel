@@ -6,6 +6,7 @@ import {
   type ProgressEvent,
   type TranslationJobSummary,
 } from "@/lib/translation-manager";
+import { getCircuitBreakerState } from "@/lib/gemini/resilience";
 
 export const dynamic = "force-dynamic";
 
@@ -184,6 +185,35 @@ export async function GET(req: Request) {
             });
             cleanup();
             return;
+          }
+
+          // CANCELLED 상태 처리
+          if (currentSummary.status === "CANCELLED") {
+            console.log(`[${timestamp()}] [SSE Stream] 작업 취소됨, 스트림 종료`);
+            sendEvent({
+              jobId,
+              type: "job_failed",
+              data: {
+                status: "CANCELLED" as TranslationJobSummary["status"],
+                error: "작업이 취소되었습니다",
+              },
+            });
+            cleanup();
+            return;
+          }
+
+          // Circuit Breaker OPEN 상태 감지 — Gemini 장애 시 즉시 사용자 알림
+          if (currentSummary.status === "IN_PROGRESS") {
+            const cbState = getCircuitBreakerState();
+            if (cbState.state === "OPEN") {
+              sendEvent({
+                jobId,
+                type: "chapter_failed",
+                data: {
+                  error: `API 서비스가 일시적으로 중단되었습니다 (연속 ${cbState.failureCount}회 실패). 자동 복구를 시도합니다.`,
+                },
+              });
+            }
           }
 
           // 멈춘 작업 감지 (5분 이상 업데이트 없음)

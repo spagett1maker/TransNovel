@@ -133,7 +133,8 @@ export const RATE_LIMIT_RPM = 800; // 분당 최대 요청 수 (Gemini Paid 1000
 export const RATE_LIMIT_WINDOW_MS = 60000; // 1분 윈도우
 
 // 청크 레벨 재시도 설정
-export const CHUNK_MAX_RETRIES = 3; // 청크별 최대 재시도 횟수
+// 총 최대 API 호출: CHUNK_MAX_RETRIES(2) × 모델(3) × 모델당 재시도(2) = 12회/청크
+export const CHUNK_MAX_RETRIES = 2; // 청크별 최대 재시도 횟수 (모델 내부 재시도와 합산 시 12회 이내)
 
 // 모델 우선순위 (fallback) - 설정집 분석과 동일
 export const MODEL_PRIORITY = [
