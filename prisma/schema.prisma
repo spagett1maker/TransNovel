@@ -104,6 +104,7 @@ model User {
   role          UserRole  @default(AUTHOR)
   image         String?
   emailVerified DateTime?
+  preferences   Json      @default("{}")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

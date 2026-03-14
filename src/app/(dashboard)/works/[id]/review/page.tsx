@@ -27,6 +27,8 @@ import {
   Strikethrough,
   Highlighter,
   Palette,
+  Minus,
+  Plus,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +44,7 @@ import { AiImproveBubble } from "@/components/editor/ai/AiImproveBubble";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { getAvailableNextStatuses, getStatusDisplayName } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { useEditorPreferences } from "@/hooks/useEditorPreferences";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -94,56 +97,29 @@ function ReviewEditor({ workId }: { workId: string }) {
   const [viewMode, setViewMode] = useState<ReviewViewMode>("edit");
   const [rightPanel, setRightPanel] = useState<RightPanel>(!isEditable ? "comments" : null);
   const [showTranslation, setShowTranslation] = useState(false);
-  const [editorBg, setEditorBg] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("editor-bg-color") || "";
-    }
-    return "";
-  });
-  const [savedColors, setSavedColors] = useState<string[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return JSON.parse(localStorage.getItem("editor-saved-colors") || "[]");
-      } catch { return []; }
-    }
-    return [];
-  });
   const [showBgPicker, setShowBgPicker] = useState(false);
+
+  const {
+    editorBgColor: editorBg,
+    setEditorBgColor,
+    savedColors,
+    saveCustomColor,
+    removeCustomColor: removeSavedColor,
+    editorFontSize,
+    setEditorFontSize,
+  } = useEditorPreferences();
 
   const bgPickerRef = useRef<HTMLDivElement>(null);
   const bgButtonRef = useRef<HTMLButtonElement>(null);
 
-  const saveCustomColor = useCallback((value: string) => {
-    if (!value) return;
-    const presetValues: string[] = EDITOR_BG_COLORS.map((c) => c.value);
-    if (presetValues.includes(value)) return;
-    setSavedColors((prev) => {
-      const next = [value, ...prev.filter((c) => c !== value)].slice(0, 8);
-      localStorage.setItem("editor-saved-colors", JSON.stringify(next));
-      return next;
-    });
-  }, []);
-
-  const removeSavedColor = useCallback((value: string) => {
-    setSavedColors((prev) => {
-      const next = prev.filter((c) => c !== value);
-      localStorage.setItem("editor-saved-colors", JSON.stringify(next));
-      return next;
-    });
-  }, []);
-
   const handleBgChange = useCallback((value: string) => {
-    setEditorBg(value);
-    if (typeof window !== "undefined") {
-      if (value) {
-        localStorage.setItem("editor-bg-color", value);
-      } else {
-        localStorage.removeItem("editor-bg-color");
-      }
+    setEditorBgColor(value);
+    const presetValues: string[] = EDITOR_BG_COLORS.map((c) => c.value);
+    if (value && !presetValues.includes(value)) {
+      saveCustomColor(value);
     }
-    saveCustomColor(value);
     setShowBgPicker(false);
-  }, [saveCustomColor]);
+  }, [setEditorBgColor, saveCustomColor]);
 
   useEffect(() => {
     if (!showBgPicker) return;
@@ -412,6 +388,49 @@ function ReviewEditor({ workId }: { workId: string }) {
             )}
           </div>
 
+          {/* 폰트 크기 조절 */}
+          <div className="flex items-center gap-0.5 border-l border-border pl-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorFontSize(editorFontSize - 1)}
+                  disabled={editorFontSize <= 12}
+                  className="h-8 w-8 p-0"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>글자 축소</TooltipContent>
+            </Tooltip>
+            <input
+              type="number"
+              min={12}
+              max={24}
+              value={editorFontSize}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (v >= 12 && v <= 24) setEditorFontSize(v);
+              }}
+              className="w-9 h-6 text-xs tabular-nums text-center text-muted-foreground bg-transparent border border-border rounded px-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorFontSize(editorFontSize + 1)}
+                  disabled={editorFontSize >= 24}
+                  className="h-8 w-8 p-0"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>글자 확대</TooltipContent>
+            </Tooltip>
+          </div>
+
           {/* Side-by-side translation toggle */}
           <div className="border-l border-border pl-3">
             <Tooltip>
@@ -609,7 +628,8 @@ function ReviewEditor({ workId }: { workId: string }) {
                 )}
                 <EditorContent
                   editor={editor}
-                  className="min-h-[60vh] [&_.ProseMirror]:min-h-[60vh] [&_.ProseMirror]:outline-none [&_.ProseMirror_p]:my-0 [&_.ProseMirror_p]:leading-relaxed [&_.ProseMirror]:text-base [&_.ProseMirror]:whitespace-pre-wrap [&_.ProseMirror]:leading-relaxed"
+                  className="min-h-[60vh] [&_.ProseMirror]:min-h-[60vh] [&_.ProseMirror]:outline-none [&_.ProseMirror_p]:my-0 [&_.ProseMirror_p]:leading-relaxed [&_.ProseMirror]:whitespace-pre-wrap [&_.ProseMirror]:leading-relaxed"
+                  style={{ fontSize: `${editorFontSize}px` }}
                 />
                 {editor && work && chapter && isEditable && (
                   <AiImproveBubble
