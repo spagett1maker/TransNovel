@@ -76,7 +76,7 @@ export function DownloadDialog({
 
   // useMemo로 필터 결과 캐싱
   const downloadableChapters = useMemo(
-    () => safeChapters.filter((c) => ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(c.status)),
+    () => safeChapters.filter((c) => !["PENDING", "TRANSLATING"].includes(c.status)),
     [safeChapters]
   );
 

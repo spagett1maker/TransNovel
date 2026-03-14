@@ -92,7 +92,7 @@ export async function GET(
       where: {
         workId,
         ...(chapterNumbers ? { number: { in: chapterNumbers } } : {}),
-        status: { in: ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"] },
+        status: { notIn: ["PENDING", "TRANSLATING"] },
       },
       select: {
         id: true,
