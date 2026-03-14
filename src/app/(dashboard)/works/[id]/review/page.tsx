@@ -20,6 +20,11 @@ import {
   Pencil,
   GitCompareArrows,
   Eye,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  Highlighter,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -149,9 +154,77 @@ function ReviewEditor({ workId }: { workId: string }) {
             </button>
           </div>
 
-          {/* Undo / Redo (only when editable) */}
+          {/* 서식 + Undo/Redo (only when editable) */}
           {editor && isEditable && (
             <div className="flex items-center gap-0.5 border-l border-border pl-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={editor.isActive("bold") ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => editor.chain().focus().toggleBold().run()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <Bold className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>굵게 (⌘B)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={editor.isActive("italic") ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => editor.chain().focus().toggleItalic().run()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <Italic className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>기울임 (⌘I)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={editor.isActive("underline") ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => editor.chain().focus().toggleUnderline().run()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <Underline className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>밑줄 (⌘U)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={editor.isActive("strike") ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => editor.chain().focus().toggleStrike().run()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <Strikethrough className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>취소선 (⌘⇧S)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={editor.isActive("highlight") ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => editor.chain().focus().toggleHighlight().run()}
+                    className="h-8 w-8 p-0"
+                  >
+                    <Highlighter className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>형광펜 (⌘⇧H)</TooltipContent>
+              </Tooltip>
+
+              <div className="w-px h-5 bg-border mx-1" />
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
