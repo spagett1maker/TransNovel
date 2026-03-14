@@ -31,7 +31,7 @@ interface DownloadDialogProps {
   chapters: Chapter[];
 }
 
-type DownloadFormat = "txt" | "docx";
+type DownloadFormat = "txt" | "docx" | "epub";
 type ContentType = "translated" | "edited";
 
 // 메모이제이션된 회차 아이템 컴포넌트 - O(1) 선택 조회
@@ -221,6 +221,10 @@ export function DownloadDialog({
               <label className="flex cursor-pointer items-center gap-2">
                 <RadioGroupItem value="docx" />
                 <span className="text-sm">DOCX (Word)</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <RadioGroupItem value="epub" />
+                <span className="text-sm">EPUB (전자책)</span>
               </label>
             </RadioGroup>
           </div>

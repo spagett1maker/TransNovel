@@ -7,9 +7,11 @@ import { db } from "@/lib/db";
 import {
   generateTXT,
   generateDOCX,
+  generateEPUB,
   generateZIP,
   type DownloadFormat,
   type ContentType,
+  type ChapterContent,
 } from "@/lib/download";
 import { canAccessWork } from "@/lib/permissions";
 
@@ -32,7 +34,7 @@ export async function GET(
     const chaptersParam = searchParams.get("chapters") || "all";
     const contentType = (searchParams.get("content") || "edited") as ContentType;
 
-    // 작품 조회
+    // 작품 조회 (ePub 메타데이터 포함)
     const work = await db.work.findUnique({
       where: { id: workId },
       select: {
@@ -40,6 +42,11 @@ export async function GET(
         titleKo: true,
         authorId: true,
         editorId: true,
+        coverImage: true,
+        synopsis: true,
+        creators: {
+          select: { name: true, role: true },
+        },
       },
     });
 
@@ -111,6 +118,79 @@ export async function GET(
 
     // 파일명에서 사용할 수 없는 문자 제거
     const safeTitle = work.titleKo.replace(/[/\\?%*:|"<>]/g, "_");
+
+    // ePub: 항상 단일 파일 (챕터 수 무관)
+    if (format === "epub") {
+      const chapterContents = await db.chapter.findMany({
+        where: { id: { in: chapterMeta.map((m) => m.id) } },
+        select: { id: true, translatedContent: true, editedContent: true },
+      });
+      const contentMap = new Map(chapterContents.map((ch) => [ch.id, ch]));
+
+      const epubChapters: ChapterContent[] = [];
+      for (const meta of chapterMeta) {
+        const ch = contentMap.get(meta.id);
+        const content = ch
+          ? contentType === "edited"
+            ? ch.editedContent || ch.translatedContent
+            : ch.translatedContent
+          : null;
+        if (!content) continue;
+        epubChapters.push({ number: meta.number, title: meta.title, content });
+      }
+
+      if (epubChapters.length === 0) {
+        return NextResponse.json(
+          { error: "다운로드할 수 있는 번역본이 없습니다." },
+          { status: 400 }
+        );
+      }
+
+      const authorName =
+        work.creators.find((c: { name: string; role: string }) => c.role === "AUTHOR")?.name ||
+        work.creators[0]?.name ||
+        "Unknown";
+
+      // 커버 이미지 fetch (5초 타임아웃, 5MB 제한)
+      let coverImageBuffer: Buffer | undefined;
+      let coverImageMimeType: string | undefined;
+      if (work.coverImage) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          const coverRes = await fetch(work.coverImage, { signal: controller.signal });
+          clearTimeout(timeout);
+          const contentLength = parseInt(coverRes.headers.get("content-length") || "0", 10);
+          if (coverRes.ok && (contentLength === 0 || contentLength < 5 * 1024 * 1024)) {
+            const arrayBuf = await coverRes.arrayBuffer();
+            if (arrayBuf.byteLength < 5 * 1024 * 1024) {
+              coverImageBuffer = Buffer.from(arrayBuf);
+              coverImageMimeType = coverRes.headers.get("content-type") || "image/jpeg";
+            }
+          }
+        } catch {
+          // 커버 이미지 fetch 실패 — 커버 없이 진행
+        }
+      }
+
+      const epubBuffer = await generateEPUB(epubChapters, {
+        title: work.titleKo,
+        author: authorName,
+        language: "ko",
+        description: work.synopsis || undefined,
+        coverImageBuffer,
+        coverImageMimeType,
+      });
+
+      const epubFilename = `${safeTitle}_번역본.epub`;
+
+      return new Response(new Uint8Array(epubBuffer), {
+        headers: {
+          "Content-Type": "application/epub+zip",
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(epubFilename)}`,
+        },
+      });
+    }
 
     // 단일 챕터인 경우 단일 파일로
     if (chapterMeta.length === 1) {
