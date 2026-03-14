@@ -1,5 +1,5 @@
 import { UserRole } from "@prisma/client";
-import { CheckCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -135,6 +135,20 @@ export default async function WorkDetailPage({
   const allRelevantApproved = relevantChapters.length > 0 &&
     relevantChapters.every((ch) => ch.status === "APPROVED");
   const showCompletionBanner = allRelevantApproved && activeContract && !isCompleted;
+
+  // 회차 번호 이상 감지 (중복/누락)
+  const chapterNumbers = work.chapters.map((ch) => ch.number);
+  const duplicates = chapterNumbers.filter((n, i) => chapterNumbers.indexOf(n) !== i);
+  const gaps: number[] = [];
+  for (let i = 1; i < chapterNumbers.length; i++) {
+    const diff = chapterNumbers[i] - chapterNumbers[i - 1];
+    if (diff > 1) {
+      for (let n = chapterNumbers[i - 1] + 1; n < chapterNumbers[i]; n++) {
+        gaps.push(n);
+      }
+    }
+  }
+  const hasChapterIssues = duplicates.length > 0 || gaps.length > 0;
 
   const statusConfig = getWorkStatusConfig(work.status);
 
@@ -292,6 +306,25 @@ export default async function WorkDetailPage({
               />
             </div>
           </div>
+
+          {hasChapterIssues && (
+            <div className="flex items-start gap-3 px-4 py-3 mb-4 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40">
+              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-amber-900 dark:text-amber-100">회차 번호에 이상이 있습니다</p>
+                {duplicates.length > 0 && (
+                  <p className="text-amber-700 dark:text-amber-300 mt-1">
+                    중복: {[...new Set(duplicates)].join(", ")}화
+                  </p>
+                )}
+                {gaps.length > 0 && (
+                  <p className="text-amber-700 dark:text-amber-300 mt-1">
+                    누락: {gaps.length <= 10 ? gaps.join(", ") : `${gaps.slice(0, 10).join(", ")} 외 ${gaps.length - 10}개`}화
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           {work.chapters.length === 0 ? (
             <div className="section-surface text-center py-16">
