@@ -25,6 +25,7 @@ import {
   Underline,
   Strikethrough,
   Highlighter,
+  Palette,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +66,16 @@ interface Work {
 type ReviewViewMode = "edit" | "changes";
 type RightPanel = "comments" | "versions" | "activity" | "glossary" | null;
 
+const EDITOR_BG_COLORS = [
+  { name: "기본", value: "", className: "bg-background" },
+  { name: "크림", value: "#fdf6e3", className: "" },
+  { name: "연두", value: "#f0fdf4", className: "" },
+  { name: "연파랑", value: "#eff6ff", className: "" },
+  { name: "연보라", value: "#faf5ff", className: "" },
+  { name: "연회색", value: "#f5f5f4", className: "" },
+  { name: "다크", value: "#1e1e1e", className: "" },
+] as const;
+
 // ─── Inner Editor (consumes EditorProvider context) ──────
 
 function ReviewEditor({ workId }: { workId: string }) {
@@ -82,6 +93,38 @@ function ReviewEditor({ workId }: { workId: string }) {
   const [viewMode, setViewMode] = useState<ReviewViewMode>("edit");
   const [rightPanel, setRightPanel] = useState<RightPanel>(!isEditable ? "comments" : null);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [editorBg, setEditorBg] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("editor-bg-color") || "";
+    }
+    return "";
+  });
+  const [showBgPicker, setShowBgPicker] = useState(false);
+
+  const bgPickerRef = useRef<HTMLDivElement>(null);
+
+  const handleBgChange = useCallback((value: string) => {
+    setEditorBg(value);
+    if (typeof window !== "undefined") {
+      if (value) {
+        localStorage.setItem("editor-bg-color", value);
+      } else {
+        localStorage.removeItem("editor-bg-color");
+      }
+    }
+    setShowBgPicker(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showBgPicker) return;
+    const handleClick = (e: MouseEvent) => {
+      if (bgPickerRef.current && !bgPickerRef.current.contains(e.target as Node)) {
+        setShowBgPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showBgPicker]);
 
   const hasTranslation =
     chapter &&
@@ -256,6 +299,55 @@ function ReviewEditor({ workId }: { workId: string }) {
             </div>
           )}
 
+          {/* 배경색 선택 */}
+          <div ref={bgPickerRef} className="relative border-l border-border pl-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showBgPicker ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setShowBgPicker(!showBgPicker)}
+                  className="h-8 w-8 p-0"
+                >
+                  <Palette className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>배경색</TooltipContent>
+            </Tooltip>
+            {showBgPicker && (
+              <div className="absolute top-full left-0 mt-2 p-3 bg-background border border-border rounded-lg shadow-lg z-50">
+                <div className="flex gap-1.5 mb-2">
+                  {EDITOR_BG_COLORS.map((color) => (
+                    <Tooltip key={color.name}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => handleBgChange(color.value)}
+                          className={cn(
+                            "w-7 h-7 rounded-md border-2 transition-all hover:scale-110",
+                            editorBg === color.value ? "border-primary ring-2 ring-primary/30" : "border-border"
+                          )}
+                          style={{
+                            backgroundColor: color.value || "var(--background)",
+                          }}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent>{color.name}</TooltipContent>
+                    </Tooltip>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-2 border-t border-border">
+                  <label className="text-xs text-muted-foreground whitespace-nowrap">직접 선택</label>
+                  <input
+                    type="color"
+                    value={editorBg || "#ffffff"}
+                    onChange={(e) => handleBgChange(e.target.value)}
+                    className="w-7 h-7 rounded cursor-pointer border border-border"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Side-by-side translation toggle */}
           <div className="border-l border-border pl-3">
             <Tooltip>
@@ -421,9 +513,21 @@ function ReviewEditor({ workId }: { workId: string }) {
           {/* Editor column (full or right half) */}
           <div
             className={cn(
-              "min-h-0 overflow-y-auto bg-background",
+              "min-h-0 overflow-y-auto",
+              !editorBg && "bg-background",
               showTranslation && viewMode === "edit" ? "w-1/2" : "w-full"
             )}
+            style={editorBg ? {
+              backgroundColor: editorBg,
+              color: (() => {
+                const hex = editorBg.replace("#", "");
+                const r = parseInt(hex.substring(0, 2), 16);
+                const g = parseInt(hex.substring(2, 4), 16);
+                const b = parseInt(hex.substring(4, 6), 16);
+                // relative luminance
+                return (r * 299 + g * 587 + b * 114) / 1000 < 128 ? "#d4d4d4" : undefined;
+              })(),
+            } : undefined}
           >
             {viewMode === "edit" ? (
               <div
