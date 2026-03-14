@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import DOMPurify from "isomorphic-dompurify";
 import { EditorContent } from "@tiptap/react";
 import {
@@ -102,6 +103,7 @@ function ReviewEditor({ workId }: { workId: string }) {
   const [showBgPicker, setShowBgPicker] = useState(false);
 
   const bgPickerRef = useRef<HTMLDivElement>(null);
+  const bgButtonRef = useRef<HTMLButtonElement>(null);
 
   const handleBgChange = useCallback((value: string) => {
     setEditorBg(value);
@@ -304,6 +306,7 @@ function ReviewEditor({ workId }: { workId: string }) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
+                  ref={bgButtonRef}
                   variant={showBgPicker ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => setShowBgPicker(!showBgPicker)}
@@ -314,8 +317,17 @@ function ReviewEditor({ workId }: { workId: string }) {
               </TooltipTrigger>
               <TooltipContent>배경색</TooltipContent>
             </Tooltip>
-            {showBgPicker && (
-              <div className="fixed mt-2 p-3 border border-border rounded-lg shadow-xl z-[100] bg-white dark:bg-neutral-900">
+            {showBgPicker && createPortal(
+              <div
+                ref={bgPickerRef}
+                className="p-3 rounded-lg shadow-xl border border-border bg-white dark:bg-neutral-900"
+                style={{
+                  position: "fixed",
+                  zIndex: 9999,
+                  top: (bgButtonRef.current?.getBoundingClientRect().bottom ?? 0) + 8,
+                  left: bgButtonRef.current?.getBoundingClientRect().left ?? 0,
+                }}
+              >
                 <div className="flex gap-1.5 mb-2">
                   {EDITOR_BG_COLORS.map((color) => (
                     <Tooltip key={color.name}>
@@ -344,7 +356,8 @@ function ReviewEditor({ workId }: { workId: string }) {
                     className="w-7 h-7 rounded cursor-pointer border border-border"
                   />
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
 
