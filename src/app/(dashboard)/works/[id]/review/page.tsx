@@ -31,6 +31,7 @@ import {
   Pilcrow,
   ALargeSmall,
   Settings2,
+  Search,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,7 @@ import { CommentSidebar } from "@/components/editor/comments/CommentSidebar";
 import { SnapshotPanel } from "@/components/editor/versions/SnapshotPanel";
 import { ActivitySidebar } from "@/components/editor/activity/ActivitySidebar";
 import { GlossarySidebar } from "@/components/editor/glossary/GlossarySidebar";
+import { SearchSidebar } from "@/components/editor/search/SearchSidebar";
 import { TrackChangesView } from "@/components/editor/changes/TrackChangesView";
 import { AiImproveBubble } from "@/components/editor/ai/AiImproveBubble";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
@@ -71,7 +73,7 @@ interface Work {
 }
 
 type ReviewViewMode = "edit" | "changes";
-type RightPanel = "comments" | "versions" | "activity" | "glossary" | null;
+type RightPanel = "comments" | "versions" | "activity" | "glossary" | "search" | null;
 
 const EDITOR_BG_COLORS = [
   { name: "기본", value: "", className: "bg-background" },
@@ -85,7 +87,7 @@ const EDITOR_BG_COLORS = [
 
 // ─── Inner Editor (consumes EditorProvider context) ──────
 
-function ReviewEditor({ workId }: { workId: string }) {
+function ReviewEditor({ workId, onNavigateChapter }: { workId: string; onNavigateChapter: (num: number) => void }) {
   const {
     editor,
     chapter,
@@ -503,6 +505,19 @@ function ReviewEditor({ workId }: { workId: string }) {
               </TooltipTrigger>
               <TooltipContent>용어집</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={rightPanel === "search" ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => toggleRightPanel("search")}
+                  className="h-8 w-8 p-0"
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>전체 검색</TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Save (only when editable) */}
@@ -733,6 +748,7 @@ function ReviewEditor({ workId }: { workId: string }) {
             {rightPanel === "versions" && <SnapshotPanel />}
             {rightPanel === "activity" && <ActivitySidebar />}
             {rightPanel === "glossary" && <GlossarySidebar workId={workId} />}
+            {rightPanel === "search" && <SearchSidebar workId={workId} onNavigate={onNavigateChapter} />}
           </div>
         )}
       </div>
@@ -957,7 +973,7 @@ export default function ReviewPage() {
             userRole={userRole}
             onChapterStatusChange={fetchWork}
           >
-            <ReviewEditor workId={workId} />
+            <ReviewEditor workId={workId} onNavigateChapter={setSelectedChapterNum} />
           </EditorProvider>
         ) : (
           <div className="flex-1 flex items-center justify-center">
