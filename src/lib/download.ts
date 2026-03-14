@@ -167,7 +167,29 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
+function isHtmlContent(content: string): boolean {
+  return /<(?:p|br|div|span|h[1-6]|em|strong|ul|ol|li)\b/i.test(content);
+}
+
+function htmlToXhtml(html: string): string {
+  return html
+    // <br> → <br/> (XHTML self-closing)
+    .replace(/<br\s*\/?>/gi, "<br/>")
+    // 빈 <p><br/></p> → 빈 줄 (TipTap 빈 줄 패턴)
+    .replace(/<p><br\/><\/p>/gi, "<p>\u00A0</p>")
+    // <p>...</p> 태그 유지, 들여쓰기 추가
+    .replace(/<p>/gi, "    <p>")
+    .replace(/<\/p>/gi, "</p>\n")
+    // 나머지 태그(strong, em 등)는 그대로 통과
+    .trim();
+}
+
 function contentToXhtml(content: string): string {
+  if (isHtmlContent(content)) {
+    return htmlToXhtml(content);
+  }
+
+  // plain text: 문단 분리 후 <p> 래핑
   const paragraphs = content.split(/\n\n+/);
   return paragraphs
     .map((p) => p.trim())
