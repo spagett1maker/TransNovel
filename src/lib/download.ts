@@ -61,6 +61,51 @@ export function generateTXT(
 }
 
 /**
+ * HTML 인라인 태그를 파싱하여 docx TextRun 배열로 변환
+ */
+function htmlToTextRuns(html: string): TextRun[] {
+  const runs: TextRun[] = [];
+  // 태그와 텍스트를 분리하여 스택 기반으로 처리
+  const tagRegex = /<\/?(?:strong|em|s|u|mark|code|b|i)(?:\s[^>]*)?>|[^<]+/gi;
+  const stack: string[] = [];
+  let match;
+
+  while ((match = tagRegex.exec(html)) !== null) {
+    const token = match[0];
+    if (token.startsWith("</")) {
+      // 닫는 태그
+      const tagName = token.match(/<\/([a-z]+)/i)?.[1]?.toLowerCase();
+      const idx = stack.lastIndexOf(tagName || "");
+      if (idx !== -1) stack.splice(idx, 1);
+    } else if (token.startsWith("<")) {
+      // 여는 태그
+      const tagName = token.match(/<([a-z]+)/i)?.[1]?.toLowerCase();
+      if (tagName) stack.push(tagName);
+    } else {
+      // 텍스트
+      const text = token.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+      if (text) {
+        runs.push(
+          new TextRun({
+            text,
+            bold: stack.includes("strong") || stack.includes("b"),
+            italics: stack.includes("em") || stack.includes("i"),
+            strike: stack.includes("s"),
+            underline: stack.includes("u") ? {} : undefined,
+            highlight: stack.includes("mark") ? "yellow" : undefined,
+          })
+        );
+      }
+    }
+  }
+
+  if (runs.length === 0) {
+    runs.push(new TextRun({ text: html }));
+  }
+  return runs;
+}
+
+/**
  * DOCX 파일 생성
  */
 export async function generateDOCX(
@@ -103,16 +148,37 @@ export async function generateDOCX(
       })
     );
 
-    // 본문 (문단별로 분리)
-    const paragraphs = chapter.content.split(/\n\n+/);
-    for (const para of paragraphs) {
-      if (para.trim()) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: para.trim() })],
-            spacing: { after: 200 },
-          })
-        );
+    // 본문
+    if (isHtmlContent(chapter.content)) {
+      // HTML 콘텐츠: <p> 태그 기준으로 문단 분리, 인라인 서식 유지
+      const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+      let pMatch;
+      while ((pMatch = pRegex.exec(chapter.content)) !== null) {
+        const inner = pMatch[1].replace(/<br\s*\/?>/gi, "\n").trim();
+        if (inner && inner !== "\n") {
+          children.push(
+            new Paragraph({
+              children: htmlToTextRuns(inner),
+              spacing: { after: 200 },
+            })
+          );
+        } else {
+          // 빈 문단 (빈 줄)
+          children.push(new Paragraph({ spacing: { after: 200 } }));
+        }
+      }
+    } else {
+      // plain text
+      const paragraphs = chapter.content.split(/\n\n+/);
+      for (const para of paragraphs) {
+        if (para.trim()) {
+          children.push(
+            new Paragraph({
+              children: [new TextRun({ text: para.trim() })],
+              spacing: { after: 200 },
+            })
+          );
+        }
       }
     }
   }
@@ -175,12 +241,18 @@ function htmlToXhtml(html: string): string {
   return html
     // <br> → <br/> (XHTML self-closing)
     .replace(/<br\s*\/?>/gi, "<br/>")
+    // <hr> → <hr/> (XHTML self-closing)
+    .replace(/<hr\s*\/?>/gi, "<hr/>")
+    // <img ...> → <img .../> (XHTML self-closing)
+    .replace(/<img([^>]*?)\/?\s*>/gi, "<img$1/>")
     // 빈 <p><br/></p> → 빈 줄 (TipTap 빈 줄 패턴)
     .replace(/<p><br\/><\/p>/gi, "<p>\u00A0</p>")
+    // TipTap highlight: <mark data-color="..." style="..."> → <mark>
+    .replace(/<mark[^>]*>/gi, "<mark>")
     // <p>...</p> 태그 유지, 들여쓰기 추가
     .replace(/<p>/gi, "    <p>")
     .replace(/<\/p>/gi, "</p>\n")
-    // 나머지 태그(strong, em 등)는 그대로 통과
+    // 나머지 태그(strong, em, s, u, code 등)는 그대로 통과
     .trim();
 }
 
@@ -217,6 +289,12 @@ function styleCss(): string {
 h1 { font-size: 1.5em; margin-bottom: 1em; text-align: center; }
 h2 { font-size: 1.2em; margin-top: 1.5em; margin-bottom: 0.8em; }
 p { margin: 0.5em 0; text-indent: 1em; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+s { text-decoration: line-through; }
+u { text-decoration: underline; }
+mark { background-color: #fef08a; padding: 0 0.1em; }
+code { font-family: monospace; background-color: #f3f4f6; padding: 0.1em 0.3em; border-radius: 0.2em; font-size: 0.9em; }
 .title-page { text-align: center; margin-top: 30%; }
 .title-page h1 { font-size: 2em; }
 .title-page .author { font-size: 1.2em; color: #666; margin-top: 1em; }
