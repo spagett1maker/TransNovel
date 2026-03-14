@@ -10,6 +10,11 @@ import {
   Redo,
   BookOpen,
   Sparkles,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  Highlighter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEditorContext, ViewMode } from "./EditorProvider";
@@ -76,6 +81,62 @@ export function EditorToolbar() {
         {/* Editor Actions (only when editor is focused/active and editable) */}
         {editor && isEditable && (
           <div className="flex items-center gap-1 border-l border-border pl-4">
+            {/* 서식 버튼 */}
+            <Button
+              variant={editor.isActive("bold") ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              className="h-8 w-8 p-0"
+              aria-label="굵게 (⌘B)"
+              title="굵게 (⌘B)"
+            >
+              <Bold className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={editor.isActive("italic") ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              className="h-8 w-8 p-0"
+              aria-label="기울임 (⌘I)"
+              title="기울임 (⌘I)"
+            >
+              <Italic className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={editor.isActive("underline") ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              className="h-8 w-8 p-0"
+              aria-label="밑줄 (⌘U)"
+              title="밑줄 (⌘U)"
+            >
+              <Underline className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={editor.isActive("strike") ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              className="h-8 w-8 p-0"
+              aria-label="취소선 (⌘⇧S)"
+              title="취소선 (⌘⇧S)"
+            >
+              <Strikethrough className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={editor.isActive("highlight") ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => editor.chain().focus().toggleHighlight().run()}
+              className="h-8 w-8 p-0"
+              aria-label="형광펜 (⌘⇧H)"
+              title="형광펜 (⌘⇧H)"
+            >
+              <Highlighter className="h-4 w-4" />
+            </Button>
+
+            {/* 구분선 */}
+            <div className="w-px h-5 bg-border mx-1" />
+
+            {/* Undo/Redo */}
             <Button
               variant="ghost"
               size="sm"

@@ -6,6 +6,7 @@ import { useEditor, Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
 import Placeholder from "@tiptap/extension-placeholder";
+import Underline from "@tiptap/extension-underline";
 import {
   createContext,
   useContext,
@@ -126,6 +127,7 @@ export function EditorProvider({
         codeBlock: false,
         horizontalRule: false,
       }),
+      Underline,
       Highlight.configure({
         multicolor: true,
       }),
