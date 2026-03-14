@@ -271,8 +271,9 @@ export async function GET(
         ext = "txt";
       }
 
-      const filename = meta.translatedTitle || meta.title
-        ? `${meta.number}화_${meta.translatedTitle || meta.title.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
+      const chapterLabel = meta.translatedTitle || meta.title;
+      const filename = chapterLabel
+        ? `${meta.number}화_${chapterLabel.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
         : `${meta.number}화.${ext}`;
 
       files.push({ name: filename, content: buffer });
