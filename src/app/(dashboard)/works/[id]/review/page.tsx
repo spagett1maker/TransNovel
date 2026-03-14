@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
 import DOMPurify from "isomorphic-dompurify";
 import { EditorContent } from "@tiptap/react";
 import {
@@ -31,10 +30,12 @@ import {
   Plus,
   Pilcrow,
   ALargeSmall,
+  Settings2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { EditorProvider, useEditorContext } from "@/components/editor";
 import { CommentSidebar } from "@/components/editor/comments/CommentSidebar";
@@ -99,7 +100,7 @@ function ReviewEditor({ workId }: { workId: string }) {
   const [viewMode, setViewMode] = useState<ReviewViewMode>("edit");
   const [rightPanel, setRightPanel] = useState<RightPanel>(!isEditable ? "comments" : null);
   const [showTranslation, setShowTranslation] = useState(false);
-  const [showBgPicker, setShowBgPicker] = useState(false);
+  const rulerRef = useRef<HTMLDivElement>(null);
 
   const {
     editorBgColor: editorBg,
@@ -117,28 +118,13 @@ function ReviewEditor({ workId }: { workId: string }) {
     setShowParagraphMarks,
   } = useEditorPreferences();
 
-  const bgPickerRef = useRef<HTMLDivElement>(null);
-  const bgButtonRef = useRef<HTMLButtonElement>(null);
-
   const handleBgChange = useCallback((value: string) => {
     setEditorBgColor(value);
     const presetValues: string[] = EDITOR_BG_COLORS.map((c) => c.value);
     if (value && !presetValues.includes(value)) {
       saveCustomColor(value);
     }
-    setShowBgPicker(false);
   }, [setEditorBgColor, saveCustomColor]);
-
-  useEffect(() => {
-    if (!showBgPicker) return;
-    const handleClick = (e: MouseEvent) => {
-      if (bgPickerRef.current && !bgPickerRef.current.contains(e.target as Node)) {
-        setShowBgPicker(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showBgPicker]);
 
   const hasTranslation =
     chapter &&
@@ -313,142 +299,100 @@ function ReviewEditor({ workId }: { workId: string }) {
             </div>
           )}
 
-          {/* 배경색 선택 */}
-          <div ref={bgPickerRef} className="relative border-l border-border pl-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  ref={bgButtonRef}
-                  variant={showBgPicker ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setShowBgPicker(!showBgPicker)}
-                  className="h-8 w-8 p-0"
-                >
-                  <Palette className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>배경색</TooltipContent>
-            </Tooltip>
-            {showBgPicker && createPortal(
-              <div
-                ref={bgPickerRef}
-                className="p-3 rounded-lg shadow-xl border border-border bg-white dark:bg-neutral-900"
-                style={{
-                  position: "fixed",
-                  zIndex: 9999,
-                  top: (bgButtonRef.current?.getBoundingClientRect().bottom ?? 0) + 8,
-                  left: bgButtonRef.current?.getBoundingClientRect().left ?? 0,
-                }}
-              >
-                <div className="flex gap-1.5 mb-2">
-                  {EDITOR_BG_COLORS.map((color) => (
-                    <Tooltip key={color.name}>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => handleBgChange(color.value)}
-                          className={cn(
-                            "w-7 h-7 rounded-md border-2 transition-all hover:scale-110",
-                            editorBg === color.value ? "border-primary ring-2 ring-primary/30" : "border-border"
-                          )}
-                          style={{
-                            backgroundColor: color.value || "var(--background)",
-                          }}
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent>{color.name}</TooltipContent>
-                    </Tooltip>
-                  ))}
-                </div>
-                {savedColors.length > 0 && (
-                  <div className="pt-2 border-t border-border">
-                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">저장된 색상</label>
-                    <div className="flex gap-1.5 mt-1">
-                      {savedColors.map((color) => (
-                        <Tooltip key={color}>
-                          <TooltipTrigger asChild>
-                            <button
-                              onClick={() => handleBgChange(color)}
-                              onContextMenu={(e) => { e.preventDefault(); removeSavedColor(color); }}
-                              className={cn(
-                                "w-7 h-7 rounded-md border-2 transition-all hover:scale-110",
-                                editorBg === color ? "border-primary ring-2 ring-primary/30" : "border-border"
-                              )}
-                              style={{ backgroundColor: color }}
-                            />
-                          </TooltipTrigger>
-                          <TooltipContent>{color} (우클릭으로 삭제)</TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </div>
+          {/* 편집 환경 설정 (팝오버) */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <div className="border-l border-border pl-3">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                      <Settings2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>편집 환경 설정</TooltipContent>
+                </Tooltip>
+              </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-0" align="start" sideOffset={8}>
+              <div className="px-4 py-3 border-b border-border">
+                <h4 className="text-sm font-medium">편집 환경</h4>
+              </div>
+              <div className="p-4 space-y-4">
+                {/* 배경색 */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-2 block">배경색</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {EDITOR_BG_COLORS.map((color) => (
+                      <Tooltip key={color.name}>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => handleBgChange(color.value)}
+                            className={cn(
+                              "w-7 h-7 rounded-md border-2 transition-all hover:scale-110",
+                              editorBg === color.value ? "border-primary ring-2 ring-primary/30" : "border-border"
+                            )}
+                            style={{ backgroundColor: color.value || "var(--background)" }}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent>{color.name}</TooltipContent>
+                      </Tooltip>
+                    ))}
+                    <input
+                      type="color"
+                      value={editorBg || "#ffffff"}
+                      onChange={(e) => handleBgChange(e.target.value)}
+                      className="w-7 h-7 rounded cursor-pointer border border-border"
+                    />
                   </div>
-                )}
-                <div className="flex items-center gap-2 pt-2 border-t border-border">
-                  <label className="text-xs text-muted-foreground whitespace-nowrap">직접 선택</label>
-                  <input
-                    type="color"
-                    value={editorBg || "#ffffff"}
-                    onChange={(e) => handleBgChange(e.target.value)}
-                    className="w-7 h-7 rounded cursor-pointer border border-border"
-                  />
+                  {savedColors.length > 0 && (
+                    <div className="mt-2">
+                      <label className="text-[10px] text-muted-foreground">저장된 색상 (우클릭 삭제)</label>
+                      <div className="flex gap-1.5 mt-1">
+                        {savedColors.map((color) => (
+                          <button
+                            key={color}
+                            onClick={() => handleBgChange(color)}
+                            onContextMenu={(e) => { e.preventDefault(); removeSavedColor(color); }}
+                            className={cn(
+                              "w-6 h-6 rounded border-2 transition-all hover:scale-110",
+                              editorBg === color ? "border-primary ring-2 ring-primary/30" : "border-border"
+                            )}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>,
-              document.body
-            )}
-          </div>
 
-          {/* 폰트 크기 조절 */}
-          <div className="flex items-center gap-0.5 border-l border-border pl-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorFontSize(editorFontSize - 1)}
-                  disabled={editorFontSize <= 12}
-                  className="h-8 w-8 p-0"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>글자 축소</TooltipContent>
-            </Tooltip>
-            <input
-              type="number"
-              min={12}
-              max={24}
-              value={editorFontSize}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10);
-                if (v >= 12 && v <= 24) setEditorFontSize(v);
-              }}
-              className="w-9 h-6 text-xs tabular-nums text-center text-muted-foreground bg-transparent border border-border rounded px-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorFontSize(editorFontSize + 1)}
-                  disabled={editorFontSize >= 24}
-                  className="h-8 w-8 p-0"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>글자 확대</TooltipContent>
-            </Tooltip>
-          </div>
+                {/* 글자 크기 */}
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">글자 크기</label>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => setEditorFontSize(editorFontSize - 1)} disabled={editorFontSize <= 12}>
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <input
+                      type="number"
+                      min={12}
+                      max={24}
+                      value={editorFontSize}
+                      onChange={(e) => { const v = parseInt(e.target.value, 10); if (v >= 12 && v <= 24) setEditorFontSize(v); }}
+                      className="w-10 h-7 text-xs tabular-nums text-center bg-transparent border border-border rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => setEditorFontSize(editorFontSize + 1)} disabled={editorFontSize >= 24}>
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
 
-          {/* 줄 간격 프리셋 */}
-          <div className="flex items-center border-l border-border pl-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center">
-                  <ALargeSmall className="h-3.5 w-3.5 text-muted-foreground mr-1.5 shrink-0" />
+                {/* 줄 간격 */}
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">줄 간격</label>
                   <select
                     value={editorLineHeight}
                     onChange={(e) => setEditorLineHeight(parseFloat(e.target.value))}
-                    className="h-7 text-xs bg-transparent border border-border rounded pl-1 pr-5 text-muted-foreground cursor-pointer"
+                    className="h-7 text-xs bg-transparent border border-border rounded pl-2 pr-6 cursor-pointer"
                   >
                     <option value={1.0}>1.0 좁게</option>
                     <option value={1.2}>1.2</option>
@@ -459,47 +403,22 @@ function ReviewEditor({ workId }: { workId: string }) {
                     <option value={3.0}>3.0 넓게</option>
                   </select>
                 </div>
-              </TooltipTrigger>
-              <TooltipContent>줄 간격</TooltipContent>
-            </Tooltip>
-          </div>
 
-          {/* 여백 프리셋 */}
-          <div className="flex items-center border-l border-border pl-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <select
-                  value={editorPadding}
-                  onChange={(e) => setEditorPadding(parseInt(e.target.value, 10))}
-                  className="h-7 text-xs bg-transparent border border-border rounded pl-1 pr-5 text-muted-foreground cursor-pointer"
-                >
-                  <option value={0}>여백 없음</option>
-                  <option value={20}>여백 좁게</option>
-                  <option value={40}>여백 보통</option>
-                  <option value={60}>여백 넓게</option>
-                  <option value={80}>여백 아주넓게</option>
-                </select>
-              </TooltipTrigger>
-              <TooltipContent>좌우 여백</TooltipContent>
-            </Tooltip>
-          </div>
-
-          {/* 문단 기호 토글 */}
-          <div className="border-l border-border pl-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={showParagraphMarks ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setShowParagraphMarks(!showParagraphMarks)}
-                  className="h-8 w-8 p-0"
-                >
-                  <Pilcrow className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>문단 기호 표시</TooltipContent>
-            </Tooltip>
-          </div>
+                {/* 문단 기호 */}
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">문단 기호 (¶)</label>
+                  <Button
+                    variant={showParagraphMarks ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setShowParagraphMarks(!showParagraphMarks)}
+                    className="h-7 text-xs px-3"
+                  >
+                    {showParagraphMarks ? "켜짐" : "꺼짐"}
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Side-by-side translation toggle */}
           <div className="border-l border-border pl-3">
@@ -666,7 +585,7 @@ function ReviewEditor({ workId }: { workId: string }) {
           {/* Editor column (full or right half) */}
           <div
             className={cn(
-              "min-h-0 overflow-y-auto",
+              "min-h-0 flex flex-col",
               !editorBg && "bg-background",
               showTranslation && viewMode === "edit" ? "w-1/2" : "w-full"
             )}
@@ -677,15 +596,102 @@ function ReviewEditor({ workId }: { workId: string }) {
                 const r = parseInt(hex.substring(0, 2), 16);
                 const g = parseInt(hex.substring(2, 4), 16);
                 const b = parseInt(hex.substring(4, 6), 16);
-                // relative luminance
                 return (r * 299 + g * 587 + b * 114) / 1000 < 128 ? "#d4d4d4" : undefined;
               })(),
             } : undefined}
           >
+            {/* 여백 룰러 (한컴 스타일) */}
+            {viewMode === "edit" && (
+              <div
+                className="shrink-0 relative h-6 border-b border-neutral-300 dark:border-neutral-600 bg-neutral-200 dark:bg-neutral-700 select-none overflow-hidden"
+                ref={rulerRef}
+              >
+                {/* 본문 영역 (밝은 영역) */}
+                <div
+                  className="absolute top-0 bottom-0 bg-white dark:bg-neutral-800 shadow-[inset_0_1px_0_rgba(0,0,0,0.06)]"
+                  style={{
+                    left: `${editorPadding + 32}px`,
+                    right: `${editorPadding + 32}px`,
+                  }}
+                >
+                  {/* 본문 영역 안쪽 눈금 */}
+                  <div className="absolute inset-0 flex items-end pointer-events-none">
+                    {Array.from({ length: 41 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="flex-1 flex flex-col items-start"
+                      >
+                        <div className={cn(
+                          "w-px",
+                          i % 10 === 0
+                            ? "h-3 bg-neutral-400 dark:bg-neutral-500"
+                            : i % 5 === 0
+                              ? "h-2 bg-neutral-300 dark:bg-neutral-500"
+                              : "h-1 bg-neutral-300 dark:bg-neutral-600"
+                        )} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* 좌 핸들 ▼ */}
+                <div
+                  className="absolute z-10 cursor-col-resize group"
+                  style={{ left: `${editorPadding + 32 - 5}px`, top: 0, bottom: 0, width: "10px" }}
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    const ruler = rulerRef.current;
+                    if (!ruler) return;
+                    const onMove = (ev: PointerEvent) => {
+                      const rect = ruler.getBoundingClientRect();
+                      const x = ev.clientX - rect.left;
+                      setEditorPadding(Math.max(0, Math.min(400, Math.round((x - 32) / 4) * 4)));
+                    };
+                    const onUp = () => {
+                      document.removeEventListener("pointermove", onMove);
+                      document.removeEventListener("pointerup", onUp);
+                    };
+                    document.addEventListener("pointermove", onMove);
+                    document.addEventListener("pointerup", onUp);
+                  }}
+                >
+                  <svg className="absolute top-0 left-0" width="10" height="10" viewBox="0 0 10 10">
+                    <polygon points="0,0 10,0 5,7" className="fill-neutral-500 group-hover:fill-blue-500 dark:fill-neutral-400 dark:group-hover:fill-blue-400 transition-colors" />
+                  </svg>
+                  <div className="absolute top-[7px] left-[4px] w-[2px] bottom-0 bg-neutral-400 group-hover:bg-blue-500 dark:bg-neutral-500 dark:group-hover:bg-blue-400 transition-colors" />
+                </div>
+                {/* 우 핸들 ▼ */}
+                <div
+                  className="absolute z-10 cursor-col-resize group"
+                  style={{ right: `${editorPadding + 32 - 5}px`, top: 0, bottom: 0, width: "10px" }}
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    const ruler = rulerRef.current;
+                    if (!ruler) return;
+                    const onMove = (ev: PointerEvent) => {
+                      const rect = ruler.getBoundingClientRect();
+                      const x = rect.right - ev.clientX;
+                      setEditorPadding(Math.max(0, Math.min(400, Math.round((x - 32) / 4) * 4)));
+                    };
+                    const onUp = () => {
+                      document.removeEventListener("pointermove", onMove);
+                      document.removeEventListener("pointerup", onUp);
+                    };
+                    document.addEventListener("pointermove", onMove);
+                    document.addEventListener("pointerup", onUp);
+                  }}
+                >
+                  <svg className="absolute top-0 left-0" width="10" height="10" viewBox="0 0 10 10">
+                    <polygon points="0,0 10,0 5,7" className="fill-neutral-500 group-hover:fill-blue-500 dark:fill-neutral-400 dark:group-hover:fill-blue-400 transition-colors" />
+                  </svg>
+                  <div className="absolute top-[7px] left-[4px] w-[2px] bottom-0 bg-neutral-400 group-hover:bg-blue-500 dark:bg-neutral-500 dark:group-hover:bg-blue-400 transition-colors" />
+                </div>
+              </div>
+            )}
+            <div className="flex-1 min-h-0 overflow-y-auto">
             {viewMode === "edit" ? (
               <div
-                className="mx-auto py-10"
-                style={{ paddingLeft: `${editorPadding + 32}px`, paddingRight: `${editorPadding + 32}px` }}
+                className="w-full py-10"
+                style={{ paddingLeft: `${editorPadding + 32}px`, paddingRight: `${editorPadding + 32}px`, boxSizing: "border-box" }}
               >
                 {showTranslation && (
                   <div className="shrink-0 mb-6 pb-3 border-b border-border">
@@ -716,6 +722,7 @@ function ReviewEditor({ workId }: { workId: string }) {
             ) : (
               <TrackChangesView />
             )}
+            </div>
           </div>
         </div>
 

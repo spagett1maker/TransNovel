@@ -129,7 +129,7 @@ export function useEditorPreferences() {
   }, [syncToDb]);
 
   const setEditorPadding = useCallback((value: number) => {
-    const clamped = Math.max(0, Math.min(120, value));
+    const clamped = Math.max(0, Math.min(400, value));
     setEditorPaddingState(clamped);
     syncToDb({ editorPadding: clamped });
   }, [syncToDb]);
