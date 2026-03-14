@@ -315,7 +315,7 @@ function ReviewEditor({ workId }: { workId: string }) {
               <TooltipContent>배경색</TooltipContent>
             </Tooltip>
             {showBgPicker && (
-              <div className="absolute top-full left-0 mt-2 p-3 bg-background border border-border rounded-lg shadow-lg z-50">
+              <div className="fixed mt-2 p-3 border border-border rounded-lg shadow-xl z-[100] bg-white dark:bg-neutral-900">
                 <div className="flex gap-1.5 mb-2">
                   {EDITOR_BG_COLORS.map((color) => (
                     <Tooltip key={color.name}>
