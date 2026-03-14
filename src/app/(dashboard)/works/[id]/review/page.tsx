@@ -30,7 +30,7 @@ import {
   Minus,
   Plus,
   Pilcrow,
-  Space,
+  ALargeSmall,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -439,73 +439,48 @@ function ReviewEditor({ workId }: { workId: string }) {
             </Tooltip>
           </div>
 
-          {/* 줄 간격 조절 */}
-          <div className="flex items-center gap-0.5 border-l border-border pl-3">
+          {/* 줄 간격 프리셋 */}
+          <div className="flex items-center border-l border-border pl-3">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorLineHeight(editorLineHeight - 0.2)}
-                  disabled={editorLineHeight <= 1}
-                  className="h-8 w-8 p-0"
-                >
-                  <Space className="h-3.5 w-3.5" />
-                </Button>
+                <div className="flex items-center">
+                  <ALargeSmall className="h-3.5 w-3.5 text-muted-foreground mr-1.5 shrink-0" />
+                  <select
+                    value={editorLineHeight}
+                    onChange={(e) => setEditorLineHeight(parseFloat(e.target.value))}
+                    className="h-7 text-xs bg-transparent border border-border rounded pl-1 pr-5 text-muted-foreground cursor-pointer"
+                  >
+                    <option value={1.0}>1.0 좁게</option>
+                    <option value={1.2}>1.2</option>
+                    <option value={1.5}>1.5</option>
+                    <option value={1.8}>1.8 기본</option>
+                    <option value={2.0}>2.0</option>
+                    <option value={2.5}>2.5</option>
+                    <option value={3.0}>3.0 넓게</option>
+                  </select>
+                </div>
               </TooltipTrigger>
-              <TooltipContent>줄 간격 줄이기</TooltipContent>
-            </Tooltip>
-            <span className="text-[10px] tabular-nums text-muted-foreground w-7 text-center select-none">
-              {editorLineHeight.toFixed(1)}
-            </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorLineHeight(editorLineHeight + 0.2)}
-                  disabled={editorLineHeight >= 3}
-                  className="h-8 w-8 p-0"
-                >
-                  <Space className="h-3.5 w-3.5 rotate-180" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>줄 간격 늘리기</TooltipContent>
+              <TooltipContent>줄 간격</TooltipContent>
             </Tooltip>
           </div>
 
-          {/* 여백 조절 */}
-          <div className="flex items-center gap-0.5 border-l border-border pl-3">
+          {/* 여백 프리셋 */}
+          <div className="flex items-center border-l border-border pl-3">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorPadding(Math.max(0, editorPadding - 10))}
-                  disabled={editorPadding <= 0}
-                  className="h-8 w-8 p-0"
+                <select
+                  value={editorPadding}
+                  onChange={(e) => setEditorPadding(parseInt(e.target.value, 10))}
+                  className="h-7 text-xs bg-transparent border border-border rounded pl-1 pr-5 text-muted-foreground cursor-pointer"
                 >
-                  <Minus className="h-3.5 w-3.5" />
-                </Button>
+                  <option value={0}>여백 없음</option>
+                  <option value={20}>여백 좁게</option>
+                  <option value={40}>여백 보통</option>
+                  <option value={60}>여백 넓게</option>
+                  <option value={80}>여백 아주넓게</option>
+                </select>
               </TooltipTrigger>
-              <TooltipContent>여백 줄이기</TooltipContent>
-            </Tooltip>
-            <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-center select-none">
-              {editorPadding}px
-            </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditorPadding(Math.min(120, editorPadding + 10))}
-                  disabled={editorPadding >= 120}
-                  className="h-8 w-8 p-0"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>여백 늘리기</TooltipContent>
+              <TooltipContent>좌우 여백</TooltipContent>
             </Tooltip>
           </div>
 
@@ -709,10 +684,8 @@ function ReviewEditor({ workId }: { workId: string }) {
           >
             {viewMode === "edit" ? (
               <div
-                className={cn(
-                  "mx-auto px-8 py-10",
-                  showTranslation ? "max-w-2xl" : "max-w-3xl"
-                )}
+                className="mx-auto py-10"
+                style={{ paddingLeft: `${editorPadding + 32}px`, paddingRight: `${editorPadding + 32}px` }}
               >
                 {showTranslation && (
                   <div className="shrink-0 mb-6 pb-3 border-b border-border">
@@ -730,7 +703,6 @@ function ReviewEditor({ workId }: { workId: string }) {
                   style={{
                     fontSize: `${editorFontSize}px`,
                     lineHeight: editorLineHeight,
-                    padding: `${editorPadding}px`,
                   }}
                 />
                 {editor && work && chapter && isEditable && (
