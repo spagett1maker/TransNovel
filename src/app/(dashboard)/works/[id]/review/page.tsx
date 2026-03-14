@@ -100,10 +100,37 @@ function ReviewEditor({ workId }: { workId: string }) {
     }
     return "";
   });
+  const [savedColors, setSavedColors] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return JSON.parse(localStorage.getItem("editor-saved-colors") || "[]");
+      } catch { return []; }
+    }
+    return [];
+  });
   const [showBgPicker, setShowBgPicker] = useState(false);
 
   const bgPickerRef = useRef<HTMLDivElement>(null);
   const bgButtonRef = useRef<HTMLButtonElement>(null);
+
+  const saveCustomColor = useCallback((value: string) => {
+    if (!value) return;
+    const presetValues: string[] = EDITOR_BG_COLORS.map((c) => c.value);
+    if (presetValues.includes(value)) return;
+    setSavedColors((prev) => {
+      const next = [value, ...prev.filter((c) => c !== value)].slice(0, 8);
+      localStorage.setItem("editor-saved-colors", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const removeSavedColor = useCallback((value: string) => {
+    setSavedColors((prev) => {
+      const next = prev.filter((c) => c !== value);
+      localStorage.setItem("editor-saved-colors", JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const handleBgChange = useCallback((value: string) => {
     setEditorBg(value);
@@ -114,8 +141,9 @@ function ReviewEditor({ workId }: { workId: string }) {
         localStorage.removeItem("editor-bg-color");
       }
     }
+    saveCustomColor(value);
     setShowBgPicker(false);
-  }, []);
+  }, [saveCustomColor]);
 
   useEffect(() => {
     if (!showBgPicker) return;
@@ -347,6 +375,29 @@ function ReviewEditor({ workId }: { workId: string }) {
                     </Tooltip>
                   ))}
                 </div>
+                {savedColors.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">저장된 색상</label>
+                    <div className="flex gap-1.5 mt-1">
+                      {savedColors.map((color) => (
+                        <Tooltip key={color}>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => handleBgChange(color)}
+                              onContextMenu={(e) => { e.preventDefault(); removeSavedColor(color); }}
+                              className={cn(
+                                "w-7 h-7 rounded-md border-2 transition-all hover:scale-110",
+                                editorBg === color ? "border-primary ring-2 ring-primary/30" : "border-border"
+                              )}
+                              style={{ backgroundColor: color }}
+                            />
+                          </TooltipTrigger>
+                          <TooltipContent>{color} (우클릭으로 삭제)</TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 pt-2 border-t border-border">
                   <label className="text-xs text-muted-foreground whitespace-nowrap">직접 선택</label>
                   <input
