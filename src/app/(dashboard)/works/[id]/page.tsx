@@ -175,28 +175,26 @@ export default async function WorkDetailPage({
               </p>
             )}
           </div>
-          {!isCompleted && (
-            <div className="flex gap-2 shrink-0">
-              <BulkUploadDialog workId={id} />
-              <TranslationActionButton
-                workId={id}
-                settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
-              />
-            </div>
-          )}
-          {isCompleted && (
-            <div className="shrink-0">
-              <DownloadDialog
-                workId={work.id}
-                workTitle={work.titleKo}
-                chapters={work.chapters.map((ch) => ({
-                  number: ch.number,
-                  title: ch.title,
-                  status: ch.status,
-                }))}
-              />
-            </div>
-          )}
+          <div className="flex gap-2 shrink-0">
+            {!isCompleted && (
+              <>
+                <BulkUploadDialog workId={id} />
+                <TranslationActionButton
+                  workId={id}
+                  settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
+                />
+              </>
+            )}
+            <DownloadDialog
+              workId={work.id}
+              workTitle={work.titleKo}
+              chapters={work.chapters.map((ch) => ({
+                number: ch.number,
+                title: ch.title,
+                status: ch.status,
+              }))}
+            />
+          </div>
         </div>
       </header>
 
