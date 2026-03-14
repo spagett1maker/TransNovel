@@ -29,6 +29,8 @@ import {
   Palette,
   Minus,
   Plus,
+  Pilcrow,
+  Space,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -107,6 +109,12 @@ function ReviewEditor({ workId }: { workId: string }) {
     removeCustomColor: removeSavedColor,
     editorFontSize,
     setEditorFontSize,
+    editorLineHeight,
+    setEditorLineHeight,
+    editorPadding,
+    setEditorPadding,
+    showParagraphMarks,
+    setShowParagraphMarks,
   } = useEditorPreferences();
 
   const bgPickerRef = useRef<HTMLDivElement>(null);
@@ -431,6 +439,93 @@ function ReviewEditor({ workId }: { workId: string }) {
             </Tooltip>
           </div>
 
+          {/* 줄 간격 조절 */}
+          <div className="flex items-center gap-0.5 border-l border-border pl-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorLineHeight(editorLineHeight - 0.2)}
+                  disabled={editorLineHeight <= 1}
+                  className="h-8 w-8 p-0"
+                >
+                  <Space className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>줄 간격 줄이기</TooltipContent>
+            </Tooltip>
+            <span className="text-[10px] tabular-nums text-muted-foreground w-7 text-center select-none">
+              {editorLineHeight.toFixed(1)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorLineHeight(editorLineHeight + 0.2)}
+                  disabled={editorLineHeight >= 3}
+                  className="h-8 w-8 p-0"
+                >
+                  <Space className="h-3.5 w-3.5 rotate-180" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>줄 간격 늘리기</TooltipContent>
+            </Tooltip>
+          </div>
+
+          {/* 여백 조절 */}
+          <div className="flex items-center gap-0.5 border-l border-border pl-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorPadding(Math.max(0, editorPadding - 10))}
+                  disabled={editorPadding <= 0}
+                  className="h-8 w-8 p-0"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>여백 줄이기</TooltipContent>
+            </Tooltip>
+            <span className="text-[10px] tabular-nums text-muted-foreground w-8 text-center select-none">
+              {editorPadding}px
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditorPadding(Math.min(120, editorPadding + 10))}
+                  disabled={editorPadding >= 120}
+                  className="h-8 w-8 p-0"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>여백 늘리기</TooltipContent>
+            </Tooltip>
+          </div>
+
+          {/* 문단 기호 토글 */}
+          <div className="border-l border-border pl-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showParagraphMarks ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setShowParagraphMarks(!showParagraphMarks)}
+                  className="h-8 w-8 p-0"
+                >
+                  <Pilcrow className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>문단 기호 표시</TooltipContent>
+            </Tooltip>
+          </div>
+
           {/* Side-by-side translation toggle */}
           <div className="border-l border-border pl-3">
             <Tooltip>
@@ -628,8 +723,15 @@ function ReviewEditor({ workId }: { workId: string }) {
                 )}
                 <EditorContent
                   editor={editor}
-                  className="min-h-[60vh] [&_.ProseMirror]:min-h-[60vh] [&_.ProseMirror]:outline-none [&_.ProseMirror_p]:my-0 [&_.ProseMirror_p]:leading-relaxed [&_.ProseMirror]:whitespace-pre-wrap [&_.ProseMirror]:leading-relaxed"
-                  style={{ fontSize: `${editorFontSize}px` }}
+                  className={cn(
+                    "min-h-[60vh] [&_.ProseMirror]:min-h-[60vh] [&_.ProseMirror]:outline-none [&_.ProseMirror_p]:my-0 [&_.ProseMirror]:whitespace-pre-wrap",
+                    showParagraphMarks && "[&_.ProseMirror_p::after]:content-['¶'] [&_.ProseMirror_p::after]:text-muted-foreground/30 [&_.ProseMirror_p::after]:text-xs [&_.ProseMirror_p::after]:ml-0.5"
+                  )}
+                  style={{
+                    fontSize: `${editorFontSize}px`,
+                    lineHeight: editorLineHeight,
+                    padding: `${editorPadding}px`,
+                  }}
                 />
                 {editor && work && chapter && isEditable && (
                   <AiImproveBubble
