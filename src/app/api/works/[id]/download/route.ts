@@ -92,12 +92,13 @@ export async function GET(
       where: {
         workId,
         ...(chapterNumbers ? { number: { in: chapterNumbers } } : {}),
-        status: { in: ["TRANSLATED", "EDITED", "APPROVED"] },
+        status: { in: ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"] },
       },
       select: {
         id: true,
         number: true,
         title: true,
+        translatedTitle: true,
       },
       orderBy: { number: "asc" },
     });
@@ -136,7 +137,7 @@ export async function GET(
             : ch.translatedContent
           : null;
         if (!content) continue;
-        epubChapters.push({ number: meta.number, title: meta.title, content });
+        epubChapters.push({ number: meta.number, title: meta.translatedTitle || meta.title, content });
       }
 
       if (epubChapters.length === 0) {
@@ -213,7 +214,7 @@ export async function GET(
         );
       }
 
-      const chapter = { number: meta.number, title: meta.title, content };
+      const chapter = { number: meta.number, title: meta.translatedTitle || meta.title, content };
       let buffer: Buffer;
       let mimeType: string;
       let filename: string;
@@ -258,7 +259,7 @@ export async function GET(
 
       if (!content) continue;
 
-      const chapter = { number: meta.number, title: meta.title, content };
+      const chapter = { number: meta.number, title: meta.translatedTitle || meta.title, content };
       let buffer: Buffer;
       let ext: string;
 
@@ -270,8 +271,8 @@ export async function GET(
         ext = "txt";
       }
 
-      const filename = meta.title
-        ? `${meta.number}화_${meta.title.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
+      const filename = meta.translatedTitle || meta.title
+        ? `${meta.number}화_${meta.translatedTitle || meta.title.replace(/[/\\?%*:|"<>]/g, "_")}.${ext}`
         : `${meta.number}화.${ext}`;
 
       files.push({ name: filename, content: buffer });
