@@ -85,7 +85,7 @@ export async function GET(
     }
 
     // 다운로드 최대 챕터 수 제한 (OOM 방지)
-    const MAX_DOWNLOAD_CHAPTERS = 200;
+    const MAX_DOWNLOAD_CHAPTERS = 1000;
 
     // 메모리 최적화: 메타데이터만 먼저 조회
     const chapterMeta = await db.chapter.findMany({
