@@ -3,8 +3,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
-import { Suspense, useState } from "react";
+import { signIn, getCsrfToken } from "next-auth/react";
+import { Suspense, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
@@ -46,10 +46,35 @@ function LoginForm() {
         return "유효하지 않은 인증 링크입니다.";
       case "expired-token":
         return "만료된 인증 링크입니다. 인증 이메일을 다시 요청해주세요.";
+      case "OAuthSignin":
+      case "OAuthCallback":
+        return "Google 로그인 중 오류가 발생했습니다. 다시 시도해주세요.";
+      case "OAuthAccountNotLinked":
+        return "이미 다른 방식으로 가입된 이메일입니다. 기존 로그인 방식을 이용해주세요.";
+      case "OAuthCreateAccount":
+      case "EmailCreateAccount":
+        return "계정 생성 중 오류가 발생했습니다. 다시 시도해주세요.";
+      case "Callback":
+        return "로그인 처리 중 오류가 발생했습니다. 다시 시도해주세요.";
       default:
-        return null;
+        return urlError ? "로그인 중 오류가 발생했습니다. 다시 시도해주세요." : null;
     }
   };
+
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  const handleGoogleSignIn = useCallback(async () => {
+    setIsGoogleLoading(true);
+    setError(null);
+    try {
+      // CSRF 토큰을 미리 갱신하여 stale token 문제 방지
+      await getCsrfToken();
+      await signIn("google", { callbackUrl });
+    } catch {
+      setError("Google 로그인 중 오류가 발생했습니다. 다시 시도해주세요.");
+      setIsGoogleLoading(false);
+    }
+  }, [callbackUrl]);
 
   const form = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -171,7 +196,7 @@ function LoginForm() {
           </form>
         </Form>
 
-        <div className="relative my-4">
+        {/* <div className="relative my-4">
           <div className="absolute inset-0 flex items-center">
             <span className="w-full border-t border-border" />
           </div>
@@ -183,8 +208,8 @@ function LoginForm() {
         <Button
           variant="outline"
           className="w-full"
-          onClick={() => signIn("google", { callbackUrl })}
-          disabled={isLoading}
+          onClick={handleGoogleSignIn}
+          disabled={isLoading || isGoogleLoading}
         >
           <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
             <path
@@ -204,8 +229,9 @@ function LoginForm() {
               fill="#EA4335"
             />
           </svg>
+          {isGoogleLoading ? <ButtonSpinner /> : null}
           Google로 로그인
-        </Button>
+        </Button> */}
       </CardContent>
       <CardFooter className="justify-center">
         <p className="text-sm text-muted-foreground">

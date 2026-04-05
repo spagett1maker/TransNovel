@@ -53,17 +53,25 @@ function stripMarkdown(header: string): string {
 // 헤더에서 번호 추출
 function extractNumber(header: string): number {
   header = stripMarkdown(header);
-  // 아라비아 숫자 먼저 시도
-  const arabicMatch = header.match(/\d+/);
-  if (arabicMatch) {
-    return parseInt(arabicMatch[0], 10);
+
+  // 第 ~ 章/话 사이의 숫자를 우선 추출 (제목에 포함된 숫자 오인 방지)
+  // 예: "第三百五十五章：9527的生存法则" → 三百五十五 (355), NOT 9527
+  const cjkNumMatch = header.match(/第([一二三四五六七八九十百千万萬零〇\d]+)[章话話節节回卷]/);
+  if (cjkNumMatch) {
+    const inner = cjkNumMatch[1];
+    // 아라비아 숫자만 포함된 경우
+    if (/^\d+$/.test(inner)) return parseInt(inner, 10);
+    // 한자 숫자
+    const num = chineseToNumber(inner);
+    if (!isNaN(num)) return num;
   }
 
-  // 한자 숫자 추출 (第 다음 ~ 章/话 앞)
-  const cjkMatch = header.match(/第([一二三四五六七八九十百千万萬零〇]+)/);
-  if (cjkMatch) {
-    return chineseToNumber(cjkMatch[1]);
-  }
+  // 영문/한글 패턴: Chapter 1, 제1화, 1. Title
+  const arabicMatch = header.match(/(?:Chapter|Ch\.?|Episode|Part|제)\s*(\d+)/i);
+  if (arabicMatch) return parseInt(arabicMatch[1], 10);
+
+  const numDot = header.match(/^(\d{1,4})[\.、]/);
+  if (numDot) return parseInt(numDot[1], 10);
 
   return NaN;
 }
@@ -71,15 +79,15 @@ function extractNumber(header: string): number {
 // 헤더에서 인라인 제목 추출
 function extractTitleFromHeader(header: string): string | undefined {
   header = stripMarkdown(header);
-  // "第1章 黎明之前" / "第一章 黎明之前"
+  // "第1章 黎明之前" / "第一章：黎明之前" / "第一章 黎明之前"
   const cjkTitle = header.match(
-    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]\s*[:\-\s]\s*(.+)$/
+    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]\s*[:\-\s：–—]\s*(.+)$/
   );
   if (cjkTitle?.[1]) return cjkTitle[1].trim();
 
   // "第1章黎明" (구분자 없이 바로 제목) — 제목이 숫자/기호로 시작하면 무시
   const cjkNoSep = header.match(
-    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]([^\d\s].+)$/
+    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]([^\d\s：:].+)$/
   );
   if (cjkNoSep?.[1]) return cjkNoSep[1].trim();
 
