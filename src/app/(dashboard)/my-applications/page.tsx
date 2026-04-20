@@ -57,13 +57,14 @@ interface Counts {
   shortlisted: number;
   accepted: number;
   rejected: number;
+  withdrawn: number;
 }
 
 export default function MyApplicationsPage() {
   const { data: session } = useSession();
 
   const [applications, setApplications] = useState<Application[]>([]);
-  const [counts, setCounts] = useState<Counts>({ total: 0, pending: 0, shortlisted: 0, accepted: 0, rejected: 0 });
+  const [counts, setCounts] = useState<Counts>({ total: 0, pending: 0, shortlisted: 0, accepted: 0, rejected: 0, withdrawn: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
@@ -87,7 +88,7 @@ export default function MyApplicationsPage() {
       });
       const data = await res.json();
       setApplications(data.applications || []);
-      setCounts(data.counts || { total: 0, pending: 0, shortlisted: 0, accepted: 0, rejected: 0 });
+      setCounts(data.counts || { total: 0, pending: 0, shortlisted: 0, accepted: 0, rejected: 0, withdrawn: 0 });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Failed to fetch applications:", error);
@@ -116,10 +117,14 @@ export default function MyApplicationsPage() {
         // Optimistic: update local state immediately
         setApplications((prev) =>
           prev.map((app) =>
-            app.id === withdrawingId ? { ...app, status: "WITHDRAWN" } : app
+            app.id === withdrawingId ? { ...app, status: "WITHDRAWN" as const } : app
           )
         );
-        fetchApplications();
+        setCounts((prev) => ({
+          ...prev,
+          pending: Math.max(0, prev.pending - 1),
+          withdrawn: prev.withdrawn + 1,
+        }));
       } else {
         const data = await res.json();
         toast.error(data.error || "지원 철회에 실패했습니다");

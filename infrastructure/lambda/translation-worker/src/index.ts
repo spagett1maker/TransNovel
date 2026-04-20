@@ -226,9 +226,10 @@ async function processMessage(record: SQSRecord): Promise<void> {
       genres: work.genres,
       ageRating: work.ageRating,
       synopsis: work.synopsis,
-      glossary: work.glossary.map((g: { original: string; translated: string }) => ({
+      glossary: work.glossary.map((g: { original: string; translated: string; note?: string | null }) => ({
         original: g.original,
         translated: g.translated,
+        note: g.note || undefined,
       })),
       characters: work.settingBible?.characters.map((c: { nameOriginal: string; nameKorean: string; role: string; speechStyle: string | null; personality: string | null }) => ({
         nameOriginal: c.nameOriginal,
@@ -238,7 +239,8 @@ async function processMessage(record: SQSRecord): Promise<void> {
         personality: c.personality || undefined,
       })),
       translationGuide: work.settingBible?.translationGuide || undefined,
-      customSystemPrompt: work.settingBible?.customSystemPrompt || undefined,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      customSystemPrompt: (work.settingBible as any)?.customSystemPrompt || undefined,
     };
 
     // 5. Get Gemini API key from pool

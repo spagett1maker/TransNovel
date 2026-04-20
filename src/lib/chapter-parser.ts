@@ -56,9 +56,10 @@ function extractNumber(header: string): number {
 
   // 第 ~ 章/话 사이의 숫자를 우선 추출 (제목에 포함된 숫자 오인 방지)
   // 예: "第三百五十五章：9527的生存法则" → 三百五十五 (355), NOT 9527
-  const cjkNumMatch = header.match(/第([一二三四五六七八九十百千万萬零〇\d]+)[章话話節节回卷]/);
+  // 공백 허용: "第 1 章", "第 一百二十 章" 등
+  const cjkNumMatch = header.match(/第\s*([一二三四五六七八九十百千万萬零〇\d\s]+?)\s*[章话話節节回卷]/);
   if (cjkNumMatch) {
-    const inner = cjkNumMatch[1];
+    const inner = cjkNumMatch[1].replace(/\s+/g, "");
     // 아라비아 숫자만 포함된 경우
     if (/^\d+$/.test(inner)) return parseInt(inner, 10);
     // 한자 숫자
@@ -79,15 +80,15 @@ function extractNumber(header: string): number {
 // 헤더에서 인라인 제목 추출
 function extractTitleFromHeader(header: string): string | undefined {
   header = stripMarkdown(header);
-  // "第1章 黎明之前" / "第一章：黎明之前" / "第一章 黎明之前"
+  // "第1章 黎明之前" / "第一章：黎明之前" / "第一章 黎明之前" / "第 1 章 黎明之前"
   const cjkTitle = header.match(
-    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]\s*[:\-\s：–—]\s*(.+)$/
+    /^第\s*[一二三四五六七八九十百千万萬零〇\d\s]+?\s*[章话話節节回卷]\s*[:\-\s：–—]\s*(.+)$/
   );
   if (cjkTitle?.[1]) return cjkTitle[1].trim();
 
   // "第1章黎明" (구분자 없이 바로 제목) — 제목이 숫자/기호로 시작하면 무시
   const cjkNoSep = header.match(
-    /^第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回卷]([^\d\s：:].+)$/
+    /^第\s*[一二三四五六七八九十百千万萬零〇\d\s]+?\s*[章话話節节回卷]([^\d\s：:].+)$/
   );
   if (cjkNoSep?.[1]) return cjkNoSep[1].trim();
 
@@ -115,7 +116,7 @@ function extractTitleFromHeader(header: string): string | undefined {
 // "红顶 第1章 南渡北归" → "第1章 南渡北归"
 function normalizeChapterHeaders(text: string): string {
   return text.replace(
-    /^([\s\u3000]*)((?:正文|[\u4e00-\u9fff]{2,4})\s+)(第[一二三四五六七八九十百千万萬零〇\d]+[章话話節节回].*)$/gm,
+    /^([\s\u3000]*)((?:正文|[\u4e00-\u9fff]{2,4})\s+)(第\s*[一二三四五六七八九十百千万萬零〇\d\s]+?\s*[章话話節节回].*)$/gm,
     (match, ws: string, prefix: string, chapterAndRest: string) => {
       // "正文"은 항상 섹션 라벨이므로 안전하게 제거
       if (prefix.trim() === "正文") return ws + chapterAndRest;
@@ -132,14 +133,14 @@ function normalizeChapterHeaders(text: string): string {
 // "第三卷" → false (이름 없음, 챕터일 수 있음)
 function isVolumeMarker(header: string): boolean {
   const stripped = stripMarkdown(header);
-  return /^第[一二三四五六七八九十百千万萬零〇\d]+卷\s*\S/.test(stripped);
+  return /^第\s*[一二三四五六七八九十百千万萬零〇\d\s]+?\s*卷\s*\S/.test(stripped);
 }
 
 // 볼륨 마커에서 이름 추출
 // "第二卷红顶" → "红顶"
 function extractVolumeName(header: string): string {
   const stripped = stripMarkdown(header);
-  const match = stripped.match(/^第[一二三四五六七八九十百千万萬零〇\d]+卷\s*(.+)$/);
+  const match = stripped.match(/^第\s*[一二三四五六七八九十百千万萬零〇\d\s]+?\s*卷\s*(.+)$/);
   return match?.[1]?.trim() || stripped;
 }
 
@@ -153,8 +154,8 @@ const MD = "(?:#{1,6}\\s+)?";
 
 // 챕터 감지 패턴 (우선순위순)
 const CHAPTER_PATTERNS = [
-  // CJK 통합: 第X章/话/話/節/节/回/卷
-  new RegExp(`^${WS}${MD}第[一二三四五六七八九十百千万萬零〇\\d]+[章话話節节回卷].*$`, "gm"),
+  // CJK 통합: 第X章/话/話/節/节/回/卷 (공백 허용: "第 1 章", "第1章" 모두 매칭)
+  new RegExp(`^${WS}${MD}第\\s*[一二三四五六七八九十百千万萬零〇\\d][一二三四五六七八九十百千万萬零〇\\d\\s]*\\s*[章话話節节回卷].*$`, "gm"),
 
   // 영어: Chapter / Ch. / Episode / Part
   new RegExp(`^${WS}${MD}(?:Chapter|Ch\\.?|Episode|Part)\\s*\\d+.*$`, "gim"),

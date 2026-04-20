@@ -48,8 +48,8 @@ export interface BibleGenerationJob {
 interface BibleGenerationContextType {
   jobs: BibleGenerationJob[];
   activeJobsCount: number;
-  // 작업 등록 (서버에 POST 후 polling 시작)
-  registerJob: (workId: string, workTitle: string, totalChapters: number) => Promise<{ jobId: string; totalBatches: number } | null>;
+  // 작업 등록 (서버에 POST 후 polling 시작). force=true이면 재분석 강제 실행
+  registerJob: (workId: string, workTitle: string, totalChapters: number, options?: { force?: boolean }) => Promise<{ jobId: string; totalBatches: number } | null>;
   // 작업 취소
   cancelGeneration: (workId: string) => Promise<void>;
   // 작업 제거 (UI에서만)
@@ -205,10 +205,12 @@ export function BibleGenerationProvider({ children }: { children: ReactNode }) {
 
   // 작업 등록 (POST → polling 시작)
   const registerJob = useCallback(
-    async (workId: string, workTitle: string, totalChapters: number) => {
+    async (workId: string, workTitle: string, totalChapters: number, options?: { force?: boolean }) => {
       try {
         const res = await fetch(`/api/works/${workId}/setting-bible/generate`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force: options?.force ?? false }),
         });
 
         const data = await res.json();

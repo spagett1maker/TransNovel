@@ -183,6 +183,7 @@ export default function SettingBiblePage() {
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
   const [editingTerm, setEditingTerm] = useState<Term | null>(null);
   const [showGenerationProgress, setShowGenerationProgress] = useState(false);
+  const [isReanalysis, setIsReanalysis] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [deletingCharacterId, setDeletingCharacterId] = useState<string | null>(null);
   const [isDeletingCharacter, setIsDeletingCharacter] = useState(false);
@@ -805,8 +806,12 @@ export default function SettingBiblePage() {
           workTitle={workTitle}
           totalChapters={totalChapters}
           open={showGenerationProgress}
-          onOpenChange={setShowGenerationProgress}
+          onOpenChange={(open) => {
+            setShowGenerationProgress(open);
+            if (!open) setIsReanalysis(false);
+          }}
           onComplete={handleGenerationComplete}
+          force={isReanalysis}
         />
       </div>
     );
@@ -933,7 +938,10 @@ export default function SettingBiblePage() {
               <>
                 <Button
                   variant="outline"
-                  onClick={() => setShowGenerationProgress(true)}
+                  onClick={() => {
+                    setIsReanalysis(true);
+                    setShowGenerationProgress(true);
+                  }}
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   재분석

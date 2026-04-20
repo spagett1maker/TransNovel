@@ -23,6 +23,8 @@ interface GenerationProgressProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onComplete: () => void | Promise<void>;
+  /** true이면 이미 분석 완료된 설정집도 강제 재분석 */
+  force?: boolean;
 }
 
 export function GenerationProgress({
@@ -32,6 +34,7 @@ export function GenerationProgress({
   open,
   onOpenChange,
   onComplete,
+  force = false,
 }: GenerationProgressProps) {
   const [localError, setLocalError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -59,7 +62,7 @@ export function GenerationProgress({
     hasCompletedRef.current = false;
 
     try {
-      const result = await registerJob(workId, workTitle, totalChapters);
+      const result = await registerJob(workId, workTitle, totalChapters, { force });
 
       if (result === null) {
         // 이미 전부 분석됨
@@ -75,7 +78,7 @@ export function GenerationProgress({
     } finally {
       setIsStarting(false);
     }
-  }, [workId, workTitle, totalChapters, registerJob, onComplete]);
+  }, [workId, workTitle, totalChapters, force, registerJob, onComplete]);
 
   // 다이얼로그 열리면 자동 시작
   useEffect(() => {

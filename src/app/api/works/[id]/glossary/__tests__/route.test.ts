@@ -66,7 +66,9 @@ describe("GET /api/works/[id]/glossary", () => {
     const { status, body } = await parseResponse(res);
 
     expect(status).toBe(200);
-    expect(body).toHaveLength(2);
+    expect(body.data).toHaveLength(2);
+    expect(body).toHaveProperty("nextCursor");
+    expect(body).toHaveProperty("hasMore");
   });
 });
 

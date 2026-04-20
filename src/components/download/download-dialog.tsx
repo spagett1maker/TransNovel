@@ -125,8 +125,12 @@ export function DownloadDialog({
 
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition");
-      const filenameMatch = disposition?.match(/filename="?(.+?)"?$/);
-      const filename = filenameMatch?.[1] || `download.${format}`;
+      // filename*=UTF-8''... (RFC 5987) 또는 filename="..." 형식 모두 지원
+      const rfc5987Match = disposition?.match(/filename\*=UTF-8''(.+?)(?:;|$)/i);
+      const plainMatch = disposition?.match(/filename="?(.+?)"?(?:;|$)/);
+      const filename = rfc5987Match?.[1]
+        ? decodeURIComponent(rfc5987Match[1])
+        : plainMatch?.[1] || `download.${format}`;
 
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");

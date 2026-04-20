@@ -2,7 +2,8 @@
  * TransNovel Health Checker Lambda
  *
  * Monitors job health and performs cleanup tasks:
- * - Check for stale jobs (running too long)
+ * - Detect and resolve zombie jobs (stuck IN_PROGRESS/PENDING)
+ * - Recover orphaned chapters stuck in TRANSLATING status
  * - Clean up completed/failed jobs older than retention period
  * - Process DLQ messages
  * - Generate health metrics

@@ -7,6 +7,8 @@ import { useSession } from "next-auth/react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChapterDownloadButton } from "@/components/download/chapter-download-button";
+import { RetranslateDialog } from "@/components/translation/retranslate-dialog";
 import {
   EditorProvider,
   CollaborationEditor,
@@ -50,6 +52,7 @@ function ChapterEditorContent() {
   }
 
   const statusConfig = getChapterStatusConfig(chapter.status);
+  const hasTranslation = ["TRANSLATED", "EDITED", "APPROVED", "REVIEWING"].includes(chapter.status);
 
   // Compute actual chapter number range from chapters array
   const chapterNumbers = work.chapters?.map((c) => c.number) ?? [];
@@ -86,8 +89,23 @@ function ChapterEditorContent() {
             </p>
           </div>
 
-          {/* Chapter Navigation */}
+          {/* Actions & Chapter Navigation */}
           <div className="flex items-center gap-1 shrink-0">
+            {hasTranslation && (
+              <RetranslateDialog
+                workId={workId}
+                chapterNumber={chapterNum}
+                chapterStatus={chapter.status}
+                onComplete={() => router.refresh()}
+              />
+            )}
+            {hasTranslation && (
+              <ChapterDownloadButton
+                workId={workId}
+                chapterNumber={chapterNum}
+                size="sm"
+              />
+            )}
             <Button
               variant="outline"
               size="sm"

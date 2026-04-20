@@ -57,7 +57,9 @@ export function generateTXT(
     lines.push("");
   }
 
-  return Buffer.from(lines.join("\n"), "utf-8");
+  // UTF-8 BOM 추가 (Windows에서 한글 인코딩 자동 인식)
+  const BOM = "\uFEFF";
+  return Buffer.from(BOM + lines.join("\n"), "utf-8");
 }
 
 /**
@@ -245,8 +247,8 @@ function htmlToXhtml(html: string): string {
     .replace(/<hr\s*\/?>/gi, "<hr/>")
     // <img ...> → <img .../> (XHTML self-closing)
     .replace(/<img([^>]*?)\/?\s*>/gi, "<img$1/>")
-    // 빈 <p><br/></p> → 빈 줄 (TipTap 빈 줄 패턴)
-    .replace(/<p><br\/><\/p>/gi, "<p>\u00A0</p>")
+    // 빈 문단 → NBSP 문단 (TipTap empty paragraph / legacy <br> pattern)
+    .replace(/<p>\s*(?:<br\s*\/?>)?\s*<\/p>/gi, "<p>\u00A0</p>")
     // TipTap highlight: <mark data-color="..." style="..."> → <mark>
     .replace(/<mark[^>]*>/gi, "<mark>")
     // <p>...</p> 태그 유지, 들여쓰기 추가

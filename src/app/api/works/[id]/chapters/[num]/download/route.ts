@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import {
   generateTXT,
   generateDOCX,
+  generateEPUB,
   generateFilename,
   getMimeType,
   type DownloadFormat,
@@ -115,7 +116,13 @@ export async function GET(
     };
 
     let buffer: Buffer;
-    if (format === "docx") {
+    if (format === "epub") {
+      buffer = await generateEPUB([chapterData], {
+        title: `${work.titleKo} - ${chapterNumber}화`,
+        author: work.titleKo,
+        language: "ko",
+      });
+    } else if (format === "docx") {
       buffer = await generateDOCX([chapterData], work.titleKo);
     } else {
       buffer = generateTXT([chapterData], work.titleKo);

@@ -62,9 +62,12 @@ export async function POST(
     const analyzedCount = work.settingBible?.analyzedChapters ?? 0;
     const skippedChapters = 0;
 
-    // 이미 전체 분석 완료된 경우에만 건너뛰기
-    // (재분석 버튼 클릭 시에는 analyzedChapters를 0으로 리셋하고 호출됨)
-    if (analyzedCount > 0 && analyzedCount >= chapterNumbers.length) {
+    // force=true: 재분석 요청 시 완료 체크를 건너뛰고 강제 재분석
+    const body = await req.json().catch(() => ({}));
+    const force = body?.force === true;
+
+    // 이미 전체 분석 완료된 경우 건너뛰기 (재분석 시에는 force=true로 우회)
+    if (!force && analyzedCount > 0 && analyzedCount >= chapterNumbers.length) {
       return NextResponse.json({
         alreadyComplete: true,
         message: "이미 모든 회차가 분석되었습니다.",

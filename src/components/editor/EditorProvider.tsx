@@ -18,6 +18,7 @@ import {
   ReactNode,
 } from "react";
 import { canEditChapterContent } from "@/lib/permissions";
+import { toEditorHtml as toEditorHtmlFn } from "./toEditorHtml";
 
 // Types
 export interface Chapter {
@@ -126,6 +127,10 @@ export function EditorProvider({
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
+        // History: 충분한 undo depth 확보
+        history: {
+          depth: 200,
+        },
       }),
       Underline,
       Highlight.configure({
@@ -146,16 +151,7 @@ export function EditorProvider({
   });
 
   // Convert plain text (with \n) to HTML paragraphs for TipTap
-  const toEditorHtml = useCallback((text: string): string => {
-    if (!text) return "";
-    // Already HTML (contains common tags) — use as-is
-    if (/<(p|div|br|span|h[1-6]|ul|ol|li|strong|em|a|blockquote)\b/i.test(text)) return text;
-    // Plain text — wrap each line in <p>, empty lines become empty <p>
-    return text
-      .split("\n")
-      .map((line) => `<p>${line || "<br>"}</p>`)
-      .join("");
-  }, []);
+  const toEditorHtml = useCallback(toEditorHtmlFn, []);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -221,9 +217,15 @@ export function EditorProvider({
     fetchData();
   }, [fetchData]);
 
-  // Update editor when chapter changes
+  // Update editor when chapter changes (외부 변경 시에만 - 자동 저장 후에는 스킵)
   useEffect(() => {
     if (editor && chapter) {
+      // 자동 저장/수동 저장 직후에는 에디터 콘텐츠를 다시 설정하지 않음
+      // (setContent가 undo/redo 히스토리를 초기화하기 때문)
+      if (skipNextContentSyncRef.current) {
+        skipNextContentSyncRef.current = false;
+        return;
+      }
       const content = chapter.editedContent || chapter.translatedContent || "";
       const html = toEditorHtml(content);
       if (editor.getHTML() !== html) {
@@ -263,6 +265,8 @@ export function EditorProvider({
   const chapterRef = useRef(chapter);
   const isEditableRef = useRef(isEditable);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 자동 저장 직후 setChapter로 인한 setContent 호출을 방지하는 플래그
+  const skipNextContentSyncRef = useRef(false);
 
   editorRef.current = editor;
   chapterRef.current = chapter;
@@ -294,6 +298,8 @@ export function EditorProvider({
             if (res.ok) {
               const updated = await res.json();
               chapterRef.current = updated;
+              // setChapter 호출 시 useEffect가 setContent를 호출하지 않도록 플래그 설정
+              skipNextContentSyncRef.current = true;
               setChapter(updated);
             }
           })
@@ -377,6 +383,8 @@ export function EditorProvider({
 
       isDirtyRef.current = false;
       const updatedChapter = await response.json();
+      // 수동 저장 후에도 setContent로 히스토리 초기화 방지
+      skipNextContentSyncRef.current = true;
       setChapter(updatedChapter);
       toast.success("저장되었습니다");
     } catch (error) {
@@ -429,6 +437,7 @@ export function EditorProvider({
         }
 
         const updatedChapter = await response.json();
+        skipNextContentSyncRef.current = true;
         setChapter(updatedChapter);
         toast.success("상태가 변경되었습니다");
         onChapterStatusChange?.();

@@ -207,20 +207,24 @@ describe("PATCH /api/works/[id]/chapters/[num]", () => {
     expect(status).toBe(200);
   });
 
-  it("EDITOR에게 활성 계약이 없으면 403을 반환한다", async () => {
+  it("EDITOR에게 활성 계약이 없어도 편집을 허용한다", async () => {
+    // 계약이 없어도 work.editorId 체크(canAccessWork)를 통과했으면 편집 허용
     mockGetServerSession.mockResolvedValue(sessions.editor);
     mockDb.work.findUnique.mockResolvedValue({ authorId: "author-1", editorId: "editor-1" });
     mockDb.projectContract.findFirst.mockResolvedValue(null);
+    mockDb.chapter.findUnique.mockResolvedValue(buildChapter({ status: "TRANSLATED" }));
+    mockDb.chapterSnapshot.create.mockResolvedValue({});
+    mockDb.chapter.update.mockResolvedValue(buildChapter({ status: "REVIEWING", editedContent: "수정 내용" }));
+    mockDb.chapterActivity.create.mockResolvedValue({});
 
     const req = createRequest("http://localhost:3000/api/works/work-1/chapters/1", {
       method: "PATCH",
       body: { editedContent: "수정 내용" },
     });
     const res = await PATCH(req, makeParams("work-1", "1"));
-    const { status, body } = await parseResponse(res);
+    const { status } = await parseResponse(res);
 
-    expect(status).toBe(403);
-    expect(body.error).toContain("활성 계약");
+    expect(status).toBe(200);
   });
 
   it("EDITOR가 계약 범위 밖 챕터 편집 시 403을 반환한다", async () => {

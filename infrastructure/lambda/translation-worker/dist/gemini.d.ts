@@ -10,6 +10,7 @@ export interface TranslationContext {
     glossary?: Array<{
         original: string;
         translated: string;
+        note?: string;
     }>;
     characters?: Array<{
         nameOriginal: string;
@@ -19,6 +20,7 @@ export interface TranslationContext {
         personality?: string;
     }>;
     translationGuide?: string;
+    customSystemPrompt?: string;
 }
 /**
  * 원문 앞에 제목 마커를 붙여서 Gemini가 함께 번역하도록 함

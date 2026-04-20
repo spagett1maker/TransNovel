@@ -32,6 +32,7 @@ const { mockTranslationManager } = vi.hoisted(() => ({
     failChapter: vi.fn(),
     checkAndPause: vi.fn(),
     updateChunkProgress: vi.fn(),
+    maybeLazyCleanup: vi.fn(),
   },
 }));
 vi.mock("@/lib/translation-manager", () => ({

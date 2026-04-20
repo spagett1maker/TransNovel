@@ -101,6 +101,7 @@ export async function GET(request: NextRequest) {
       shortlisted: 0,
       accepted: 0,
       rejected: 0,
+      withdrawn: 0,
     };
 
     countsByStatus.forEach((item) => {
@@ -180,10 +181,11 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // 트랜잭션으로 삭제 + 카운트 차감을 원자적으로 실행
+    // 트랜잭션으로 철회(soft update) + 카운트 차감을 원자적으로 실행
     await db.$transaction(async (tx) => {
-      await tx.projectApplication.delete({
+      await tx.projectApplication.update({
         where: { id: applicationId },
+        data: { status: ApplicationStatus.WITHDRAWN, reviewedAt: new Date() },
       });
       await tx.projectListing.update({
         where: { id: application.listingId },

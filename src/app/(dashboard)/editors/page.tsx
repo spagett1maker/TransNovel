@@ -7,6 +7,7 @@ import Link from "next/link";
 import { EditorAvailability } from "@prisma/client";
 import { Search, Star, Briefcase, Filter, Users } from "lucide-react";
 
+import { GENRES } from "@/lib/validations/work";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -43,18 +44,6 @@ interface EditorProfile {
     reviews: number;
   };
 }
-
-const GENRES = [
-  "무협",
-  "판타지",
-  "현대판타지",
-  "로맨스",
-  "로맨스판타지",
-  "SF",
-  "BL",
-  "미스터리",
-  "라이트노벨",
-];
 
 const LANGUAGES: Record<string, string> = {
   ZH: "중국어",

@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { EditorAvailability } from "@prisma/client";
+import { GENRES } from "@/lib/validations/work";
 import {
   User,
   Briefcase,
@@ -73,19 +74,6 @@ interface EditorProfile {
   isVerified: boolean;
   portfolioItems: PortfolioItem[];
 }
-
-const GENRES = [
-  "무협",
-  "판타지",
-  "현대판타지",
-  "로맨스",
-  "로맨스판타지",
-  "SF",
-  "BL",
-  "미스터리",
-  "라이트노벨",
-  "기타",
-];
 
 const LANGUAGES = [
   { code: "ZH", label: "중국어" },

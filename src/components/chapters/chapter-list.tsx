@@ -1,16 +1,19 @@
 "use client";
 
 import {
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Square,
   Trash2,
+  X,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { ChapterStatus } from "@prisma/client";
@@ -27,8 +30,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslation } from "@/contexts/translation-context";
+import { ChapterDownloadButton } from "@/components/download/chapter-download-button";
 import { getChapterStatusConfig } from "@/lib/chapter-status";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +59,10 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
   const [currentPage, setCurrentPage] = useState(1);
   const [deletingChapter, setDeletingChapter] = useState<Chapter | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // 일괄 선택 모드
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const router = useRouter();
   const { getJobByWorkId } = useTranslation();
 
@@ -78,6 +87,76 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
       setIsDeleting(false);
     }
   };
+
+  // 일괄 삭제
+  const handleBulkDelete = async () => {
+    if (selectedChapters.size === 0) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/works/${workId}/chapters/bulk-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chapterNumbers: Array.from(selectedChapters) }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || "일괄 삭제에 실패했습니다");
+        return;
+      }
+      const data = await res.json();
+      toast.success(`${data.deleted}개 회차가 삭제되었습니다`);
+      setSelectedChapters(new Set());
+      setSelectMode(false);
+      setShowBulkDeleteConfirm(false);
+      router.refresh();
+    } catch {
+      toast.error("일괄 삭제에 실패했습니다");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((prev) => {
+      if (prev) setSelectedChapters(new Set());
+      return !prev;
+    });
+  }, []);
+
+  const toggleChapter = useCallback((number: number) => {
+    setSelectedChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(number)) {
+        next.delete(number);
+      } else {
+        next.add(number);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllOnPage = useCallback(() => {
+    setSelectedChapters((prev) => {
+      const pageNumbers = paginatedChapters.map((ch) => ch.number);
+      const allSelected = pageNumbers.every((n) => prev.has(n));
+      const next = new Set(prev);
+      if (allSelected) {
+        pageNumbers.forEach((n) => next.delete(n));
+      } else {
+        pageNumbers.forEach((n) => next.add(n));
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedChapters((prev) => {
+      if (prev.size === safeChapters.length) {
+        return new Set();
+      }
+      return new Set(safeChapters.map((ch) => ch.number));
+    });
+  }, []);
 
   // 현재 작품의 번역 작업 확인
   const job = getJobByWorkId(workId);
@@ -109,8 +188,80 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
 
+  // 현재 페이지 전체 선택 여부
+  const allOnPageSelected = paginatedChapters.length > 0 &&
+    paginatedChapters.every((ch) => selectedChapters.has(ch.number));
+
   return (
     <div>
+      {/* 선택 모드 툴바 */}
+      {canDelete && selectMode && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-muted/50 border-b border-border">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={selectAllOnPage}
+              className="h-7 gap-1.5 px-2 text-xs"
+            >
+              {allOnPageSelected ? (
+                <CheckSquare className="h-3.5 w-3.5" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              이 페이지
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={selectAll}
+              className="h-7 gap-1.5 px-2 text-xs"
+            >
+              {selectedChapters.size === safeChapters.length ? "전체 해제" : "전체 선택"}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {selectedChapters.size}개 선택됨
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedChapters.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowBulkDeleteConfirm(true)}
+                className="h-7 gap-1.5 px-2 text-xs"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {selectedChapters.size}개 삭제
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={toggleSelectMode}
+              className="h-7 w-7 p-0"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 선택 모드 진입 버튼 */}
+      {canDelete && !selectMode && safeChapters.length > 1 && (
+        <div className="flex justify-end px-4 py-1.5 border-b border-border">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleSelectMode}
+            className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+          >
+            <CheckSquare className="h-3.5 w-3.5" />
+            선택 모드
+          </Button>
+        </div>
+      )}
+
       {/* Chapter List */}
       <div className="space-y-0">
         {paginatedChapters.map((chapter, idx) => {
@@ -136,81 +287,131 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
                   <div className="flex-1 border-t border-border/50" />
                 </div>
               )}
-              <Link
-                href={`/works/${workId}/chapters/${chapter.number}`}
-                className={cn(
-                  "list-item group",
-                  isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5 translation-active"
-                )}
-              >
-                <div className="flex items-center gap-4 min-w-0 flex-1">
-                  {/* 챕터 번호 - 번역 중이면 아이콘 표시 */}
-                  <span className={cn(
-                    "text-xs tabular-nums w-8 flex items-center justify-center",
-                    isCurrentlyTranslating ? "text-status-progress font-medium" : "text-muted-foreground"
-                  )}>
-                    {isCurrentlyTranslating ? (
-                      <Zap className="h-4 w-4 text-status-progress" />
-                    ) : (
-                      String(displayNum).padStart(3, "0")
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className={cn(
-                        "font-medium group-hover:text-muted-foreground transition-colors",
-                        isCurrentlyTranslating && "text-status-progress"
-                      )}>
-                        {displayNum}화
-                      </span>
-                      {(chapter.translatedTitle || chapter.title) && (
-                        <span className="text-muted-foreground truncate">
-                          {chapter.translatedTitle || chapter.title}
-                        </span>
-                      )}
-                    </div>
-                    {/* 번역 중인 챕터는 상태 표시 */}
-                    {isCurrentlyTranslating ? (
-                      <div className="flex items-center gap-2 text-xs text-status-progress mt-0.5">
-                        <Spinner size="sm" className="text-status-progress" />
-                        <span>번역 중</span>
+              {selectMode ? (
+                // 선택 모드: 체크박스 + 클릭으로 선택
+                <div
+                  className={cn(
+                    "list-item group cursor-pointer",
+                    selectedChapters.has(chapter.number) && "bg-primary/5 border-l-2 border-l-primary",
+                    isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5"
+                  )}
+                  onClick={() => toggleChapter(chapter.number)}
+                >
+                  <div className="flex items-center gap-4 min-w-0 flex-1">
+                    <Checkbox
+                      checked={selectedChapters.has(chapter.number)}
+                      onCheckedChange={() => toggleChapter(chapter.number)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0"
+                    />
+                    <span className="text-xs tabular-nums w-8 text-center text-muted-foreground">
+                      {String(displayNum).padStart(3, "0")}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{displayNum}화</span>
+                        {(chapter.translatedTitle || chapter.title) && (
+                          <span className="text-muted-foreground truncate">
+                            {chapter.translatedTitle || chapter.title}
+                          </span>
+                        )}
                       </div>
-                    ) : (
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {chapter.wordCount.toLocaleString()}자
-                        {hasTranslation && " · 번역 완료"}
                       </p>
-                    )}
+                    </div>
                   </div>
+                  <Badge variant={chapterStatus.variant} className="text-xs shrink-0">
+                    {chapterStatus.label}
+                  </Badge>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  {isCurrentlyTranslating ? (
-                    <Badge variant="progress" className="text-xs gap-1">
-                      <Spinner size="sm" className="text-white" />
-                      번역중
-                    </Badge>
-                  ) : (
-                    <Badge variant={chapterStatus.variant} className="text-xs">
-                      {chapterStatus.label}
-                    </Badge>
+              ) : (
+                // 일반 모드: 링크
+                <Link
+                  href={`/works/${workId}/chapters/${chapter.number}`}
+                  className={cn(
+                    "list-item group",
+                    isCurrentlyTranslating && "border-l-4 border-l-status-progress bg-status-progress/5 translation-active"
                   )}
-                  {canDelete && !isCurrentlyTranslating && (
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setDeletingChapter(chapter);
-                      }}
-                      className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                    보기 →
-                  </span>
-                </div>
-              </Link>
+                >
+                  <div className="flex items-center gap-4 min-w-0 flex-1">
+                    <span className={cn(
+                      "text-xs tabular-nums w-8 flex items-center justify-center",
+                      isCurrentlyTranslating ? "text-status-progress font-medium" : "text-muted-foreground"
+                    )}>
+                      {isCurrentlyTranslating ? (
+                        <Zap className="h-4 w-4 text-status-progress" />
+                      ) : (
+                        String(displayNum).padStart(3, "0")
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "font-medium group-hover:text-muted-foreground transition-colors",
+                          isCurrentlyTranslating && "text-status-progress"
+                        )}>
+                          {displayNum}화
+                        </span>
+                        {(chapter.translatedTitle || chapter.title) && (
+                          <span className="text-muted-foreground truncate">
+                            {chapter.translatedTitle || chapter.title}
+                          </span>
+                        )}
+                      </div>
+                      {isCurrentlyTranslating ? (
+                        <div className="flex items-center gap-2 text-xs text-status-progress mt-0.5">
+                          <Spinner size="sm" className="text-status-progress" />
+                          <span>번역 중</span>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {chapter.wordCount.toLocaleString()}자
+                          {hasTranslation && " · 번역 완료"}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {isCurrentlyTranslating ? (
+                      <Badge variant="progress" className="text-xs gap-1">
+                        <Spinner size="sm" className="text-white" />
+                        번역중
+                      </Badge>
+                    ) : (
+                      <Badge variant={chapterStatus.variant} className="text-xs">
+                        {chapterStatus.label}
+                      </Badge>
+                    )}
+                    {hasTranslation && !isCurrentlyTranslating && (
+                      <span
+                        className="opacity-0 group-hover:opacity-100 transition-all"
+                        onClick={(e) => e.preventDefault()}
+                      >
+                        <ChapterDownloadButton
+                          workId={workId}
+                          chapterNumber={chapter.number}
+                        />
+                      </span>
+                    )}
+                    {canDelete && !isCurrentlyTranslating && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDeletingChapter(chapter);
+                        }}
+                        className="p-1 rounded text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-all"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                      보기 →
+                    </span>
+                  </div>
+                </Link>
+              )}
             </div>
           );
         })}
@@ -305,7 +506,7 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
         </div>
       )}
 
-      {/* 챕터 삭제 확인 다이얼로그 */}
+      {/* 단일 챕터 삭제 확인 */}
       <AlertDialog open={!!deletingChapter} onOpenChange={() => { if (!isDeleting) setDeletingChapter(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -324,6 +525,30 @@ export function ChapterList({ workId, chapters = [], itemsPerPage = 30, canDelet
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeleting ? "삭제 중..." : "삭제"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 일괄 삭제 확인 */}
+      <AlertDialog open={showBulkDeleteConfirm} onOpenChange={() => { if (!isDeleting) setShowBulkDeleteConfirm(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>일괄 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{selectedChapters.size}개 회차</strong>를 삭제하시겠습니까?
+              <br />
+              선택된 회차의 원문, 번역본, 스냅샷이 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "삭제 중..." : `${selectedChapters.size}개 삭제`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

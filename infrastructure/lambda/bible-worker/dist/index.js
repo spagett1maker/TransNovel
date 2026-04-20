@@ -55,13 +55,21 @@ function mapCharacterRole(role) {
 }
 // Prisma client singleton
 let prisma = null;
+// Lambda는 짧은 수명 + 높은 동시성이므로 connection_limit을 낮게 설정
+const LAMBDA_CONNECTION_LIMIT = 5;
+function ensureConnectionLimit(url) {
+    if (url.includes("connection_limit"))
+        return url;
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}connection_limit=${LAMBDA_CONNECTION_LIMIT}`;
+}
 async function getPrismaClient() {
     if (!prisma) {
         const secrets = await (0, secrets_1.getSecrets)(process.env.DATABASE_SECRET_ARN);
         prisma = new client_1.PrismaClient({
             datasources: {
                 db: {
-                    url: secrets.DATABASE_URL,
+                    url: ensureConnectionLimit(secrets.DATABASE_URL),
                 },
             },
         });
@@ -227,48 +235,48 @@ async function processMessage(record) {
     }
 }
 /**
- * Atomically increment completed batch count and check if job is done
+ * Atomically increment completed batch count and check if job is done.
+ * Uses SET (not increment) for analyzedChapters to prevent drift from SQS retries.
  */
 async function incrementAndCheckCompletion(db, jobId, fullBatchPlan) {
     // Prisma atomic increment → PostgreSQL row-level lock ensures correctness
     const updatedJob = await db.bibleGenerationJob.update({
         where: { id: jobId },
         data: { currentBatchIndex: { increment: 1 } },
-        select: { currentBatchIndex: true, totalBatches: true, status: true },
+        select: { currentBatchIndex: true, totalBatches: true, status: true, workId: true },
     });
+    // Cap to totalBatches to handle SQS retry double-increments
+    const completedBatches = Math.min(updatedJob.currentBatchIndex, updatedJob.totalBatches);
+    // Calculate analyzed chapters from batch plan (deterministic, idempotent)
+    const analyzedChapters = fullBatchPlan.slice(0, completedBatches).flat().length;
     log("Progress updated", {
         jobId,
-        completedBatches: updatedJob.currentBatchIndex,
+        completedBatches,
         totalBatches: updatedJob.totalBatches,
+        analyzedChapters,
     });
-    // Only the last Lambda to finish will see this condition
+    // SET (not increment) analyzedChapters for real-time progress
+    await db.settingBible.updateMany({
+        where: { workId: updatedJob.workId },
+        data: { analyzedChapters },
+    });
+    // Only the first Lambda to reach totalBatches completes the job
     if (updatedJob.currentBatchIndex >= updatedJob.totalBatches && updatedJob.status !== "COMPLETED") {
-        // 배치 플랜 내 전체 챕터 수 (실제 분석된 개수)
-        const totalAnalyzedCount = fullBatchPlan.flat().length;
-        const job = await db.bibleGenerationJob.findUnique({
-            where: { id: jobId },
-            select: { workId: true, analyzedChapters: true },
-        });
-        // 이전 분석 분 + 이번 작업 분석 분
-        const finalCount = (job?.analyzedChapters ?? 0) + totalAnalyzedCount;
+        // Use actual chapter count as authoritative final value
+        const totalChapters = await db.chapter.count({ where: { workId: updatedJob.workId } });
         await db.bibleGenerationJob.update({
             where: { id: jobId },
             data: {
                 status: "COMPLETED",
                 completedAt: new Date(),
-                analyzedChapters: finalCount,
+                analyzedChapters: totalChapters,
             },
         });
-        // SettingBible에도 총 분석된 챕터 수 반영
-        if (job) {
-            // 작품 전체 챕터 수로 설정 (모든 배치 완료 = 전체 분석 완료)
-            const totalChapters = await db.chapter.count({ where: { workId: job.workId } });
-            await db.settingBible.updateMany({
-                where: { workId: job.workId },
-                data: { analyzedChapters: totalChapters },
-            });
-        }
-        log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, totalAnalyzedCount });
+        await db.settingBible.updateMany({
+            where: { workId: updatedJob.workId },
+            data: { analyzedChapters: totalChapters },
+        });
+        log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, totalChapters });
     }
 }
 /**
@@ -483,12 +491,11 @@ async function saveAnalysisResult(db, bibleId, workId, result, chapterRange, bat
     for (let i = 0; i < eventsToUpdate.length; i += UPDATE_BATCH_SIZE) {
         await Promise.all(eventsToUpdate.slice(i, i + UPDATE_BATCH_SIZE).map(({ id, data }) => db.timelineEvent.update({ where: { id }, data })));
     }
-    // 4. Update bible metadata (배치 내 실제 챕터 수만큼 증가)
+    // 4. Update bible metadata (analyzedChapters는 incrementAndCheckCompletion에서 SET)
     await db.settingBible.update({
         where: { id: bibleId },
         data: {
             status: "DRAFT",
-            analyzedChapters: { increment: batchChapterCount },
             ...(result.translationNotes ? { translationGuide: result.translationNotes } : {}),
             generatedAt: new Date(),
         },

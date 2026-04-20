@@ -192,7 +192,7 @@ export default async function WorkDetailPage({
           <div className="flex gap-2 shrink-0">
             {!isCompleted && (
               <>
-                <BulkUploadDialog workId={id} />
+                <BulkUploadDialog workId={id} existingChapterNumbers={chapterNumbers} />
                 <TranslationActionButton
                   workId={id}
                   settingBibleConfirmed={work.settingBible?.status === "CONFIRMED"}
@@ -332,7 +332,7 @@ export default async function WorkDetailPage({
               <p className="text-muted-foreground mb-8">
                 원문을 업로드하여 번역을 시작하세요
               </p>
-              <BulkUploadDialog workId={id} />
+              <BulkUploadDialog workId={id} existingChapterNumbers={chapterNumbers} />
             </div>
           ) : (
             <ChapterList
