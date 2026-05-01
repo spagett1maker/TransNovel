@@ -56,3 +56,7 @@ infrastructure/terraform/.terraform/
 infrastructure/lambda/*/deployment/
 infrastructure/lambda/*/deployment.zip
 infrastructure/lambda/*/deploy.zip
+
+# Remotion video project (separate workspace)
+remotion-video/node_modules/
+remotion-video/out/

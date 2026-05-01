@@ -50,5 +50,8 @@ npm run lint         # 코드 검사
 
 ## 문서
 
+- [인수인계 문서](./HANDOVER.md) - 신규 합류자 온보딩 가이드 (먼저 보세요)
 - [개발 보고서](./DEV_REPORT.md) - 아키텍처, API, DB 스키마, 보안, 성능
 - [서비스 가이드](./SERVICE_GUIDE.md) - 사용자 플로우, 화면별 기능 가이드
+- [프로덕션 분석](./PRODUCTION_ANALYSIS.md) - 100+ 동시 사용자 대응 분석
+- [프로덕션 체크리스트](./PRODUCTION_CHECKLIST.md) - 배포 시 점검 항목

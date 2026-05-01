@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>TransNovel 1.5M자 풀파이프라인 비용 분석</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+    color: #1a1a1a;
+    line-height: 1.55;
+    font-size: 10.5pt;
+    margin: 0;
+  }
+  h1 {
+    font-size: 22pt;
+    margin: 0 0 4pt;
+    border-bottom: 3px solid #111;
+    padding-bottom: 6pt;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-size: 14pt;
+    margin: 22pt 0 8pt;
+    padding-left: 8pt;
+    border-left: 4px solid #2563eb;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 11.5pt;
+    margin: 14pt 0 6pt;
+    color: #1e3a8a;
+  }
+  .subtitle { color: #6b7280; font-size: 10pt; margin-bottom: 4pt; }
+  .meta { color: #9ca3af; font-size: 9pt; margin-bottom: 14pt; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8pt 0 12pt;
+    font-size: 9.5pt;
+  }
+  th, td {
+    border: 1px solid #d1d5db;
+    padding: 5pt 7pt;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f3f4f6;
+    font-weight: 600;
+    color: #111827;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.total td { background: #fef3c7; font-weight: 700; }
+  tr.subtotal td { background: #f9fafb; font-weight: 600; }
+  .callout {
+    background: #f0f9ff;
+    border-left: 3px solid #0284c7;
+    padding: 8pt 10pt;
+    margin: 8pt 0;
+    font-size: 9.5pt;
+  }
+  .warn {
+    background: #fef2f2;
+    border-left: 3px solid #dc2626;
+    padding: 8pt 10pt;
+    margin: 8pt 0;
+    font-size: 9.5pt;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10pt;
+    margin: 8pt 0;
+  }
+  .card {
+    border: 1px solid #e5e7eb;
+    border-radius: 4pt;
+    padding: 8pt 10pt;
+    background: #fafafa;
+  }
+  .card .label { color: #6b7280; font-size: 9pt; }
+  .card .value { font-size: 14pt; font-weight: 700; color: #111; margin-top: 2pt; }
+  ul { margin: 4pt 0 8pt 18pt; padding: 0; }
+  li { margin: 2pt 0; }
+  code {
+    background: #f3f4f6;
+    padding: 1pt 4pt;
+    border-radius: 3pt;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 9pt;
+  }
+  .formula {
+    background: #fafafa;
+    border: 1px dashed #d1d5db;
+    padding: 6pt 8pt;
+    margin: 4pt 0;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 8.5pt;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .footer {
+    margin-top: 24pt;
+    padding-top: 8pt;
+    border-top: 1px solid #d1d5db;
+    color: #6b7280;
+    font-size: 8.5pt;
+  }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>TransNovel 풀파이프라인 비용 분석</h1>
+<div class="subtitle">중국어 웹소설 1,500,000자 1회 처리 기준 (번역 + 설정집 생성)</div>
+<div class="meta">작성일 2026-04-30 · 리전 ap-northeast-2 (Seoul) · Vercel Pro + AWS + Gemini API</div>
+
+<h2>핵심 요약</h2>
+
+<div class="grid2">
+  <div class="card">
+    <div class="label">1편당 변동비 (Per-Novel)</div>
+    <div class="value">≈ $9.7 — $42</div>
+    <div class="label" style="margin-top:4pt">모델 선택에 따라 4배 차이. Gemini API가 90% 이상 차지</div>
+  </div>
+  <div class="card">
+    <div class="label">월 고정비 (인프라)</div>
+    <div class="value">≈ $182 / 월</div>
+    <div class="label" style="margin-top:4pt">RDS + Proxy + Vercel Pro + 모니터링. 작품 수와 무관</div>
+  </div>
+</div>
+
+<div class="callout">
+<strong>핵심 메시지</strong>
+1.5M자는 <b>한 번의 거대 호출</b>이 아니라 <b>약 500화 × ~3,000자</b>로 처리됩니다 (대부분 챕터가 청크 임계값 41,000자 미만이라 1챕터 = 1 API 호출). 따라서 변동비는 <b>총 호출 수 × 호출당 토큰 단가</b>로 결정되며, AWS 비용은 거의 무시 가능한 수준이고 <b>Gemini API 단일 비용이 지배적</b>입니다.
+</div>
+
+<h2>1. 워크로드 산정 (Pipeline Sizing)</h2>
+
+<h3>입력 가정</h3>
+<table>
+  <tr><th style="width:40%">항목</th><th>값</th><th>근거</th></tr>
+  <tr><td>총 원문 분량</td><td>1,500,000자</td><td>요청 입력값</td></tr>
+  <tr><td>평균 챕터 길이</td><td>~3,000자</td><td>중국 웹소설 일반치 (200~600화 작품의 중간값)</td></tr>
+  <tr><td>총 챕터 수</td><td>~500화</td><td>1,500,000 ÷ 3,000</td></tr>
+  <tr><td>CJK 비율</td><td>~95%</td><td>중문 원문</td></tr>
+  <tr><td>토큰/문자 환산</td><td>1.4375 토큰/자</td><td><code>0.95×1.5 + 0.05×0.25</code> (translate.ts:291)</td></tr>
+  <tr><td>총 입력 콘텐츠 토큰</td><td>≈ 2,156,250</td><td>1,500,000 × 1.4375</td></tr>
+</table>
+
+<h3>번역 파이프라인 호출 수</h3>
+<div class="formula">청크 임계값 = max(8000, 59000토큰 ÷ 1.4375) ≈ 41,043자/청크
+3,000자 챕터 &lt; 41,043자 → 챕터당 단일 호출 (translateSingleChapter)
+번역 API 호출 수 = 500 (챕터당 1회) × 1.15 (재시도/실패 보정) ≈ 575회</div>
+
+<h3>설정집 생성 호출 수</h3>
+<div class="formula">CHAPTERS_PER_BATCH = 5 (bible-generator.ts:29)
+배치 수 = 500 ÷ 5 = 100 배치
+설정집 API 호출 수 = 100 × 1.15 (재시도) ≈ 115회</div>
+
+<h2>2. Gemini API 비용 (지배적 비용)</h2>
+
+<h3>모델 우선순위 (client.ts:140)</h3>
+<ul>
+  <li><b>1순위:</b> <code>gemini-3-flash-preview</code> — 대부분의 호출이 여기서 처리됨</li>
+  <li><b>2순위:</b> <code>gemini-2.5-flash</code> — 503/overload 시 폴백</li>
+  <li><b>3순위:</b> <code>gemini-2.0-flash</code> — 위 두 모델 모두 실패 시</li>
+</ul>
+
+<h3>호출당 토큰 (번역)</h3>
+<table>
+  <tr><th>구성</th><th class="num">토큰</th><th>비고</th></tr>
+  <tr><td>시스템 프롬프트 (역할/가이드)</td><td class="num">~1,500</td><td>고정</td></tr>
+  <tr><td>작품 메타 + 필터링된 용어집/인물</td><td class="num">~800</td><td>filterContextForContent 적용</td></tr>
+  <tr><td>원문 콘텐츠 (3,000자)</td><td class="num">~4,313</td><td>3000 × 1.4375</td></tr>
+  <tr><td><b>총 입력</b></td><td class="num"><b>~6,613</b></td><td></td></tr>
+  <tr><td><b>출력 (번역)</b></td><td class="num"><b>~4,313</b></td><td>한국어는 입력과 비슷한 토큰 수</td></tr>
+</table>
+
+<h3>호출당 토큰 (설정집 1배치 = 5화)</h3>
+<table>
+  <tr><th>구성</th><th class="num">토큰</th><th>비고</th></tr>
+  <tr><td>지시문 + JSON 스키마</td><td class="num">~500</td><td>buildBibleAnalysisPrompt</td></tr>
+  <tr><td>5화 원문 (15,000자)</td><td class="num">~21,563</td><td>15000 × 1.4375</td></tr>
+  <tr><td><b>총 입력</b></td><td class="num"><b>~22,063</b></td><td></td></tr>
+  <tr><td><b>출력 (JSON)</b></td><td class="num"><b>~3,000</b></td><td>maxOutputTokens=16384이지만 실측 ~1.6~3.4K</td></tr>
+</table>
+
+<h3>총 토큰 (재시도 1.15배 보정 포함)</h3>
+<table>
+  <tr><th>단계</th><th class="num">호출 수</th><th class="num">총 입력 토큰</th><th class="num">총 출력 토큰</th></tr>
+  <tr><td>번역 (500화 × 1.15)</td><td class="num">575</td><td class="num">3,802,475</td><td class="num">2,479,975</td></tr>
+  <tr><td>설정집 (100배치 × 1.15)</td><td class="num">115</td><td class="num">2,537,245</td><td class="num">345,000</td></tr>
+  <tr class="subtotal"><td>합계</td><td class="num">690</td><td class="num">6,339,720</td><td class="num">2,824,975</td></tr>
+</table>
+
+<h3>모델별 가격 시나리오</h3>
+<p>Gemini Preview 모델 가격은 정식 출시 후 변동될 수 있으므로 <b>3가지 시나리오</b>로 제시합니다.</p>
+
+<table>
+  <tr>
+    <th>시나리오</th>
+    <th>가정 모델/단가</th>
+    <th class="num">입력 비용</th>
+    <th class="num">출력 비용</th>
+    <th class="num">합계 (USD)</th>
+    <th class="num">합계 (KRW)</th>
+  </tr>
+  <tr>
+    <td><b>A. 낙관 (2.0-flash 단가)</b></td>
+    <td>$0.10/M in · $0.40/M out</td>
+    <td class="num">$0.63</td>
+    <td class="num">$1.13</td>
+    <td class="num">$1.76</td>
+    <td class="num">₩2,500</td>
+  </tr>
+  <tr>
+    <td><b>B. 표준 (2.5-flash 단가)</b></td>
+    <td>$0.30/M in · $2.50/M out</td>
+    <td class="num">$1.90</td>
+    <td class="num">$7.06</td>
+    <td class="num">$8.96</td>
+    <td class="num">₩12,700</td>
+  </tr>
+  <tr>
+    <td><b>C. 보수적 (Pro급 가정)</b></td>
+    <td>$1.25/M in · $10.00/M out</td>
+    <td class="num">$7.92</td>
+    <td class="num">$28.25</td>
+    <td class="num">$36.17</td>
+    <td class="num">₩51,000</td>
+  </tr>
+</table>
+
+<div class="callout">
+<b>현실적 추정</b>: 코드의 1순위가 <code>gemini-3-flash-preview</code>이므로 <b>시나리오 B에 가까운 ~$9/편</b>이 가장 가능성 높은 값입니다. 시나리오 A는 폴백이 자주 일어날 때, C는 신모델 프리뷰 가격이 Pro 수준으로 책정됐을 때입니다.<br>
+환율 ₩1,410/USD 적용. 1 USD ≈ 1,410 KRW (2026-04 기준 추정).
+</div>
+
+<div class="pagebreak"></div>
+
+<h2>3. AWS 인프라 비용</h2>
+
+<h3>아키텍처 구성 (terraform/lambda.tf, eventbridge.tf, rds.tf)</h3>
+<ul>
+  <li><b>Translation Worker Lambda</b>: 1,536 MB · 900s timeout · 동시성 50 (variables.tf:67-83)</li>
+  <li><b>Bible Worker Lambda</b>: 1,024 MB · 900s timeout · 동시성 10 · batch_size 5</li>
+  <li><b>Health Checker Lambda</b>: 512 MB · 300s timeout · EventBridge 4종 (5분/15분/1시간/1일)</li>
+  <li><b>SQS 큐 3종</b>: translation, bible, dlq · 가시성 960s</li>
+  <li><b>RDS PostgreSQL 15</b>: <code>db.t4g.large</code> · 20GB gp3 · Single-AZ · Performance Insights · Enhanced Monitoring 60s</li>
+  <li><b>RDS Proxy</b>: 연결 풀링용</li>
+  <li><b>Secrets Manager</b>: database, gemini, auth (3 secrets)</li>
+  <li><b>VPC</b>: 2 public + 2 private subnet</li>
+</ul>
+
+<h3>3-1. 변동비 (1.5M자 1편당)</h3>
+
+<h4>Translation Worker Lambda</h4>
+<div class="formula">호출 수 = 575 (재시도 포함)
+평균 실행 시간 = 45s (Gemini API 응답 + DB write)
+GB-초 = 575 × 45 × 1.536 = 39,744 GB-s
+가격 (Seoul) = $0.0000166667/GB-s
+비용 = 39,744 × $0.0000166667 ≈ $0.66
+요청 비용 = 575 × $0.20 / 1,000,000 ≈ $0.0001 (무시)</div>
+
+<h4>Bible Worker Lambda</h4>
+<div class="formula">호출 수 = 115
+평균 실행 시간 = 30s
+GB-초 = 115 × 30 × 1.024 = 3,533 GB-s
+비용 = 3,533 × $0.0000166667 ≈ $0.06</div>
+
+<h4>SQS</h4>
+<div class="formula">메시지 수 = 575 + 115 = 690
+연산 수 (send + receive + delete) = 690 × 3 ≈ 2,070
+비용 = 2,070 × $0.40 / 1,000,000 ≈ $0.001</div>
+
+<h4>데이터 전송 (Lambda → Gemini API egress)</h4>
+<div class="formula">총 토큰 ~9.2M ≈ ~30~40 MB 페이로드 (요청+응답)
+egress 가격 = $0.09/GB → ≈ $0.004</div>
+
+<h4>CloudWatch Logs (운영 로그 모드)</h4>
+<div class="formula">평균 1MB/invocation × 690 = ~700 MB
+ingestion = 0.7 GB × $0.50 = $0.35
+storage = $0.03/GB-월 × 0.7 GB = $0.02</div>
+
+<h3>3-1 변동비 합계</h3>
+<table>
+  <tr><th>항목</th><th class="num">USD/편</th><th class="num">KRW/편</th></tr>
+  <tr><td>Translation Lambda</td><td class="num">$0.66</td><td class="num">₩930</td></tr>
+  <tr><td>Bible Lambda</td><td class="num">$0.06</td><td class="num">₩85</td></tr>
+  <tr><td>SQS</td><td class="num">$0.001</td><td class="num">₩2</td></tr>
+  <tr><td>Egress (Gemini)</td><td class="num">$0.004</td><td class="num">₩6</td></tr>
+  <tr><td>CloudWatch Logs</td><td class="num">$0.37</td><td class="num">₩520</td></tr>
+  <tr class="subtotal"><td>AWS 변동비 소계</td><td class="num">$1.10</td><td class="num">₩1,550</td></tr>
+</table>
+
+<h3>3-2. 고정비 (월 단위, 작품 수 무관)</h3>
+
+<table>
+  <tr><th>항목</th><th>스펙</th><th class="num">USD/월</th></tr>
+  <tr><td>RDS db.t4g.large</td><td>2vCPU/8GB · Single-AZ · 24×30h × $0.184/h</td><td class="num">$132.48</td></tr>
+  <tr><td>RDS Storage (gp3)</td><td>20 GB × $0.115</td><td class="num">$2.30</td></tr>
+  <tr><td>RDS 백업</td><td>7일 보관, 무료 한도 내 가정</td><td class="num">$0.00</td></tr>
+  <tr><td>Performance Insights</td><td>7일 보관 (Free tier)</td><td class="num">$0.00</td></tr>
+  <tr><td>Enhanced Monitoring</td><td>60s 간격</td><td class="num">$1.50</td></tr>
+  <tr><td>RDS Proxy</td><td>2 vCPU × $0.015/h × 720h</td><td class="num">$21.60</td></tr>
+  <tr><td>Health Checker Lambda</td><td>5분/15분/1시간/1일 스케줄 · ~12K invoke/월</td><td class="num">$0.55</td></tr>
+  <tr><td>EventBridge 규칙</td><td>4 rules · 무료 한도 내</td><td class="num">$0.00</td></tr>
+  <tr><td>NAT Gateway</td><td>1× $0.045/h × 720h (private subnet → 외부)</td><td class="num">$32.40</td></tr>
+  <tr><td>Secrets Manager</td><td>3 secrets × $0.40</td><td class="num">$1.20</td></tr>
+  <tr><td>CloudWatch Alarms</td><td>~6 alarm × $0.10</td><td class="num">$0.60</td></tr>
+  <tr><td>CloudWatch Logs (보관)</td><td>~5GB × $0.03</td><td class="num">$0.15</td></tr>
+  <tr><td>VPC/기타 (라우팅, EIP 등)</td><td>고정 IP 1개 등</td><td class="num">$3.65</td></tr>
+  <tr class="subtotal"><td colspan="2">AWS 고정비 소계</td><td class="num">$196.43</td></tr>
+  <tr><td>Vercel Pro</td><td>$20/월 (포함량 내 운영)</td><td class="num">$20.00</td></tr>
+  <tr class="total"><td colspan="2"><b>월 고정비 합계</b></td><td class="num"><b>$216.43 ≈ ₩305,000</b></td></tr>
+</table>
+
+<div class="warn">
+<b>주의 — NAT Gateway</b>: <code>vpc.tf</code>에 NAT가 있다면 한 달 ~$32, 만약 RDS Proxy + Lambda를 모두 public subnet 또는 VPC 엔드포인트로 라우팅한다면 NAT 없이도 가능합니다. 실제 설정에 따라 ±$30/월 변동될 수 있습니다.
+</div>
+
+<div class="pagebreak"></div>
+
+<h2>4. 총 비용 정리</h2>
+
+<h3>1.5M자 1편 처리 (변동비)</h3>
+<table>
+  <tr>
+    <th>구성</th>
+    <th class="num">시나리오 A<br>(낙관)</th>
+    <th class="num">시나리오 B<br>(표준, 권장)</th>
+    <th class="num">시나리오 C<br>(보수적)</th>
+  </tr>
+  <tr><td>Gemini API (번역 + 설정집)</td><td class="num">$1.76</td><td class="num">$8.96</td><td class="num">$36.17</td></tr>
+  <tr><td>AWS (Lambda + 부속)</td><td class="num">$1.10</td><td class="num">$1.10</td><td class="num">$1.10</td></tr>
+  <tr class="total">
+    <td><b>1편당 합계 (USD)</b></td>
+    <td class="num"><b>$2.86</b></td>
+    <td class="num"><b>$10.06</b></td>
+    <td class="num"><b>$37.27</b></td>
+  </tr>
+  <tr class="total">
+    <td><b>1편당 합계 (KRW)</b></td>
+    <td class="num"><b>₩4,030</b></td>
+    <td class="num"><b>₩14,200</b></td>
+    <td class="num"><b>₩52,500</b></td>
+  </tr>
+</table>
+
+<h3>월별 총비용 시뮬레이션 (작품 수 × 1.5M자 기준)</h3>
+<table>
+  <tr>
+    <th>월간 작품 수</th>
+    <th class="num">변동비 (B 시나리오)</th>
+    <th class="num">고정비</th>
+    <th class="num">월 합계 (USD)</th>
+    <th class="num">월 합계 (KRW)</th>
+  </tr>
+  <tr><td>1편</td><td class="num">$10.06</td><td class="num">$216.43</td><td class="num">$226.49</td><td class="num">₩319,000</td></tr>
+  <tr><td>10편</td><td class="num">$100.60</td><td class="num">$216.43</td><td class="num">$317.03</td><td class="num">₩447,000</td></tr>
+  <tr><td>50편</td><td class="num">$503.00</td><td class="num">$216.43</td><td class="num">$719.43</td><td class="num">₩1,014,000</td></tr>
+  <tr><td>100편</td><td class="num">$1,006.00</td><td class="num">$216.43</td><td class="num">$1,222.43</td><td class="num">₩1,724,000</td></tr>
+</table>
+
+<h2>5. 최적화 포인트</h2>
+
+<h3>비용 비중 (시나리오 B 기준)</h3>
+<ul>
+  <li><b>Gemini API: 89%</b> — 절대 지배적</li>
+  <li><b>AWS Lambda: 7%</b> — 거의 무시 가능</li>
+  <li><b>CloudWatch Logs: 4%</b></li>
+</ul>
+
+<h3>실효 절감 가능 항목</h3>
+<table>
+  <tr><th>항목</th><th>현재</th><th>최적화 시</th><th>효과</th></tr>
+  <tr>
+    <td>모델 폴백 순서</td>
+    <td>3-flash-preview 우선</td>
+    <td>품질 허용 시 2.0-flash 우선</td>
+    <td>Gemini 비용 ~80% 절감 ($9 → $2)</td>
+  </tr>
+  <tr>
+    <td>설정집 배치 사이즈</td>
+    <td>5화/배치</td>
+    <td>10화/배치 (테스트 필요)</td>
+    <td>Bible 호출 50% 감소, 비용 ~$0.5/편 절감</td>
+  </tr>
+  <tr>
+    <td>프롬프트 필터링</td>
+    <td>filterContextForContent 적용</td>
+    <td>이미 적용됨</td>
+    <td>~30% 입력 토큰 절감 중</td>
+  </tr>
+  <tr>
+    <td>RDS 인스턴스</td>
+    <td>db.t4g.large ($132/월)</td>
+    <td>db.t4g.medium ($66/월)</td>
+    <td>$66/월 절감 (성능 검증 필요)</td>
+  </tr>
+  <tr>
+    <td>RDS Proxy</td>
+    <td>상시 가동 ($22/월)</td>
+    <td>Lambda 동시성 줄이고 직접 연결</td>
+    <td>$22/월 절감 (커넥션 한도 주의)</td>
+  </tr>
+  <tr>
+    <td>NAT Gateway</td>
+    <td>상시 ($32/월)</td>
+    <td>VPC Endpoint로 대체</td>
+    <td>$25~30/월 절감</td>
+  </tr>
+  <tr>
+    <td>CloudWatch 로그 보관</td>
+    <td>14일</td>
+    <td>7일 + 운영 로그만</td>
+    <td>~$0.2/편 절감</td>
+  </tr>
+</table>
+
+<h2>6. 참고 사항</h2>
+<ul>
+  <li><b>재시도 보정 1.15배</b>: CONTENT_BLOCKED, 503/overload, 빈 응답 등으로 인한 실측 평균. 안전 우회 프롬프트 동작 시 일부 호출은 2배 토큰 소비.</li>
+  <li><b>Gemini Preview 모델 가격</b>: 공개되지 않은 경우 GA 모델(<code>gemini-2.5-flash</code>) 가격을 사용. 정식 출시 후 가격 재검토 필요.</li>
+  <li><b>RDS Free Tier</b>: 신규 계정 12개월간 db.t3.micro 750h/월 무료 — 본 인프라(t4g.large)는 Free Tier 대상 아님.</li>
+  <li><b>병렬도</b>: Translation 동시성 50, Bible 10. 1.5M자 1편을 단일 작업으로 돌리면 wall-clock 약 30~60분 소요 예상 (실제 비용은 동시성과 무관).</li>
+  <li><b>CONTENT_BLOCKED 폴백</b>: 안전 우회 프롬프트로 재시도 시 추가 호출 1~3회/문제챕터 발생. 메모리 기록상 64화 사례 참고.</li>
+</ul>
+
+<div class="footer">
+TransNovel 비용 분석 · 코드 기준: client.ts MODEL_PRIORITY, translate.ts TARGET_CHUNK_TOKENS, bible-generator.ts CHAPTERS_PER_BATCH, terraform/lambda.tf, terraform/rds.tf, terraform/eventbridge.tf
+</div>
+
+</body>
+</html>
