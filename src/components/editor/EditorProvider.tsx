@@ -127,8 +127,8 @@ export function EditorProvider({
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
-        // History: 충분한 undo depth 확보
-        history: {
+        // UndoRedo: 충분한 undo depth 확보 (TipTap v3에서 history → undoRedo로 개명)
+        undoRedo: {
           depth: 200,
         },
       }),
