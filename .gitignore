@@ -60,3 +60,6 @@ infrastructure/lambda/*/deploy.zip
 # Remotion video project (separate workspace)
 remotion-video/node_modules/
 remotion-video/out/
+
+# Local-only secrets (AWS, Gemini) — never commit
+LOCAL_SECRETS.md

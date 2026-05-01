@@ -7,6 +7,12 @@
 
 ---
 
+## ※ AWS / Gemini 키는 이 파일에 없다
+
+이 두 키는 **`LOCAL_SECRETS.md`** (gitignored, 로컬 전용) 에서 별도 관리한다. 포맷 전 USB / iCloud / 1Password에 별도 백업 필수. 또한 과거 커밋에 한 번 노출된 적이 있어 회전 권장.
+
+---
+
 ## 0. 회전 체크리스트 (포맷 후 1순위)
 
 새 컴에서 셋업이 끝나는 즉시 아래 키를 전부 다시 발급받고 이 파일은 마지막에 삭제(또는 리포 private 전환).
@@ -38,8 +44,8 @@ NEXTAUTH_SECRET=your-secret-key-here-generate-with-openssl-rand-base64-32
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
-# Google Gemini
-GEMINI_API_KEY=<GEMINI_API_KEY_REDACTED>
+# Google Gemini  ── 값은 LOCAL_SECRETS.md 참조 (gitignored)
+GEMINI_API_KEY=<see LOCAL_SECRETS.md>
 
 # Vercel Cron (현재 주석 처리됨, 필요 시 사용)
 # CRON_SECRET=PllI21xx8uUFNP2Y78vkAxZpEwMqMWoiN8Emv6DT9yU=
@@ -58,9 +64,9 @@ AWS_REGION=ap-northeast-2
 SQS_TRANSLATION_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/193482297970/transnovel-translation-queue
 SQS_BIBLE_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/193482297970/transnovel-bible-queue
 
-# AWS 인증 (IAM 사용자 "Operator")
-AWS_ACCESS_KEY_ID=<AWS_ACCESS_KEY_ID_REDACTED>
-AWS_SECRET_ACCESS_KEY=<AWS_SECRET_ACCESS_KEY_REDACTED>
+# AWS 인증 (IAM 사용자 "Operator") ── 값은 LOCAL_SECRETS.md 참조 (gitignored)
+AWS_ACCESS_KEY_ID=<see LOCAL_SECRETS.md>
+AWS_SECRET_ACCESS_KEY=<see LOCAL_SECRETS.md>
 ```
 
 ## 2. `.env.local` (로컬 전용 오버라이드)
@@ -76,8 +82,9 @@ AWS_REGION=ap-northeast-2
 SQS_TRANSLATION_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/193482297970/transnovel-translation-queue
 SQS_BIBLE_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/193482297970/transnovel-bible-queue
 
-AWS_ACCESS_KEY_ID=<AWS_ACCESS_KEY_ID_REDACTED>
-AWS_SECRET_ACCESS_KEY=<AWS_SECRET_ACCESS_KEY_REDACTED>
+# 값은 LOCAL_SECRETS.md 참조 (gitignored)
+AWS_ACCESS_KEY_ID=<see LOCAL_SECRETS.md>
+AWS_SECRET_ACCESS_KEY=<see LOCAL_SECRETS.md>
 ```
 
 ## 3. `infrastructure/terraform/terraform.tfvars`

@@ -56,8 +56,8 @@ cp .env.example .env
 | `DATABASE_URL` / `DIRECT_URL` | RDS 또는 Supabase. RDS면 `transnovel_admin` 비번 + endpoint |
 | `NEXTAUTH_SECRET` | `openssl rand -base64 32` |
 | `NEXTAUTH_URL` | 로컬 `http://localhost:3000`, 운영 도메인 |
-| `GEMINI_API_KEY` | https://aistudio.google.com → API key 발급 |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | IAM `Operator` 사용자의 Access Key |
+| `GEMINI_API_KEY` | `LOCAL_SECRETS.md` (gitignored) 또는 https://aistudio.google.com 신규 발급 |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `LOCAL_SECRETS.md` (gitignored) 또는 IAM `Operator` 사용자에서 신규 발급 |
 | `AWS_REGION` | `ap-northeast-2` |
 | `SQS_TRANSLATION_QUEUE_URL` / `SQS_BIBLE_QUEUE_URL` | Terraform output 또는 SQS 콘솔 |
 | `USE_AWS_SQS` | `true` (운영 모드) |
