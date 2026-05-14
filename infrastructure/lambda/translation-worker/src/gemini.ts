@@ -438,6 +438,12 @@ async function translateWithModel(
 
     } catch (error) {
       lastError = error instanceof TranslationError ? error : analyzeError(error);
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      console.warn(`[Gemini] ${modelName} attempt ${attempt + 1}/${maxRetries} failed`, JSON.stringify({
+        code: lastError.code,
+        retryable: lastError.retryable,
+        rawError: rawMsg.slice(0, 500),
+      }));
 
       // Non-retryable errors
       if (!lastError.retryable) {
@@ -538,11 +544,18 @@ export async function translateChapter(
   if (content.length <= chunkThreshold) {
     let allContentBlocked = true;
 
+    let lastModelError: TranslationError | null = null;
     for (const modelName of MODEL_PRIORITY) {
       try {
         return await translateWithModel(genAI, modelName, content, systemPrompt, maxRetries);
       } catch (error) {
         const translationError = error instanceof TranslationError ? error : analyzeError(error);
+        lastModelError = translationError;
+        console.warn(`[Gemini] model ${modelName} exhausted`, JSON.stringify({
+          code: translationError.code,
+          retryable: translationError.retryable,
+          message: translationError.message.slice(0, 300),
+        }));
         if (translationError.code !== "CONTENT_BLOCKED") {
           allContentBlocked = false;
         }
@@ -560,12 +573,17 @@ export async function translateChapter(
       for (const modelName of MODEL_PRIORITY) {
         try {
           return await translateWithModel(genAI, modelName, content, safetyBypassPrompt, maxRetries);
-        } catch {
-          // Try next model
+        } catch (error) {
+          const e = error instanceof Error ? error.message : String(error);
+          console.warn(`[Gemini] safety-bypass on ${modelName} also failed`, JSON.stringify({ message: e.slice(0, 300) }));
         }
       }
     }
 
+    console.error(`[Gemini] ALL_MODELS_FAILED — lastError:`, JSON.stringify({
+      code: lastModelError?.code,
+      message: lastModelError?.message?.slice(0, 500),
+    }));
     throw new TranslationError("모든 모델 실패", "ALL_MODELS_FAILED", false);
   }
 
@@ -592,6 +610,10 @@ export async function translateChapter(
         break;
       } catch (error) {
         const translationError = error instanceof TranslationError ? error : analyzeError(error);
+        console.warn(`[Gemini] chunk ${i + 1} model ${modelName} exhausted`, JSON.stringify({
+          code: translationError.code,
+          message: translationError.message.slice(0, 300),
+        }));
         if (translationError.code !== "CONTENT_BLOCKED") {
           chunkAllBlocked = false;
         }
@@ -611,8 +633,9 @@ export async function translateChapter(
           results.push(result);
           translated = true;
           break;
-        } catch {
-          // Try next model
+        } catch (error) {
+          const e = error instanceof Error ? error.message : String(error);
+          console.warn(`[Gemini] chunk ${i + 1} safety-bypass on ${modelName} failed`, JSON.stringify({ message: e.slice(0, 300) }));
         }
       }
     }

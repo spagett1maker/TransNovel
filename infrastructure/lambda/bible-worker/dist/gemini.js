@@ -179,6 +179,8 @@ async function analyzeWithModel(genAI, modelName, content, systemPrompt, maxRetr
                     topP: 0.85,
                     topK: 40,
                     maxOutputTokens: MAX_OUTPUT_TOKENS,
+                    // Force structured JSON output — prevents truncation/malformed JSON
+                    responseMimeType: "application/json",
                 },
                 safetySettings,
             }), API_TIMEOUT_MS, "분석 API 호출");
@@ -190,6 +192,12 @@ async function analyzeWithModel(genAI, modelName, content, systemPrompt, maxRetr
         }
         catch (error) {
             lastError = error instanceof AnalysisError ? error : analyzeError(error);
+            const rawMsg = error instanceof Error ? error.message : String(error);
+            console.warn(`[Gemini] ${modelName} attempt ${attempt + 1}/${maxRetries} failed`, JSON.stringify({
+                code: lastError.code,
+                retryable: lastError.retryable,
+                rawError: rawMsg.slice(0, 500),
+            }));
             // Non-retryable errors
             if (!lastError.retryable) {
                 throw lastError;
@@ -264,7 +272,8 @@ function parseAnalysisResult(text) {
         };
     }
     catch (error) {
-        throw new AnalysisError(`JSON 파싱 실패: ${error instanceof Error ? error.message : "Unknown error"}`, "PARSE_ERROR", false);
+        throw new AnalysisError(`JSON 파싱 실패: ${error instanceof Error ? error.message : "Unknown error"}`, "PARSE_ERROR", true // retryable: 다음 모델 fallback 허용 (LLM은 매 호출마다 출력이 달라서 재시도 가치 있음)
+        );
     }
 }
 /**
@@ -278,6 +287,8 @@ async function analyzeBatch(workInfo, chapters, chapterRange, apiKey, maxRetries
         .map((ch) => `=== ${ch.number}회 ===\n${ch.originalContent}`)
         .join("\n\n---\n\n");
     // Try each model in priority order
+    let lastParseError = null;
+    let lastModelError = null;
     for (const modelName of MODEL_PRIORITY) {
         try {
             const responseText = await analyzeWithModel(genAI, modelName, content, systemPrompt, maxRetries);
@@ -285,12 +296,39 @@ async function analyzeBatch(workInfo, chapters, chapterRange, apiKey, maxRetries
         }
         catch (error) {
             const analysisError = error instanceof AnalysisError ? error : analyzeError(error);
+            lastModelError = analysisError;
+            console.warn(`[Bible Worker] model ${modelName} exhausted`, JSON.stringify({
+                code: analysisError.code,
+                retryable: analysisError.retryable,
+                message: analysisError.message.slice(0, 300),
+            }));
+            if (analysisError.code === "PARSE_ERROR") {
+                lastParseError = analysisError;
+            }
             if (!analysisError.retryable && !analysisError.message.includes("503")) {
                 throw analysisError;
             }
             // Try next model
         }
     }
+    // 모든 모델이 JSON 파싱에 실패한 경우 — 빈 결과로 누락 처리하여 job deadlock 방지
+    // (LLM은 가끔 잘못된 JSON을 생성하는데, batch deadlock을 막는 것이 부분 누락보다 우선)
+    if (lastParseError) {
+        console.warn(`[Bible Worker] All models failed JSON parse — skipping batch with empty result`, JSON.stringify({
+            chapterRange,
+            lastError: lastParseError.message.slice(0, 200),
+        }));
+        return {
+            characters: [],
+            terms: [],
+            events: [],
+            translationNotes: undefined,
+        };
+    }
+    console.error(`[Bible Worker] ALL_MODELS_FAILED — lastError:`, JSON.stringify({
+        code: lastModelError?.code,
+        message: lastModelError?.message?.slice(0, 500),
+    }));
     throw new AnalysisError("모든 모델 실패", "ALL_MODELS_FAILED", false);
 }
 //# sourceMappingURL=gemini.js.map

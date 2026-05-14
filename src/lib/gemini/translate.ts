@@ -255,14 +255,18 @@ export async function translateText(
     for (const modelName of MODEL_PRIORITY) {
       try {
         return await tryTranslateChunkWithModel(modelName, content, safetyPrompt, 1);
-      } catch {
-        // Try next model
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logError(`청크 안전우회 모델 ${modelName} 실패:`, msg);
       }
     }
   }
 
   // 모든 모델 실패
-  logError("청크 번역 모든 모델 실패");
+  logError("청크 번역 모든 모델 실패", {
+    code: lastError?.code,
+    message: lastError?.message?.slice(0, 500),
+  });
   throw lastError || new TranslationError(
     "번역에 실패했습니다. 다시 시도해주세요.",
     "ALL_MODELS_FAILED",
@@ -575,14 +579,18 @@ async function translateSingleChapter(
     for (const modelName of MODEL_PRIORITY) {
       try {
         return await tryTranslateWithModel(modelName, content, safetyPrompt, 1);
-      } catch {
-        // Try next model
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logError(`챕터 안전우회 모델 ${modelName} 실패:`, msg);
       }
     }
   }
 
   // 모든 모델 실패
-  logError("챕터 번역 모든 모델 실패");
+  logError("챕터 번역 모든 모델 실패", {
+    code: lastError?.code,
+    message: lastError?.message?.slice(0, 500),
+  });
   throw lastError || new TranslationError(
     "챕터 번역에 실패했습니다. 다시 시도해주세요.",
     "ALL_MODELS_FAILED",

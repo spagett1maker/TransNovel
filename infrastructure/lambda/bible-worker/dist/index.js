@@ -55,15 +55,24 @@ function mapCharacterRole(role) {
 }
 // Prisma client singleton
 let prisma = null;
+let lastUsedAt = 0;
 // Lambda는 짧은 수명 + 높은 동시성이므로 connection_limit을 낮게 설정
 const LAMBDA_CONNECTION_LIMIT = 5;
+// RDS Proxy idle timeout(5분) 전에 커넥션 리프레시 — stale connection 방지
+const CONNECTION_MAX_IDLE_MS = 4 * 60 * 1000; // 4분
 function ensureConnectionLimit(url) {
     if (url.includes("connection_limit"))
         return url;
     const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}connection_limit=${LAMBDA_CONNECTION_LIMIT}`;
+    return `${url}${separator}connection_limit=${LAMBDA_CONNECTION_LIMIT}&connect_timeout=30`;
 }
 async function getPrismaClient() {
+    // 유휴 시간이 4분 초과 시 커넥션 리프레시 (RDS Proxy idle timeout 방지)
+    if (prisma && Date.now() - lastUsedAt > CONNECTION_MAX_IDLE_MS) {
+        log("Connection idle > 4min, refreshing Prisma client");
+        await prisma.$disconnect().catch(() => { });
+        prisma = null;
+    }
     if (!prisma) {
         const secrets = await (0, secrets_1.getSecrets)(process.env.DATABASE_SECRET_ARN);
         prisma = new client_1.PrismaClient({
@@ -74,6 +83,7 @@ async function getPrismaClient() {
             },
         });
     }
+    lastUsedAt = Date.now();
     return prisma;
 }
 // Clean up Prisma connection when Lambda container is recycled
@@ -260,23 +270,31 @@ async function incrementAndCheckCompletion(db, jobId, fullBatchPlan) {
         where: { workId: updatedJob.workId },
         data: { analyzedChapters },
     });
-    // Only the first Lambda to reach totalBatches completes the job
-    if (updatedJob.currentBatchIndex >= updatedJob.totalBatches && updatedJob.status !== "COMPLETED") {
-        // Use actual chapter count as authoritative final value
+    // Atomic completion: updateMany with status condition ensures only one Lambda completes the job
+    if (updatedJob.currentBatchIndex >= updatedJob.totalBatches) {
         const totalChapters = await db.chapter.count({ where: { workId: updatedJob.workId } });
-        await db.bibleGenerationJob.update({
-            where: { id: jobId },
+        // Only transitions IN_PROGRESS → COMPLETED (atomic, race-safe)
+        const completionResult = await db.bibleGenerationJob.updateMany({
+            where: {
+                id: jobId,
+                status: "IN_PROGRESS", // Only update if still IN_PROGRESS (prevents double completion)
+            },
             data: {
                 status: "COMPLETED",
                 completedAt: new Date(),
                 analyzedChapters: totalChapters,
             },
         });
-        await db.settingBible.updateMany({
-            where: { workId: updatedJob.workId },
-            data: { analyzedChapters: totalChapters },
-        });
-        log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, totalChapters });
+        if (completionResult.count > 0) {
+            await db.settingBible.updateMany({
+                where: { workId: updatedJob.workId },
+                data: { analyzedChapters: totalChapters },
+            });
+            log("Job completed", { jobId, totalBatches: updatedJob.totalBatches, totalChapters });
+        }
+        else {
+            log("Job already completed by another Lambda", { jobId });
+        }
     }
 }
 /**
