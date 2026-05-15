@@ -253,15 +253,19 @@ async function processMessage(record) {
             error: errorMessage,
             chapterId,
         });
+        // 정책상 번역 불가 (Gemini PROHIBITED_CONTENT 등): 재시도해도 동일 결과
+        const isPolicyBlocked = errorMessage.includes("콘텐츠 안전 정책") ||
+            errorMessage.includes("CONTENT_BLOCKED") ||
+            errorMessage.includes("PROHIBITED_CONTENT");
         // 재시도 가능한 에러인지 판단
-        const isRetryable = errorMessage.includes("시간 초과") ||
+        const isRetryable = !isPolicyBlocked && (errorMessage.includes("시간 초과") ||
             errorMessage.includes("TIMEOUT") ||
             errorMessage.includes("rate") ||
             errorMessage.includes("429") ||
             errorMessage.includes("503") ||
             errorMessage.includes("server") ||
             errorMessage.includes("네트워크") ||
-            errorMessage.includes("connection");
+            errorMessage.includes("connection"));
         if (isRetryable) {
             // 재시도 가능: PENDING으로 되돌리고 SQS 재시도에 맡김
             await db.chapter.updateMany({
@@ -276,12 +280,17 @@ async function processMessage(record) {
                 where: { id: chapterId, status: "TRANSLATING" },
                 data: { status: "PENDING" },
             });
-            log(`Chapter ${chapterNumber}: non-retryable error, marking as failed`, { error: errorMessage });
+            log(`Chapter ${chapterNumber}: ${isPolicyBlocked ? "policy-blocked" : "non-retryable error"}, marking as failed`, { error: errorMessage });
         }
-        // Update job with failure + 에러 메시지 저장
-        await updateJobProgress(db, jobId, false, true, chapterNumber, errorMessage);
+        // Update job with failure + 에러 메시지 저장 + 정책 차단 플래그
+        await updateJobProgress(db, jobId, false, true, chapterNumber, errorMessage, isPolicyBlocked);
         // 에러 path에서도 job 완료 여부 확인 (job 고착 방지)
         await checkAndCompleteJob(db, jobId, workId, workTitle);
+        // 정책 차단은 재시도해도 동일 결과이므로 SQS retry 방지 (DLQ 적체 방지)
+        if (isPolicyBlocked) {
+            log(`Chapter ${chapterNumber} policy-blocked — skipping SQS retry`);
+            return;
+        }
         // Re-throw to trigger SQS retry (via DLQ after max retries)
         throw error;
     }
@@ -289,7 +298,7 @@ async function processMessage(record) {
 /**
  * Update job progress counters
  */
-async function updateJobProgress(db, jobId, success, failed, chapterNumber, errorMessage) {
+async function updateJobProgress(db, jobId, success, failed, chapterNumber, errorMessage, policyBlocked = false) {
     try {
         if (success) {
             await db.activeTranslationJob.update({
@@ -304,6 +313,10 @@ async function updateJobProgress(db, jobId, success, failed, chapterNumber, erro
             };
             if (chapterNumber !== undefined) {
                 updateData.failedChapterNums = { push: chapterNumber };
+                // 정책 차단인 경우 별도 배열에도 기록 (UI에서 차별화 표시)
+                if (policyBlocked) {
+                    updateData.policyBlockedChapterNums = { push: chapterNumber };
+                }
             }
             if (errorMessage) {
                 updateData.lastError = errorMessage.slice(0, 500); // 최대 500자

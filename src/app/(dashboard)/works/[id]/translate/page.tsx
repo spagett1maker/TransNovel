@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   Check,
@@ -13,6 +14,7 @@ import {
   List,
   Loader2,
   Pause,
+  ShieldAlert,
   Sparkles,
   XCircle,
 } from "lucide-react";
@@ -141,6 +143,7 @@ function ServerTranslationProgress({
     completedChapters: number;
     failedChapters: number;
     failedChapterNums: number[];
+    policyBlockedChapterNums?: number[];
     currentChapter?: { number: number; currentChunk?: number; totalChunks?: number };
     error?: string;
   };
@@ -227,25 +230,61 @@ function ServerTranslationProgress({
           )}
         </div>
 
-        {job.status === "FAILED" && (
-          <p className="mt-2 text-sm text-status-error">
-            {isPartialFailure
-              ? `${job.failedChapterNums.length}개 회차 번역 실패 (${job.failedChapterNums.slice(0, 10).join(", ")}${job.failedChapterNums.length > 10 ? `... 외 ${job.failedChapterNums.length - 10}개` : ""}화). 아래에서 실패한 회차를 재시도할 수 있습니다.`
-              : job.error || "번역에 실패했습니다."}
-          </p>
-        )}
+        {(() => {
+          const policyBlocked = job.policyBlockedChapterNums ?? [];
+          const policySet = new Set(policyBlocked);
+          const retryableFailed = job.failedChapterNums.filter((n) => !policySet.has(n));
+
+          return (
+            <>
+              {job.status === "FAILED" && (
+                <p className="mt-2 text-sm text-status-error">
+                  {isPartialFailure
+                    ? (retryableFailed.length > 0
+                        ? `${retryableFailed.length}개 회차 번역 실패 (${retryableFailed.slice(0, 10).join(", ")}${retryableFailed.length > 10 ? `... 외 ${retryableFailed.length - 10}개` : ""}화). 아래에서 실패한 회차를 재시도할 수 있습니다.`
+                        : `정책상 번역 불가 회차만 남았습니다. 해당 회차는 수동 번역이 필요합니다.`)
+                    : job.error || "번역에 실패했습니다."}
+                </p>
+              )}
+            </>
+          );
+        })()}
       </div>
 
-      {/* 실패한 회차 복구 */}
-      {job.failedChapterNums.length > 0 && (job.status === "COMPLETED" || job.status === "FAILED") && (
-        <div className="border-t p-4">
-          <ErrorRecovery
-            failedChapters={job.failedChapterNums}
-            onRetry={onRetry}
-            className="border-none bg-transparent p-0"
-          />
+      {/* 정책상 번역 불가 회차 — 별도 안내 (재시도 불가) */}
+      {(job.policyBlockedChapterNums?.length ?? 0) > 0 && (job.status === "COMPLETED" || job.status === "FAILED") && (
+        <div className="border-t p-4 bg-amber-50 dark:bg-amber-950/20">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1 text-sm">
+              <p className="font-medium text-amber-900 dark:text-amber-200">
+                정책상 자동 번역 불가 — {job.policyBlockedChapterNums!.length}개 회차
+              </p>
+              <p className="text-amber-800 dark:text-amber-300">
+                해당 회차 원문이 AI 안전 정책에 저촉되어 자동 번역이 불가능합니다. 수동으로 번역 후 직접 입력해 주세요.
+              </p>
+              <p className="text-amber-700 dark:text-amber-400 text-xs">
+                대상: {job.policyBlockedChapterNums!.slice(0, 20).join(", ")}{job.policyBlockedChapterNums!.length > 20 ? `... 외 ${job.policyBlockedChapterNums!.length - 20}개` : ""}화
+              </p>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* 실패한 회차 복구 (정책 차단 제외) */}
+      {(() => {
+        const policySet = new Set(job.policyBlockedChapterNums ?? []);
+        const retryable = job.failedChapterNums.filter((n) => !policySet.has(n));
+        return retryable.length > 0 && (job.status === "COMPLETED" || job.status === "FAILED") ? (
+          <div className="border-t p-4">
+            <ErrorRecovery
+              failedChapters={retryable}
+              onRetry={onRetry}
+              className="border-none bg-transparent p-0"
+            />
+          </div>
+        ) : null;
+      })()}
 
       {/* 회차별 상세 (접기/펼치기) */}
       {job.totalChapters > 0 && (
@@ -258,31 +297,37 @@ function ServerTranslationProgress({
         </button>
       )}
 
-      {showDetails && (
-        <div className="px-4 pb-4 grid grid-cols-10 gap-1">
-          {Array.from({ length: job.totalChapters }, (_, i) => {
-            const chapterNum = i + 1;
-            const isCompleted = i < job.completedChapters;
-            const isFailed = job.failedChapterNums.includes(chapterNum);
-            const isCurrent = job.currentChapter?.number === chapterNum;
+      {showDetails && (() => {
+        const policySet = new Set(job.policyBlockedChapterNums ?? []);
+        return (
+          <div className="px-4 pb-4 grid grid-cols-10 gap-1">
+            {Array.from({ length: job.totalChapters }, (_, i) => {
+              const chapterNum = i + 1;
+              const isPolicyBlocked = policySet.has(chapterNum);
+              const isFailed = !isPolicyBlocked && job.failedChapterNums.includes(chapterNum);
+              const isCompleted = !isFailed && !isPolicyBlocked && i < job.completedChapters;
+              const isCurrent = job.currentChapter?.number === chapterNum;
 
-            return (
-              <div
-                key={chapterNum}
-                className={cn(
-                  "h-6 rounded flex items-center justify-center text-[10px] font-medium",
-                  isCompleted && "bg-status-success/20 text-status-success",
-                  isFailed && "bg-status-error/20 text-status-error",
-                  isCurrent && "bg-status-progress/20 text-status-progress animate-pulse",
-                  !isCompleted && !isFailed && !isCurrent && "bg-muted text-muted-foreground"
-                )}
-              >
-                {chapterNum}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              return (
+                <div
+                  key={chapterNum}
+                  title={isPolicyBlocked ? `${chapterNum}화 — 정책상 번역 불가 (수동 번역 필요)` : undefined}
+                  className={cn(
+                    "h-6 rounded flex items-center justify-center text-[10px] font-medium",
+                    isCompleted && "bg-status-success/20 text-status-success",
+                    isFailed && "bg-status-error/20 text-status-error",
+                    isPolicyBlocked && "bg-amber-500/20 text-amber-700 dark:text-amber-400",
+                    isCurrent && "bg-status-progress/20 text-status-progress animate-pulse",
+                    !isCompleted && !isFailed && !isPolicyBlocked && !isCurrent && "bg-muted text-muted-foreground"
+                  )}
+                >
+                  {chapterNum}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -104,7 +104,8 @@ export interface TranslationJobSummary {
   totalChapters: number;
   completedChapters: number;
   failedChapters: number;
-  failedChapterNums: number[]; // 실패한 챕터 번호 목록
+  failedChapterNums: number[]; // 실패한 챕터 번호 목록 (재시도 가능 + 정책 차단 모두 포함)
+  policyBlockedChapterNums: number[]; // 정책상 번역 불가 챕터 (failedChapterNums의 부분집합, 재시도 제외 대상)
   currentChapter?: {
     number: number;
     currentChunk: number;
@@ -135,6 +136,7 @@ export interface ProgressEvent {
     chunkIndex?: number;
     failedChunks?: number[];
     failedChapterNums?: number[];
+    policyBlockedChapterNums?: number[];
     currentChapter?: {
       number: number;
       currentChunk: number;
@@ -421,9 +423,15 @@ class TranslationManager {
   private toJobSummary(dbJob: any): TranslationJobSummary {
     const chapters = parseChaptersProgress(dbJob.chaptersProgress) || [];
     const translatingChapter = chapters.find((ch) => ch.status === "TRANSLATING");
-    const failedChapterNums = chapters
-      .filter((ch) => ch.status === "FAILED")
-      .map((ch) => ch.number);
+    // DB column 우선 (Lambda 워커가 직접 push), fallback으로 chaptersProgress JSON
+    // (메인앱 레거시 경로)
+    const failedChapterNums: number[] =
+      (Array.isArray(dbJob.failedChapterNums) && dbJob.failedChapterNums.length > 0)
+        ? Array.from(new Set<number>(dbJob.failedChapterNums))
+        : chapters.filter((ch) => ch.status === "FAILED").map((ch) => ch.number);
+    const policyBlockedChapterNums: number[] = Array.isArray(dbJob.policyBlockedChapterNums)
+      ? Array.from(new Set<number>(dbJob.policyBlockedChapterNums))
+      : [];
 
     return {
       jobId: dbJob.jobId,
@@ -434,6 +442,7 @@ class TranslationManager {
       completedChapters: dbJob.completedChapters,
       failedChapters: dbJob.failedChapters,
       failedChapterNums,
+      policyBlockedChapterNums,
       currentChapter: translatingChapter
         ? {
             number: translatingChapter.number,

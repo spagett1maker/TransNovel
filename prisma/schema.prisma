@@ -406,6 +406,10 @@ model ActiveTranslationJob {
   // 실패한 챕터 번호 목록
   failedChapterNums Int[] @default([])
 
+  // 정책상 번역 불가 챕터 (Gemini PROHIBITED_CONTENT 등 — 재시도해도 동일 결과)
+  // failedChapterNums의 부분집합이며, UI에서 별도 표시 + 재시도에서 제외
+  policyBlockedChapterNums Int[] @default([])
+
   // 자동 실패 복구 (완료 후 실패 챕터 자동 재시도)
   autoRetryCount    Int   @default(0) // 최대 2회
   maxAutoRetries    Int   @default(2)
@@ -449,6 +453,7 @@ model TranslationJobHistory {
   // 실패 정보
   errorMessage      String? @db.Text
   failedChapterNums Int[] // 실패한 챕터 번호 목록
+  policyBlockedChapterNums Int[] @default([]) // 정책 차단 챕터 (PROHIBITED_CONTENT)
 
   // 시간 정보
   startedAt   DateTime

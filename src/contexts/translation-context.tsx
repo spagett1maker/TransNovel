@@ -22,7 +22,8 @@ export interface TranslationJobSummary {
   totalChapters: number;
   completedChapters: number;
   failedChapters: number;
-  failedChapterNums: number[]; // 실패한 챕터 번호 목록
+  failedChapterNums: number[]; // 실패한 챕터 번호 목록 (정책 차단 포함)
+  policyBlockedChapterNums?: number[]; // 정책상 번역 불가 (failedChapterNums의 부분집합, 재시도 제외 대상)
   currentChapter?: {
     number: number;
     currentChunk?: number;
@@ -148,6 +149,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
                 completedChapters: data.recentJob.completedChapters ?? existingJob.completedChapters,
                 failedChapters: data.recentJob.failedChapters ?? existingJob.failedChapters,
                 failedChapterNums: data.recentJob.failedChapterNums ?? [],
+                policyBlockedChapterNums: data.recentJob.policyBlockedChapterNums ?? [],
                 error: data.recentJob.errorMessage,
                 progress: calculateProgress(
                   data.recentJob.completedChapters ?? existingJob.completedChapters,
@@ -176,6 +178,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
           completedChapters: serverJob.completedChapters,
           failedChapters: serverJob.failedChapters,
           failedChapterNums: serverJob.failedChapterNums ?? [],
+          policyBlockedChapterNums: serverJob.policyBlockedChapterNums ?? [],
           error: serverJob.errorMessage || serverJob.lastError,
           createdAt: existingJob?.createdAt || new Date(serverJob.startedAt || Date.now()),
           updatedAt: new Date(serverJob.updatedAt),
@@ -264,6 +267,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             completedChapters: number;
             failedChapters: number;
             failedChapterNums?: number[];
+            policyBlockedChapterNums?: number[];
             error?: string;
             createdAt: string;
             updatedAt?: string;
@@ -271,6 +275,7 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
             newJobs.set(job.jobId, {
               ...job,
               failedChapterNums: job.failedChapterNums ?? [],
+              policyBlockedChapterNums: job.policyBlockedChapterNums ?? [],
               createdAt: new Date(job.createdAt),
               updatedAt: job.updatedAt ? new Date(job.updatedAt) : undefined,
               progress: calculateProgress(job.completedChapters, job.totalChapters),

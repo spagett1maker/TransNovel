@@ -145,6 +145,7 @@ export async function GET(req: Request) {
             totalChapters: jobSummary.totalChapters,
             failedChapters: jobSummary.failedChapters,
             failedChapterNums: jobSummary.failedChapterNums,
+            policyBlockedChapterNums: jobSummary.policyBlockedChapterNums,
             currentChapter: jobSummary.currentChapter,
             error: jobSummary.error,
           },
@@ -263,6 +264,7 @@ export async function GET(req: Request) {
                     totalChapters: currentSummary.totalChapters,
                     failedChapters: currentSummary.failedChapters,
                     failedChapterNums: currentSummary.failedChapterNums,
+                    policyBlockedChapterNums: currentSummary.policyBlockedChapterNums,
                   },
                 });
                 cleanup();
@@ -278,6 +280,7 @@ export async function GET(req: Request) {
                     totalChapters: currentSummary.totalChapters,
                     failedChapters: currentSummary.failedChapters,
                     failedChapterNums: currentSummary.failedChapterNums,
+                    policyBlockedChapterNums: currentSummary.policyBlockedChapterNums,
                   },
                 });
                 cleanup();
